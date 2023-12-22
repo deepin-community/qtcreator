@@ -9,19 +9,19 @@
 #include "designericons.h"
 #include "designersettings.h"
 #include "designmodecontext.h"
-#include "edit3dactions.h"
 #include "edit3dcanvas.h"
 #include "edit3dviewconfig.h"
 #include "edit3dwidget.h"
 #include "materialutils.h"
 #include "metainfo.h"
+#include "nodeabstractproperty.h"
 #include "nodehints.h"
 #include "nodeinstanceview.h"
 #include "qmldesignerconstants.h"
 #include "qmldesignerplugin.h"
 #include "qmlvisualnode.h"
 #include "seekerslider.h"
-#include "theme.h"
+#include "snapconfiguration.h"
 
 #include <model/modelutils.h>
 
@@ -31,7 +31,7 @@
 #include <projectexplorer/target.h>
 #include <projectexplorer/kit.h>
 
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
@@ -42,27 +42,14 @@
 
 namespace QmlDesigner {
 
-static inline QIcon contextIcon (const DesignerIcons::IconId &iconId) {
+inline static QIcon contextIcon(const DesignerIcons::IconId &iconId)
+{
     return DesignerActionManager::instance().contextIcon(iconId);
 };
 
-static QIcon toolbarIcon (const Theme::Icon &iconOffId, const Theme::Icon &iconnOnId) {
-    QIcon iconOff = Theme::iconFromName(iconOffId);
-    QIcon iconOn= Theme::iconFromName(iconnOnId,
-                                      Theme::getColor(Theme::Color::DStextSelectedTextColor));
-    QIcon retIcon;
-
-    const auto onAvail = iconOff.availableSizes(); // Assume both icons have same sizes available
-    for (const auto &size : onAvail) {
-        retIcon.addPixmap(iconOff.pixmap(size), QIcon::Normal, QIcon::Off);
-        retIcon.addPixmap(iconOn.pixmap(size), QIcon::Normal, QIcon::On);
-    }
-
-    return retIcon;
-};
-
-static inline QIcon toolbarIcon (const Theme::Icon &iconOffId) {
-    return toolbarIcon(iconOffId, iconOffId);
+inline static QIcon toolbarIcon(const DesignerIcons::IconId &iconId)
+{
+    return DesignerActionManager::instance().toolbarIcon(iconId);
 };
 
 Edit3DView::Edit3DView(ExternalDependenciesInterface &externalDependencies)
@@ -106,17 +93,6 @@ Edit3DWidget *Edit3DView::edit3DWidget() const
     return m_edit3DWidget.data();
 }
 
-void Edit3DView::selectedNodesChanged([[maybe_unused]] const QList<ModelNode> &selectedNodeList,
-                                      [[maybe_unused]] const QList<ModelNode> &lastSelectedNodeList)
-{
-    SelectionContext selectionContext(this);
-    selectionContext.setUpdateMode(SelectionContext::UpdateMode::Fast);
-    if (m_alignCamerasAction)
-        m_alignCamerasAction->currentContextChanged(selectionContext);
-    if (m_alignViewAction)
-        m_alignViewAction->currentContextChanged(selectionContext);
-}
-
 void Edit3DView::renderImage3DChanged(const QImage &img)
 {
     edit3DWidget()->canvas()->updateRenderImage(img);
@@ -144,11 +120,13 @@ void Edit3DView::updateActiveScene3D(const QVariantMap &sceneState)
     const QString cameraFrustumKey   = QStringLiteral("showCameraFrustum");
     const QString particleEmitterKey = QStringLiteral("showParticleEmitter");
     const QString particlesPlayKey   = QStringLiteral("particlePlay");
+    const QString syncEnvBgKey       = QStringLiteral("syncEnvBackground");
 
     if (sceneState.contains(sceneKey)) {
         qint32 newActiveScene = sceneState[sceneKey].value<qint32>();
         edit3DWidget()->canvas()->updateActiveScene(newActiveScene);
         model()->setActive3DSceneId(newActiveScene);
+        updateAlignActionStates();
     }
 
     if (sceneState.contains(selectKey))
@@ -213,6 +191,37 @@ void Edit3DView::updateActiveScene3D(const QVariantMap &sceneState)
     else
         m_particlesPlayAction->action()->setChecked(true);
 
+    // Syncing background color only makes sense for children of View3D instances
+    bool syncValue = false;
+    bool syncEnabled = false;
+    bool desiredSyncValue = false;
+    if (sceneState.contains(syncEnvBgKey))
+        desiredSyncValue = sceneState[syncEnvBgKey].toBool();
+    ModelNode checkNode = active3DSceneNode();
+    const bool activeSceneValid = checkNode.isValid();
+
+    while (checkNode.isValid()) {
+        if (checkNode.metaInfo().isQtQuick3DView3D()) {
+            syncValue = desiredSyncValue;
+            syncEnabled = true;
+            break;
+        }
+        if (checkNode.hasParentProperty())
+            checkNode = checkNode.parentProperty().parentModelNode();
+        else
+            break;
+    }
+
+    if (activeSceneValid && syncValue != desiredSyncValue) {
+        // Update actual toolstate as well if we overrode it.
+        QTimer::singleShot(0, this, [this, syncValue]() {
+            emitView3DAction(View3DActionType::SyncEnvBackground, syncValue);
+        });
+    }
+
+    m_syncEnvBackgroundAction->action()->setChecked(syncValue);
+    m_syncEnvBackgroundAction->action()->setEnabled(syncEnabled);
+
     // Selection context change updates visible and enabled states
     SelectionContext selectionContext(this);
     selectionContext.setUpdateMode(SelectionContext::UpdateMode::Fast);
@@ -223,6 +232,15 @@ void Edit3DView::updateActiveScene3D(const QVariantMap &sceneState)
 void Edit3DView::modelAttached(Model *model)
 {
     AbstractView::modelAttached(model);
+
+    syncSnapAuxPropsToSettings();
+
+    rootModelNode().setAuxiliaryData(edit3dGridColorProperty,
+                                     QVariant::fromValue(Edit3DViewConfig::loadColor(
+                                         DesignerSettingsKey::EDIT3DVIEW_GRID_COLOR)));
+    rootModelNode().setAuxiliaryData(edit3dBgColorProperty,
+                                     QVariant::fromValue(Edit3DViewConfig::loadColors(
+                                         DesignerSettingsKey::EDIT3DVIEW_BACKGROUND_COLOR)));
 
     checkImports();
     auto cachedImage = m_canvasCache.take(model);
@@ -252,7 +270,7 @@ void Edit3DView::onEntriesChanged()
 void Edit3DView::registerEdit3DAction(Edit3DAction *action)
 {
     if (action->actionType() != View3DActionType::Empty)
-        m_edit3DActions.insert(action->actionType(), QSharedPointer<Edit3DAction>(action));
+        m_edit3DActions.insert(action->actionType(), action);
 }
 
 void Edit3DView::handleEntriesChanged()
@@ -298,12 +316,31 @@ void Edit3DView::handleEntriesChanged()
     m_edit3DWidget->updateCreateSubMenu(entriesMap.values());
 }
 
+void Edit3DView::updateAlignActionStates()
+{
+    bool enabled = false;
+
+    ModelNode activeScene = active3DSceneNode();
+    if (activeScene.isValid()) {
+        const QList<ModelNode> nodes = activeScene.allSubModelNodes();
+        enabled = ::Utils::anyOf(nodes, [](const ModelNode &node) {
+            return node.metaInfo().isQtQuick3DCamera();
+        });
+    }
+
+    m_alignCamerasAction->action()->setEnabled(enabled);
+    m_alignViewAction->action()->setEnabled(enabled);
+}
+
 void Edit3DView::modelAboutToBeDetached(Model *model)
 {
     m_isBakingLightsSupported = false;
 
     if (m_bakeLights)
         m_bakeLights->cancel();
+
+    if (m_snapConfiguration)
+        m_snapConfiguration->cancel();
 
     // Hide the canvas when model is detached (i.e. changing documents)
     if (edit3DWidget() && edit3DWidget()->canvas()) {
@@ -364,6 +401,8 @@ void Edit3DView::nodeAtPosReady(const ModelNode &modelNode, const QVector3D &pos
         }
     } else if (m_nodeAtPosReqType == NodeAtPosReqType::BundleMaterialDrop) {
         emitCustomNotification("drop_bundle_material", {modelNode}); // To ContentLibraryView
+    } else if (m_nodeAtPosReqType == NodeAtPosReqType::BundleEffectDrop) {
+        emitCustomNotification("drop_bundle_effect", {modelNode}, {pos3d}); // To ContentLibraryView
     } else if (m_nodeAtPosReqType == NodeAtPosReqType::TextureDrop) {
         emitCustomNotification("apply_texture_to_model3D", {modelNode, m_droppedModelNode});
     } else if (m_nodeAtPosReqType == NodeAtPosReqType::AssetDrop) {
@@ -375,6 +414,21 @@ void Edit3DView::nodeAtPosReady(const ModelNode &modelNode, const QVector3D &pos
     m_droppedModelNode = {};
     m_droppedFile.clear();
     m_nodeAtPosReqType = NodeAtPosReqType::None;
+}
+
+void Edit3DView::nodeReparented(const ModelNode &,
+                                const NodeAbstractProperty &,
+                                const NodeAbstractProperty &,
+                                PropertyChangeFlags)
+{
+    updateAlignActionStates();
+}
+
+void Edit3DView::nodeRemoved(const ModelNode &,
+                             const NodeAbstractProperty &,
+                             PropertyChangeFlags)
+{
+    updateAlignActionStates();
 }
 
 void Edit3DView::sendInputEvent(QInputEvent *e) const
@@ -397,40 +451,41 @@ QSize Edit3DView::canvasSize() const
     return {};
 }
 
-Edit3DAction *Edit3DView::createSelectBackgroundColorAction(QAction *syncBackgroundColorAction)
+void Edit3DView::createSelectBackgroundColorAction(QAction *syncEnvBackgroundAction)
 {
     QString description = QCoreApplication::translate("SelectBackgroundColorAction",
                                                       "Select Background Color");
     QString tooltip = QCoreApplication::translate("SelectBackgroundColorAction",
                                                   "Select a color for the background of the 3D view.");
 
-    auto operation = [this, syncBackgroundColorAction](const SelectionContext &) {
+    auto operation = [this, syncEnvBackgroundAction](const SelectionContext &) {
         BackgroundColorSelection::showBackgroundColorSelectionWidget(
             edit3DWidget(),
             DesignerSettingsKey::EDIT3DVIEW_BACKGROUND_COLOR,
             this,
-            View3DActionType::SelectBackgroundColor,
-            [this, syncBackgroundColorAction]() {
-                if (syncBackgroundColorAction->isChecked()) {
-                    Edit3DViewConfig::set(this, View3DActionType::SyncBackgroundColor, false);
-                    syncBackgroundColorAction->setChecked(false);
+            edit3dBgColorProperty,
+            [this, syncEnvBackgroundAction]() {
+                if (syncEnvBackgroundAction->isChecked()) {
+                    emitView3DAction(View3DActionType::SyncEnvBackground, false);
+                    syncEnvBackgroundAction->setChecked(false);
                 }
             });
     };
 
-    return new Edit3DAction(Constants::EDIT3D_EDIT_SELECT_BACKGROUND_COLOR,
-                            View3DActionType::SelectBackgroundColor,
-                            description,
-                            {},
-                            false,
-                            false,
-                            {},
-                            this,
-                            operation,
-                            tooltip);
+    m_selectBackgroundColorAction = std::make_unique<Edit3DAction>(
+        Constants::EDIT3D_EDIT_SELECT_BACKGROUND_COLOR,
+        View3DActionType::Empty,
+        description,
+        QKeySequence(),
+        false,
+        false,
+        QIcon(),
+        this,
+        operation,
+        tooltip);
 }
 
-Edit3DAction *Edit3DView::createGridColorSelectionAction()
+void Edit3DView::createGridColorSelectionAction()
 {
     QString description = QCoreApplication::translate("SelectGridColorAction", "Select Grid Color");
     QString tooltip = QCoreApplication::translate("SelectGridColorAction",
@@ -441,245 +496,302 @@ Edit3DAction *Edit3DView::createGridColorSelectionAction()
             edit3DWidget(),
             DesignerSettingsKey::EDIT3DVIEW_GRID_COLOR,
             this,
-            View3DActionType::SelectGridColor);
+            edit3dGridColorProperty);
     };
 
-    return new Edit3DAction(Constants::EDIT3D_EDIT_SELECT_GRID_COLOR,
-                            View3DActionType::SelectGridColor,
-                            description,
-                            {},
-                            false,
-                            false,
-                            {},
-                            this,
-                            operation,
-                            tooltip);
+    m_selectGridColorAction = std::make_unique<Edit3DAction>(
+        Constants::EDIT3D_EDIT_SELECT_GRID_COLOR,
+        View3DActionType::Empty,
+        description,
+        QKeySequence(),
+        false,
+        false,
+        QIcon(),
+        this,
+        operation,
+        tooltip);
 }
 
-Edit3DAction *Edit3DView::createResetColorAction(QAction *syncBackgroundColorAction)
+void Edit3DView::createResetColorAction(QAction *syncEnvBackgroundAction)
 {
     QString description = QCoreApplication::translate("ResetEdit3DColorsAction", "Reset Colors");
     QString tooltip = QCoreApplication::translate("ResetEdit3DColorsAction",
                                                   "Reset the background color and the color of the "
                                                   "grid lines of the 3D view to the default values.");
 
-    auto operation = [this, syncBackgroundColorAction](const SelectionContext &) {
+    auto operation = [this, syncEnvBackgroundAction](const SelectionContext &) {
         QList<QColor> bgColors = {QRgb(0x222222), QRgb(0x999999)};
-        Edit3DViewConfig::setColors(this, View3DActionType::SelectBackgroundColor, bgColors);
+        Edit3DViewConfig::setColors(this, edit3dBgColorProperty, bgColors);
         Edit3DViewConfig::saveColors(DesignerSettingsKey::EDIT3DVIEW_BACKGROUND_COLOR, bgColors);
 
-        QColor gridColor{0xaaaaaa};
-        Edit3DViewConfig::setColors(this, View3DActionType::SelectGridColor, {gridColor});
+        QColor gridColor{0xcccccc};
+        Edit3DViewConfig::setColors(this, edit3dGridColorProperty, {gridColor});
         Edit3DViewConfig::saveColors(DesignerSettingsKey::EDIT3DVIEW_GRID_COLOR, {gridColor});
 
-        if (syncBackgroundColorAction->isChecked()) {
-            Edit3DViewConfig::set(this, View3DActionType::SyncBackgroundColor, false);
-            syncBackgroundColorAction->setChecked(false);
+        if (syncEnvBackgroundAction->isChecked()) {
+            emitView3DAction(View3DActionType::SyncEnvBackground, false);
+            syncEnvBackgroundAction->setChecked(false);
         }
     };
 
-    return new Edit3DAction(QmlDesigner::Constants::EDIT3D_EDIT_RESET_BACKGROUND_COLOR,
-                            View3DActionType::ResetBackgroundColor,
-                            description,
-                            {},
-                            false,
-                            false,
-                            {},
-                            this,
-                            operation,
-                            tooltip);
+    m_resetColorAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_EDIT_RESET_BACKGROUND_COLOR,
+        View3DActionType::Empty,
+        description,
+        QKeySequence(),
+        false,
+        false,
+        QIcon(),
+        this,
+        operation,
+        tooltip);
 }
 
-Edit3DAction *Edit3DView::createSyncBackgroundColorAction()
+void Edit3DView::createSyncEnvBackgroundAction()
 {
-    QString description = QCoreApplication::translate("SyncEdit3DColorAction",
-                                                      "Use Scene Environment Color");
-    QString tooltip = QCoreApplication::translate("SyncEdit3DColorAction",
+    QString description = QCoreApplication::translate("SyncEnvBackgroundAction",
+                                                      "Use Scene Environment");
+    QString tooltip = QCoreApplication::translate("SyncEnvBackgroundAction",
                                                   "Sets the 3D view to use the Scene Environment "
-                                                  "color as background color.");
+                                                  "color or skybox as background color.");
 
-    return new Edit3DAction(QmlDesigner::Constants::EDIT3D_EDIT_SYNC_BACKGROUND_COLOR,
-                            View3DActionType::SyncBackgroundColor,
-                            description,
-                            {},
-                            true,
-                            false,
-                            {},
-                            this,
-                            {},
-                            tooltip);
+    m_syncEnvBackgroundAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_EDIT_SYNC_ENV_BACKGROUND,
+        View3DActionType::SyncEnvBackground,
+        description,
+        QKeySequence(),
+        true,
+        false,
+        QIcon(),
+        this,
+        nullptr,
+        tooltip);
 }
 
-Edit3DAction *Edit3DView::createSeekerSliderAction()
+void Edit3DView::createSeekerSliderAction()
 {
-    Edit3DParticleSeekerAction *seekerAction = new Edit3DParticleSeekerAction(
-                QmlDesigner::Constants::EDIT3D_PARTICLES_SEEKER,
-                View3DActionType::ParticlesSeek,
-                this);
+    m_seekerAction = std::make_unique<Edit3DParticleSeekerAction>(
+        QmlDesigner::Constants::EDIT3D_PARTICLES_SEEKER,
+        View3DActionType::ParticlesSeek,
+        this);
 
-    seekerAction->action()->setEnabled(false);
-    seekerAction->action()->setToolTip(QLatin1String("Seek particle system time when paused."));
+    m_seekerAction->action()->setEnabled(false);
+    m_seekerAction->action()->setToolTip(QLatin1String("Seek particle system time when paused."));
 
-    connect(seekerAction->seekerAction(),
+    connect(m_seekerAction->seekerAction(),
             &SeekerSliderAction::valueChanged,
             this, [=] (int value) {
         this->emitView3DAction(View3DActionType::ParticlesSeek, value);
-    });
+            });
+}
 
-    return seekerAction;
+QPoint Edit3DView::resolveToolbarPopupPos(Edit3DAction *action) const
+{
+    QPoint pos;
+    const QList<QObject *> &objects = action->action()->associatedObjects();
+    for (QObject *obj : objects) {
+        if (auto button = qobject_cast<QToolButton *>(obj)) {
+            if (auto toolBar = qobject_cast<QWidget *>(button->parent())) {
+                // If the button has not yet been shown (i.e. it starts under extension menu),
+                // the button x value will be zero.
+                if (button->x() >= toolBar->width() - button->width() || button->x() == 0) {
+                    pos = toolBar->mapToGlobal(QPoint(toolBar->width() - button->width(), 4));
+                } else {
+                    // Add small negative modifier to Y coordinate, so highlighted toolbar buttons don't
+                    // peek from under the popup
+                    pos = button->mapToGlobal(QPoint(0, -2));
+                }
+            }
+            break;
+        }
+    }
+    return pos;
+}
+
+void Edit3DView::syncSnapAuxPropsToSettings()
+{
+    if (!model())
+        return;
+
+    bool snapToggle = m_snapToggleAction->action()->isChecked();
+    rootModelNode().setAuxiliaryData(edit3dSnapPosProperty,
+                                     snapToggle ? Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_POSITION)
+                                                : false);
+    rootModelNode().setAuxiliaryData(edit3dSnapRotProperty,
+                                     snapToggle ? Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_ROTATION)
+                                                : false);
+    rootModelNode().setAuxiliaryData(edit3dSnapScaleProperty,
+                                     snapToggle ? Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_SCALE)
+                                                : false);
+    rootModelNode().setAuxiliaryData(edit3dSnapAbsProperty,
+                                     Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_ABSOLUTE));
+    rootModelNode().setAuxiliaryData(edit3dSnapPosIntProperty,
+                                     Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_POSITION_INTERVAL));
+    rootModelNode().setAuxiliaryData(edit3dSnapRotIntProperty,
+                                     Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_ROTATION_INTERVAL));
+    rootModelNode().setAuxiliaryData(edit3dSnapScaleIntProperty,
+                                     Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_SCALE_INTERVAL));
 }
 
 void Edit3DView::createEdit3DActions()
 {
-    m_selectionModeAction = new Edit3DAction(
-                QmlDesigner::Constants::EDIT3D_SELECTION_MODE,
-                View3DActionType::SelectionModeToggle,
-                QCoreApplication::translate("SelectionModeToggleAction", "Toggle Group/Single Selection Mode"),
-                QKeySequence(Qt::Key_Q),
-                true,
-                false,
-                toolbarIcon(Theme::selectOutline_medium, Theme::selectFill_medium),
-                this);
+    m_selectionModeAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_SELECTION_MODE,
+        View3DActionType::SelectionModeToggle,
+        QCoreApplication::translate("SelectionModeToggleAction",
+                                    "Toggle Group/Single Selection Mode"),
+        QKeySequence(Qt::Key_Q),
+        true,
+        false,
+        toolbarIcon(DesignerIcons::ToggleGroupIcon),
+        this);
 
-    m_moveToolAction = new Edit3DAction(QmlDesigner::Constants::EDIT3D_MOVE_TOOL,
-                                        View3DActionType::MoveTool,
-                                        QCoreApplication::translate("MoveToolAction",
-                                                                    "Activate Move Tool"),
-                                        QKeySequence(Qt::Key_W),
-                                        true,
-                                        true,
-                                        toolbarIcon(Theme::move_medium),
-                                        this);
+    m_moveToolAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_MOVE_TOOL,
+        View3DActionType::MoveTool,
+        QCoreApplication::translate("MoveToolAction",
+                                    "Activate Move Tool"),
+        QKeySequence(Qt::Key_W),
+        true,
+        true,
+        toolbarIcon(DesignerIcons::MoveToolIcon),
+        this);
 
-    m_rotateToolAction = new Edit3DAction(QmlDesigner::Constants::EDIT3D_ROTATE_TOOL,
-                                          View3DActionType::RotateTool,
-                                          QCoreApplication::translate("RotateToolAction",
-                                                                      "Activate Rotate Tool"),
-                                          QKeySequence(Qt::Key_E),
-                                          true,
-                                          false,
-                                          toolbarIcon(Theme::roatate_medium),
-                                          this);
+    m_rotateToolAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_ROTATE_TOOL,
+        View3DActionType::RotateTool,
+        QCoreApplication::translate("RotateToolAction",
+                                    "Activate Rotate Tool"),
+        QKeySequence(Qt::Key_E),
+        true,
+        false,
+        toolbarIcon(DesignerIcons::RotateToolIcon),
+        this);
 
-    m_scaleToolAction = new Edit3DAction(QmlDesigner::Constants::EDIT3D_SCALE_TOOL,
-                                         View3DActionType::ScaleTool,
-                                         QCoreApplication::translate("ScaleToolAction",
-                                                                     "Activate Scale Tool"),
-                                         QKeySequence(Qt::Key_R),
-                                         true,
-                                         false,
-                                         toolbarIcon(Theme::scale_medium),
-                                         this);
+    m_scaleToolAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_SCALE_TOOL,
+        View3DActionType::ScaleTool,
+        QCoreApplication::translate("ScaleToolAction",
+                                    "Activate Scale Tool"),
+        QKeySequence(Qt::Key_R),
+        true,
+        false,
+        toolbarIcon(DesignerIcons::ScaleToolIcon),
+        this);
 
-    m_fitAction = new Edit3DAction(QmlDesigner::Constants::EDIT3D_FIT_SELECTED,
-                                   View3DActionType::FitToView,
-                                   QCoreApplication::translate("FitToViewAction",
-                                                               "Fit Selected Object to View"),
-                                   QKeySequence(Qt::Key_F),
-                                   false,
-                                   false,
-                                   toolbarIcon(Theme::fitToView_medium),
-                                   this);
+    m_fitAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_FIT_SELECTED,
+        View3DActionType::FitToView,
+        QCoreApplication::translate("FitToViewAction",
+                                    "Fit Selected Object to View"),
+        QKeySequence(Qt::Key_F),
+        false,
+        false,
+        toolbarIcon(DesignerIcons::FitToViewIcon),
+        this);
 
-    m_alignCamerasAction = new Edit3DCameraAction(
+    m_alignCamerasAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_ALIGN_CAMERAS,
         View3DActionType::AlignCamerasToView,
-        QCoreApplication::translate("AlignCamerasToViewAction", "Align Selected Cameras to View"),
+        QCoreApplication::translate("AlignCamerasToViewAction",
+                                    "Align Cameras to View"),
         QKeySequence(),
         false,
         false,
-        toolbarIcon(Theme::alignToCam_medium),
+        toolbarIcon(DesignerIcons::AlignCameraToViewIcon),
         this);
 
-    m_alignViewAction = new Edit3DCameraAction(
+    m_alignViewAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_ALIGN_VIEW,
         View3DActionType::AlignViewToCamera,
-        QCoreApplication::translate("AlignCamerasToViewAction", "Align View to Selected Camera"),
+        QCoreApplication::translate("AlignViewToCameraAction",
+                                    "Align View to Camera"),
         QKeySequence(),
         false,
         false,
-        toolbarIcon(Theme::alignToView_medium),
+        toolbarIcon(DesignerIcons::AlignViewToCameraIcon),
         this);
 
-    m_cameraModeAction = new Edit3DAction(
+    m_cameraModeAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_EDIT_CAMERA,
         View3DActionType::CameraToggle,
         QCoreApplication::translate("CameraToggleAction",
-                                    "Toggle Perspective/Orthographic Edit Camera"),
+                                    "Toggle Perspective/Orthographic Camera Mode"),
         QKeySequence(Qt::Key_T),
         true,
         false,
-        toolbarIcon(Theme::orthCam_small, Theme::perspectiveCam_small),
+        toolbarIcon(DesignerIcons::CameraIcon),
         this);
 
-    m_orientationModeAction = new Edit3DAction(
+    m_orientationModeAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_ORIENTATION,
         View3DActionType::OrientationToggle,
-        QCoreApplication::translate("OrientationToggleAction", "Toggle Global/Local Orientation"),
+        QCoreApplication::translate("OrientationToggleAction",
+                                    "Toggle Global/Local Orientation"),
         QKeySequence(Qt::Key_Y),
         true,
         false,
-        toolbarIcon(Theme::localOrient_medium),
+        toolbarIcon(DesignerIcons::LocalOrientIcon),
         this);
 
-    m_editLightAction = new Edit3DAction(
-                QmlDesigner::Constants::EDIT3D_EDIT_LIGHT,
-                View3DActionType::EditLightToggle,
-                QCoreApplication::translate("EditLightToggleAction",
-                                            "Toggle Edit Light On/Off"),
-                QKeySequence(Qt::Key_U),
-                true,
-                false,
-                toolbarIcon(Theme::editLightOff_medium, Theme::editLightOn_medium),
-                this);
+    m_editLightAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_EDIT_LIGHT,
+        View3DActionType::EditLightToggle,
+        QCoreApplication::translate("EditLightToggleAction",
+                                    "Toggle Edit Light On/Off"),
+        QKeySequence(Qt::Key_U),
+        true,
+        false,
+        toolbarIcon(DesignerIcons::EditLightIcon),
+        this);
 
-    m_showGridAction = new Edit3DAction(
+    m_showGridAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_EDIT_SHOW_GRID,
         View3DActionType::ShowGrid,
         QCoreApplication::translate("ShowGridAction", "Show Grid"),
         QKeySequence(Qt::Key_G),
         true,
         true,
-        {},
+        QIcon(),
         this,
         nullptr,
         QCoreApplication::translate("ShowGridAction", "Toggle the visibility of the helper grid."));
 
-    m_showSelectionBoxAction = new Edit3DAction(
+    m_showSelectionBoxAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_EDIT_SHOW_SELECTION_BOX,
         View3DActionType::ShowSelectionBox,
         QCoreApplication::translate("ShowSelectionBoxAction", "Show Selection Boxes"),
         QKeySequence(Qt::Key_S),
         true,
         true,
-        {},
+        QIcon(),
         this,
         nullptr,
         QCoreApplication::translate("ShowSelectionBoxAction",
                                     "Toggle the visibility of selection boxes."));
 
-    m_showIconGizmoAction = new Edit3DAction(
+    m_showIconGizmoAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_EDIT_SHOW_ICON_GIZMO,
         View3DActionType::ShowIconGizmo,
         QCoreApplication::translate("ShowIconGizmoAction", "Show Icon Gizmos"),
         QKeySequence(Qt::Key_I),
         true,
         true,
-        {},
+        QIcon(),
         this,
         nullptr,
         QCoreApplication::translate(
             "ShowIconGizmoAction",
             "Toggle the visibility of icon gizmos, such as light and camera icons."));
 
-    m_showCameraFrustumAction = new Edit3DAction(
+    m_showCameraFrustumAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_EDIT_SHOW_CAMERA_FRUSTUM,
         View3DActionType::ShowCameraFrustum,
         QCoreApplication::translate("ShowCameraFrustumAction", "Always Show Camera Frustums"),
         QKeySequence(Qt::Key_C),
         true,
         false,
-        {},
+        QIcon(),
         this,
         nullptr,
         QCoreApplication::translate(
@@ -687,7 +799,7 @@ void Edit3DView::createEdit3DActions()
             "Toggle between always showing the camera frustum visualization and only showing it "
             "when the camera is selected."));
 
-    m_showParticleEmitterAction = new Edit3DAction(
+    m_showParticleEmitterAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_EDIT_SHOW_PARTICLE_EMITTER,
         View3DActionType::ShowParticleEmitter,
         QCoreApplication::translate("ShowParticleEmitterAction",
@@ -695,7 +807,7 @@ void Edit3DView::createEdit3DActions()
         QKeySequence(Qt::Key_M),
         true,
         false,
-        {},
+        QIcon(),
         this,
         nullptr,
         QCoreApplication::translate(
@@ -739,75 +851,74 @@ void Edit3DView::createEdit3DActions()
             m_bakeLights->raiseDialog();
     };
 
-    m_particleViewModeAction = new Edit3DAction(
-                QmlDesigner::Constants::EDIT3D_PARTICLE_MODE,
-                View3DActionType::Edit3DParticleModeToggle,
-                QCoreApplication::translate("ParticleViewModeAction", "Toggle particle animation On/Off"),
-                QKeySequence(Qt::Key_V),
-                true,
-                false,
-                toolbarIcon(Theme::particleAnimation_medium),
-                this,
-                particlesTrigger);
+    m_particleViewModeAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_PARTICLE_MODE,
+        View3DActionType::Edit3DParticleModeToggle,
+        QCoreApplication::translate("ParticleViewModeAction",
+                                    "Toggle particle animation On/Off"),
+        QKeySequence(Qt::Key_V),
+        true,
+        false,
+        toolbarIcon(DesignerIcons::ParticlesAnimationIcon),
+        this,
+        particlesTrigger);
+
     particlemode = false;
-    m_particlesPlayAction = new Edit3DAction(
-                QmlDesigner::Constants::EDIT3D_PARTICLES_PLAY,
-                View3DActionType::ParticlesPlay,
-                QCoreApplication::translate("ParticlesPlayAction", "Play Particles"),
-                QKeySequence(Qt::Key_Comma),
-                true,
-                true,
-                toolbarIcon(Theme::playOutline_medium, Theme::pause), // Icons::EDIT3D_PARTICLE_PLAY.icon(), Icons::EDIT3D_PARTICLE_PAUSE.icon(),
-                this,
-                particlesPlayTrigger);
-    m_particlesRestartAction = new Edit3DAction(
-                QmlDesigner::Constants::EDIT3D_PARTICLES_RESTART,
-                View3DActionType::ParticlesRestart,
-                QCoreApplication::translate("ParticlesRestartAction", "Restart Particles"),
-                QKeySequence(Qt::Key_Slash),
-                false,
-                false,
-                toolbarIcon(Theme::restartParticles_medium),
-                this);
+    m_particlesPlayAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_PARTICLES_PLAY,
+        View3DActionType::ParticlesPlay,
+        QCoreApplication::translate("ParticlesPlayAction",
+                                    "Play Particles"),
+        QKeySequence(Qt::Key_Comma),
+        true,
+        true,
+        toolbarIcon(DesignerIcons::ParticlesPlayIcon),
+        this,
+        particlesPlayTrigger);
+
+    m_particlesRestartAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_PARTICLES_RESTART,
+        View3DActionType::ParticlesRestart,
+        QCoreApplication::translate("ParticlesRestartAction",
+                                    "Restart Particles"),
+        QKeySequence(Qt::Key_Slash),
+        false,
+        false,
+        toolbarIcon(DesignerIcons::ParticlesRestartIcon),
+        this);
+
     m_particlesPlayAction->action()->setEnabled(particlemode);
     m_particlesRestartAction->action()->setEnabled(particlemode);
 
-    m_resetAction = new Edit3DAction(
-                QmlDesigner::Constants::EDIT3D_RESET_VIEW,
-                View3DActionType::Empty,
-                QCoreApplication::translate("ResetView", "Reset View"),
-                QKeySequence(Qt::Key_P),
-                false,
-                false,
-                toolbarIcon(Theme::reload_medium),
-                this,
-                resetTrigger);
+    m_resetAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_RESET_VIEW,
+        View3DActionType::Empty,
+        QCoreApplication::translate("ResetView", "Reset View"),
+        QKeySequence(Qt::Key_P),
+        false,
+        false,
+        toolbarIcon(DesignerIcons::ResetViewIcon),
+        this,
+        resetTrigger);
 
     SelectionContextOperation visibilityTogglesTrigger = [this](const SelectionContext &) {
         if (!edit3DWidget()->visibilityTogglesMenu())
             return;
 
-        QPoint pos;
-        const auto &actionWidgets = m_visibilityTogglesAction->action()->associatedWidgets();
-        for (auto actionWidget : actionWidgets) {
-            if (auto button = qobject_cast<QToolButton *>(actionWidget)) {
-                pos = button->mapToGlobal(QPoint(0, 0));
-                break;
-            }
-        }
-
-        edit3DWidget()->showVisibilityTogglesMenu(!edit3DWidget()->visibilityTogglesMenu()->isVisible(),
-                                                  pos);
+        edit3DWidget()->showVisibilityTogglesMenu(
+            !edit3DWidget()->visibilityTogglesMenu()->isVisible(),
+            resolveToolbarPopupPos(m_visibilityTogglesAction.get()));
     };
 
-    m_visibilityTogglesAction = new Edit3DAction(
+    m_visibilityTogglesAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_VISIBILITY_TOGGLES,
         View3DActionType::Empty,
-        QCoreApplication::translate("VisibilityTogglesAction", "Visibility Toggles"),
+        QCoreApplication::translate("VisibilityTogglesAction",
+                                    "Visibility Toggles"),
         QKeySequence(),
         false,
         false,
-        toolbarIcon(Theme::invisible_medium, Theme::visible_medium),
+        toolbarIcon(DesignerIcons::VisibilityIcon),
         this,
         visibilityTogglesTrigger);
 
@@ -815,77 +926,117 @@ void Edit3DView::createEdit3DActions()
         if (!edit3DWidget()->backgroundColorMenu())
             return;
 
-        QPoint pos;
-        const auto &actionWidgets = m_backgrondColorMenuAction->action()->associatedWidgets();
-        for (auto actionWidget : actionWidgets) {
-            if (auto button = qobject_cast<QToolButton *>(actionWidget)) {
-                pos = button->mapToGlobal(QPoint(0, 0));
-                break;
-            }
-        }
-
-        edit3DWidget()->showBackgroundColorMenu(!edit3DWidget()->backgroundColorMenu()->isVisible(),
-                                                pos);
+        edit3DWidget()->showBackgroundColorMenu(
+            !edit3DWidget()->backgroundColorMenu()->isVisible(),
+            resolveToolbarPopupPos(m_backgroundColorMenuAction.get()));
     };
 
-    m_backgrondColorMenuAction = new Edit3DAction(
+    m_backgroundColorMenuAction = std::make_unique<Edit3DAction>(
         QmlDesigner::Constants::EDIT3D_BACKGROUND_COLOR_ACTIONS,
         View3DActionType::Empty,
-        QCoreApplication::translate("BackgroundColorMenuActions", "Background Color Actions"),
+        QCoreApplication::translate("BackgroundColorMenuActions",
+                                    "Background Color Actions"),
         QKeySequence(),
         false,
         false,
-        toolbarIcon(Theme::colorSelection_medium),
+        toolbarIcon(DesignerIcons::EditColorIcon),
         this,
         backgroundColorActionsTrigger);
 
-    m_seekerAction = createSeekerSliderAction();
+    createSeekerSliderAction();
 
-    m_bakeLightsAction = new Edit3DBakeLightsAction(
-                toolbarIcon(Theme::editLightOn_medium), //: TODO placeholder icon
-                this,
-                bakeLightsTrigger);
+    m_bakeLightsAction = std::make_unique<Edit3DBakeLightsAction>(
+        toolbarIcon(DesignerIcons::EditLightIcon), //: TODO placeholder icon
+        this,
+        bakeLightsTrigger);
 
-    m_leftActions << m_selectionModeAction;
+    SelectionContextOperation snapToggleTrigger = [this](const SelectionContext &) {
+        Edit3DViewConfig::save(DesignerSettingsKey::EDIT3DVIEW_SNAP_ENABLED,
+                               m_snapToggleAction->action()->isChecked());
+        syncSnapAuxPropsToSettings();
+    };
+
+    m_snapToggleAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_SNAP_TOGGLE,
+        View3DActionType::Empty,
+        QCoreApplication::translate("SnapToggleAction", "Toggle snapping during node drag"),
+        QKeySequence(Qt::SHIFT | Qt::Key_Tab),
+        true,
+        Edit3DViewConfig::load(DesignerSettingsKey::EDIT3DVIEW_SNAP_ENABLED, false).toBool(),
+        toolbarIcon(DesignerIcons::SnappingIcon),
+        this,
+        snapToggleTrigger);
+
+    SelectionContextOperation snapConfigTrigger = [this](const SelectionContext &) {
+        if (!m_snapConfiguration) {
+            m_snapConfiguration = new SnapConfiguration(this);
+            connect(m_snapConfiguration.data(), &SnapConfiguration::posIntChanged,
+                    this, [this]() {
+                // Notify every change of position interval as that causes visible changes in grid
+                rootModelNode().setAuxiliaryData(edit3dSnapPosIntProperty,
+                                                 m_snapConfiguration->posInt());
+            });
+        }
+        m_snapConfiguration->showConfigDialog(resolveToolbarPopupPos(m_snapConfigAction.get()));
+    };
+
+    m_snapConfigAction = std::make_unique<Edit3DAction>(
+        QmlDesigner::Constants::EDIT3D_SNAP_CONFIG,
+        View3DActionType::Empty,
+        QCoreApplication::translate("SnapConfigAction", "Open snap configuration dialog"),
+        QKeySequence(),
+        false,
+        false,
+        toolbarIcon(DesignerIcons::SnappingConfIcon),
+        this,
+        snapConfigTrigger);
+
+    m_leftActions << m_selectionModeAction.get();
     m_leftActions << nullptr; // Null indicates separator
     m_leftActions << nullptr; // Second null after separator indicates an exclusive group
-    m_leftActions << m_moveToolAction;
-    m_leftActions << m_rotateToolAction;
-    m_leftActions << m_scaleToolAction;
+    m_leftActions << m_moveToolAction.get();
+    m_leftActions << m_rotateToolAction.get();
+    m_leftActions << m_scaleToolAction.get();
     m_leftActions << nullptr;
-    m_leftActions << m_fitAction;
+    m_leftActions << m_fitAction.get();
     m_leftActions << nullptr;
-    m_leftActions << m_cameraModeAction;
-    m_leftActions << m_orientationModeAction;
-    m_leftActions << m_editLightAction;
+    m_leftActions << m_cameraModeAction.get();
+    m_leftActions << m_orientationModeAction.get();
+    m_leftActions << m_editLightAction.get();
     m_leftActions << nullptr;
-    m_leftActions << m_alignCamerasAction;
-    m_leftActions << m_alignViewAction;
+    m_leftActions << m_snapToggleAction.get();
+    m_leftActions << m_snapConfigAction.get();
     m_leftActions << nullptr;
-    m_leftActions << m_visibilityTogglesAction;
+    m_leftActions << m_alignCamerasAction.get();
+    m_leftActions << m_alignViewAction.get();
     m_leftActions << nullptr;
-    m_leftActions << m_backgrondColorMenuAction;
+    m_leftActions << m_visibilityTogglesAction.get();
+    m_leftActions << m_backgroundColorMenuAction.get();
 
-    m_rightActions << m_particleViewModeAction;
-    m_rightActions << m_particlesPlayAction;
-    m_rightActions << m_particlesRestartAction;
+    m_rightActions << m_particleViewModeAction.get();
+    m_rightActions << m_particlesPlayAction.get();
+    m_rightActions << m_particlesRestartAction.get();
     m_rightActions << nullptr;
-    m_rightActions << m_seekerAction;
+    m_rightActions << m_seekerAction.get();
     m_rightActions << nullptr;
-    m_rightActions << m_bakeLightsAction;
-    m_rightActions << m_resetAction;
+    m_rightActions << m_bakeLightsAction.get();
+    m_rightActions << m_resetAction.get();
 
-    m_visibilityToggleActions << m_showGridAction;
-    m_visibilityToggleActions << m_showSelectionBoxAction;
-    m_visibilityToggleActions << m_showIconGizmoAction;
-    m_visibilityToggleActions << m_showCameraFrustumAction;
-    m_visibilityToggleActions << m_showParticleEmitterAction;
+    m_visibilityToggleActions << m_showGridAction.get();
+    m_visibilityToggleActions << m_showSelectionBoxAction.get();
+    m_visibilityToggleActions << m_showIconGizmoAction.get();
+    m_visibilityToggleActions << m_showCameraFrustumAction.get();
+    m_visibilityToggleActions << m_showParticleEmitterAction.get();
 
-    Edit3DAction *syncBackgroundColorAction = createSyncBackgroundColorAction();
-    m_backgroundColorActions << createSelectBackgroundColorAction(syncBackgroundColorAction->action());
-    m_backgroundColorActions << createGridColorSelectionAction();
-    m_backgroundColorActions << syncBackgroundColorAction;
-    m_backgroundColorActions << createResetColorAction(syncBackgroundColorAction->action());
+    createSyncEnvBackgroundAction();
+    createSelectBackgroundColorAction(m_syncEnvBackgroundAction->action());
+    createGridColorSelectionAction();
+    createResetColorAction(m_syncEnvBackgroundAction->action());
+
+    m_backgroundColorActions << m_selectBackgroundColorAction.get();
+    m_backgroundColorActions << m_selectGridColorAction.get();
+    m_backgroundColorActions << m_syncEnvBackgroundAction.get();
+    m_backgroundColorActions << m_resetColorAction.get();
 }
 
 QVector<Edit3DAction *> Edit3DView::leftActions() const
@@ -908,21 +1059,22 @@ QVector<Edit3DAction *> Edit3DView::backgroundColorActions() const
     return m_backgroundColorActions;
 }
 
+
 Edit3DAction *Edit3DView::edit3DAction(View3DActionType type) const
 {
-    return m_edit3DActions.value(type, nullptr).data();
+    return m_edit3DActions.value(type, nullptr);
 }
 
 Edit3DBakeLightsAction *Edit3DView::bakeLightsAction() const
 {
-    return m_bakeLightsAction;
+    return m_bakeLightsAction.get();
 }
 
 void Edit3DView::addQuick3DImport()
 {
     DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
     if (document && !document->inFileComponentModelActive() && model()
-        && Utils::addImportWithCheck(
+        && ModelUtils::addImportWithCheck(
             "QtQuick3D",
             [](const Import &import) { return !import.hasVersion() || import.majorVersion() >= 6; },
             model())) {
@@ -950,6 +1102,12 @@ void Edit3DView::dropMaterial(const ModelNode &matNode, const QPointF &pos)
 void Edit3DView::dropBundleMaterial(const QPointF &pos)
 {
     m_nodeAtPosReqType = NodeAtPosReqType::BundleMaterialDrop;
+    emitView3DAction(View3DActionType::GetNodeAtPos, pos);
+}
+
+void Edit3DView::dropBundleEffect(const QPointF &pos)
+{
+    m_nodeAtPosReqType = NodeAtPosReqType::BundleEffectDrop;
     emitView3DAction(View3DActionType::GetNodeAtPos, pos);
 }
 

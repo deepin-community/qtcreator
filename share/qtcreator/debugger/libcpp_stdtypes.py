@@ -163,8 +163,8 @@ def qdump__std____1__stack(d, value):
     d.putBetterType(value.type)
 
 
-def GetChildMemberWithName(value: DumperBase.Value, name: str) -> DumperBase.Value:
-    members: list[DumperBase.Value] = value.members(True)
+def GetChildMemberWithName(value, name):
+    members = value.members(True)
 
     for member in members:
         if member.name == name:
@@ -172,8 +172,8 @@ def GetChildMemberWithName(value: DumperBase.Value, name: str) -> DumperBase.Val
     return None
 
 
-def GetIndexOfChildWithName(value: DumperBase.Value, name: str) -> int:
-    members: list[DumperBase.Value] = value.members(True)
+def GetIndexOfChildWithName(value, name):
+    members = value.members(True)
 
     for i, member in enumerate(members):
         if member.name == name:
@@ -229,8 +229,8 @@ def std_1_string_dumper_v2(d, value):
     if not Short_Sp:
         raise Exception("Could not find __s")
 
-    Is_Long: DumperBase.Value = GetChildMemberWithName(Short_Sp, "__is_long_")
-    Size_Sp: DumperBase.Value = GetChildMemberWithName(Short_Sp, "__size_")
+    Is_Long = GetChildMemberWithName(Short_Sp, "__is_long_")
+    Size_Sp = GetChildMemberWithName(Short_Sp, "__size_")
     if not Size_Sp:
         raise Exception("Could not find __size_")
 
@@ -283,13 +283,12 @@ def std_1_string_dumper_v1(d, value):
     charType = value['__l']['__data_'].dereference().type
     D = None
 
-    try:  # LLDB
+    if d.isLldb:
         D = value[0][0][0][0]
-    except:  # GDB
-        try:  # std::string
-            D = value[0].members(True)[0][0][0]
-        except:  # std::u16string, std::u32string
-            D = value[2].members(True)[0][0][0]
+    elif d.isGdb:
+        D = value["__r_"].members(True)[0][0][0]
+    else:
+        raise Exception("Unknown debugger (neither gdb nor lldb)")
 
     layoutDecider = D[0][0]
     if not layoutDecider:
@@ -405,7 +404,19 @@ def qdump__std____1__weak_ptr(d, value):
 
 
 def qdump__std____1__unique_ptr(d, value):
-    qdump__std__unique_ptr(d, value)
+    if value.type.size() == d.ptrSize():
+        p = d.extractPointer(value)
+    else:
+        _, p = value.split("pp"); # For custom deleters.
+    if p == 0:
+        d.putValue("(null)")
+    else:
+        try:
+            d.putItem(value["__value_"])
+            d.putValue(d.currentValue.value, d.currentValue.encoding)
+        except:
+            d.putItem(d.createValue(p, value.type[0]))
+    d.putBetterType(value.type)
 
 
 def qform__std____1__unordered_map():
@@ -497,12 +508,9 @@ def qdump__std____1__variant(d, value):
 
 def qdump__std____1__optional(d, value):
     if value['__engaged_'].integer() == 0:
-        d.putSpecialValue("uninitialized")
-    d.putNumChild(2)
-    if d.isExpanded():
-        with Children(d):
-            d.putSubItem("engaged", value['__engaged_'])
-            d.putSubItem("value", value['#1']['__val_'])
+        d.putSpecialValue("empty")
+    else:
+        d.putItem(value['#1']['__val_'])
 
 
 def qdump__std____1__tuple(d, value):

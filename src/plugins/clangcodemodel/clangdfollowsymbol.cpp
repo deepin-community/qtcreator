@@ -154,7 +154,11 @@ ClangdFollowSymbol::ClangdFollowSymbol(ClangdClient *client, const QTextCursor &
         if (self->d->cursorNode)
             self->d->handleGotoDefinitionResult();
     };
-    client->symbolSupport().findLinkAt(document, cursor, std::move(gotoDefCallback), true);
+    client->symbolSupport().findLinkAt(document,
+                                       cursor,
+                                       std::move(gotoDefCallback),
+                                       true,
+                                       LanguageClient::LinkTarget::SymbolDef);
 
     const auto astHandler = [self = QPointer(this)](const ClangdAstNode &ast, const MessageId &) {
         qCDebug(clangdLog) << "received ast response for cursor";
@@ -306,9 +310,10 @@ void ClangdFollowSymbol::VirtualFunctionAssistProcessor::resetData(bool resetFol
     if (!m_followSymbol)
         return;
     m_followSymbol->d->virtualFuncAssistProcessor = nullptr;
-    if (resetFollowSymbolData)
-        m_followSymbol->emitDone();
+    ClangdFollowSymbol * const followSymbol = m_followSymbol;
     m_followSymbol = nullptr;
+    if (resetFollowSymbolData)
+        followSymbol->emitDone();
 }
 
 IAssistProposal *ClangdFollowSymbol::VirtualFunctionAssistProcessor::createProposal(bool final)
@@ -336,7 +341,7 @@ IAssistProposal *ClangdFollowSymbol::VirtualFunctionAssistProcessor::createPropo
         items << createEntry({}, m_followSymbol->d->defLink);
     if (!final) {
         const auto infoItem = new VirtualFunctionProposalItem({}, false);
-        infoItem->setText(Tr::tr("collecting overrides ..."));
+        infoItem->setText(Tr::tr("collecting overrides..."));
         infoItem->setOrder(-1);
         items << infoItem;
     }
@@ -459,7 +464,7 @@ void ClangdFollowSymbol::Private::handleGotoImplementationResult(
     //         Also get the AST for the base declaration, so we can find out whether it's
     //         pure virtual and mark it accordingly.
     //         In addition, we need to follow all override links, because for these, clangd
-    //         gives us the declaration instead of the definition.
+    //         gives us the declaration instead of the definition (until clangd 16).
     for (const Link &link : std::as_const(allLinks)) {
         if (!client->documentForFilePath(link.targetFilePath) && addOpenFile(link.targetFilePath))
             client->openExtraFile(link.targetFilePath);
@@ -485,6 +490,9 @@ void ClangdFollowSymbol::Private::handleGotoImplementationResult(
         qCDebug(clangdLog) << "sending symbol info request";
 
         if (link == defLink)
+            continue;
+
+        if (client->versionNumber().majorVersion() >= 17)
             continue;
 
         const TextDocumentIdentifier doc(client->hostPathToServerUri(link.targetFilePath));

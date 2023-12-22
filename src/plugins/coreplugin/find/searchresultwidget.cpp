@@ -17,6 +17,7 @@
 #include <utils/qtcassert.h>
 #include <utils/theme/theme.h>
 #include <utils/fancylineedit.h>
+#include <utils/infolabel.h>
 
 #include <QFrame>
 #include <QLabel>
@@ -93,8 +94,6 @@ SearchResultWidget::SearchResultWidget(QWidget *parent) :
     topLayout->addWidget(m_topReplaceWidget);
 
     m_messageWidget = new QFrame;
-    pal.setColor(QPalette::WindowText, creatorTheme()->color(Theme::TextColorError));
-    m_messageWidget->setPalette(pal);
     if (creatorTheme()->flag(Theme::DrawSearchResultWidgetFrame)) {
         m_messageWidget->setFrameStyle(QFrame::Panel | QFrame::Raised);
         m_messageWidget->setLineWidth(1);
@@ -103,8 +102,9 @@ SearchResultWidget::SearchResultWidget(QWidget *parent) :
     auto messageLayout = new QHBoxLayout(m_messageWidget);
     messageLayout->setContentsMargins(2, 2, 2, 2);
     m_messageWidget->setLayout(messageLayout);
-    m_messageLabel = new QLabel;
-    m_messageLabel->setPalette(pal);
+    m_messageLabel = new InfoLabel;
+    m_messageLabel->setType(InfoLabel::Error);
+    m_messageLabel->setFilled(true);
     messageLayout->addWidget(m_messageLabel);
     layout->addWidget(m_messageWidget);
     m_messageWidget->setVisible(false);
@@ -478,7 +478,7 @@ void SearchResultWidget::doReplace()
 {
     m_infoBar.clear();
     setShowReplaceUI(false);
-    emit replaceButtonClicked(m_replaceTextEdit->text(), checkedItems(),
+    emit replaceButtonClicked(m_replaceTextEdit->text(), items(true),
                               m_preserveCaseSupported && m_preserveCaseCheck->isChecked());
 }
 
@@ -496,7 +496,7 @@ void SearchResultWidget::searchAgain()
     emit searchAgainRequested();
 }
 
-SearchResultItems SearchResultWidget::checkedItems() const
+SearchResultItems SearchResultWidget::items(bool checkedOnly) const
 {
     SearchResultItems result;
     SearchResultFilterModel *model = m_searchResultTreeView->model();
@@ -508,7 +508,7 @@ SearchResultItems SearchResultWidget::checkedItems() const
             const QModelIndex textIndex = model->index(rowIndex, 0, fileIndex);
             const SearchResultTreeItem * const rowItem = model->itemForIndex(textIndex);
             QTC_ASSERT(rowItem != nullptr, continue);
-            if (rowItem->checkState())
+            if (!checkedOnly || rowItem->checkState())
                 result << rowItem->item;
         }
     }

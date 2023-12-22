@@ -40,6 +40,7 @@
 #include "productitemmultiplexer.h"
 
 #include "loaderutils.h"
+#include "moduleinstantiator.h"
 
 #include <language/evaluator.h>
 #include <language/item.h>
@@ -51,14 +52,14 @@
 #include <tools/stringconstants.h>
 
 #include <QJsonDocument>
-#include <QThreadStorage>
 
 #include <vector>
 
-
+// This module deals with product multiplexing over the various defined axes.
+// For instance, a product with qbs.architectures: ["x86", "arm"] will get multiplexed into
+// two products with qbs.architecture: "x86" and qbs.architecture: "arm", respectively.
 namespace qbs::Internal {
 namespace {
-using MultiplexConfigurationByIdTable = QThreadStorage<QHash<QString, QVariantMap>>;
 using MultiplexRow = std::vector<VariantValuePtr>;
 using MultiplexTable = std::vector<MultiplexRow>;
 class MultiplexInfo
@@ -69,54 +70,50 @@ public:
     bool aggregate = false;
     VariantValuePtr multiplexedType;
 
-    QString toIdString(size_t row) const;
+    QString toIdString(size_t row, LoaderState &loaderState) const;
 };
 } // namespace
 
-Q_GLOBAL_STATIC(MultiplexConfigurationByIdTable, multiplexConfigurationsById);
-
-class ProductItemMultiplexer::Private
+class ProductItemMultiplexer
 {
 public:
-    Private(LoaderState &loaderState, QbsItemRetriever qbsItemRetriever)
-        : loaderState(loaderState), qbsItemRetriever(std::move(qbsItemRetriever)) {}
+    ProductItemMultiplexer(const QString &productName, Item *productItem, Item *tempQbsModuleItem,
+                           const std::function<void()> &dropTempQbsModule, LoaderState &loaderState)
+        : m_loaderState(loaderState), m_productName(productName), m_productItem(productItem),
+          m_tempQbsModuleItem(tempQbsModuleItem), m_dropTempQbsModule(dropTempQbsModule) {}
 
-    MultiplexInfo extractMultiplexInfo(Item *productItem, Item *qbsModuleItem);
+    QList<Item *> multiplex();
+private:
+    MultiplexInfo extractMultiplexInfo();
     MultiplexTable combine(const MultiplexTable &table, const MultiplexRow &values);
 
-    LoaderState &loaderState;
-    const QbsItemRetriever qbsItemRetriever;
+    LoaderState &m_loaderState;
+    const QString &m_productName;
+    Item * const m_productItem;
+    Item * const m_tempQbsModuleItem;
+    const std::function<void()> &m_dropTempQbsModule;
 };
 
-ProductItemMultiplexer::ProductItemMultiplexer(LoaderState &loaderState,
-    const QbsItemRetriever &qbsItemRetriever)
-    : d(makePimpl<Private>(loaderState, qbsItemRetriever)) {}
-
-ProductItemMultiplexer::~ProductItemMultiplexer() = default;
-
-QList<Item *> ProductItemMultiplexer::multiplex(
-    const QString &productName,
-    Item *productItem,
-    Item *tempQbsModuleItem,
-    const std::function<void ()> &dropTempQbsModule)
+QList<Item *> ProductItemMultiplexer::multiplex()
 {
-    const auto multiplexInfo = d->extractMultiplexInfo(productItem, tempQbsModuleItem);
-    dropTempQbsModule();
+    const auto multiplexInfo = extractMultiplexInfo();
+    m_dropTempQbsModule();
     if (multiplexInfo.table.size() > 1)
-        productItem->setProperty(StringConstants::multiplexedProperty(), VariantValue::trueValue());
-    VariantValuePtr productNameValue = VariantValue::create(productName);
-    Item *aggregator = multiplexInfo.aggregate ? productItem->clone() : nullptr;
+        m_productItem->setProperty(StringConstants::multiplexedProperty(), VariantValue::trueValue());
+    VariantValuePtr productNameValue = VariantValue::create(m_productName);
+    Item *aggregator = multiplexInfo.aggregate ? m_productItem->clone(m_loaderState.itemPool())
+                                               : nullptr;
     QList<Item *> additionalProductItems;
     std::vector<VariantValuePtr> multiplexConfigurationIdValues;
     for (size_t row = 0; row < multiplexInfo.table.size(); ++row) {
-        Item *item = productItem;
+        Item *item = m_productItem;
         const auto &mprow = multiplexInfo.table.at(row);
         QBS_CHECK(mprow.size() == multiplexInfo.properties.size());
         if (row > 0) {
-            item = productItem->clone();
+            item = m_productItem->clone(m_loaderState.itemPool());
             additionalProductItems.push_back(item);
         }
-        const QString multiplexConfigurationId = multiplexInfo.toIdString(row);
+        const QString multiplexConfigurationId = multiplexInfo.toIdString(row, m_loaderState);
         const VariantValuePtr multiplexConfigurationIdValue
             = VariantValue::create(multiplexConfigurationId);
         if (multiplexInfo.table.size() > 1 || aggregator) {
@@ -127,7 +124,7 @@ QList<Item *> ProductItemMultiplexer::multiplex(
         if (multiplexInfo.multiplexedType)
             item->setProperty(StringConstants::typeProperty(), multiplexInfo.multiplexedType);
         for (size_t column = 0; column < mprow.size(); ++column) {
-            Item * const qbsItem = d->qbsItemRetriever(item);
+            Item * const qbsItem = retrieveQbsItem(item, m_loaderState);
             const QString &propertyName = multiplexInfo.properties.at(column);
             const VariantValuePtr &mpvalue = mprow.at(column);
             qbsItem->setProperty(propertyName, mpvalue);
@@ -139,14 +136,14 @@ QList<Item *> ProductItemMultiplexer::multiplex(
 
         // Add dependencies to all multiplexed instances.
         for (const auto &v : multiplexConfigurationIdValues) {
-            Item *dependsItem = Item::create(aggregator->pool(), ItemType::Depends);
+            Item *dependsItem = Item::create(&m_loaderState.itemPool(), ItemType::Depends);
             dependsItem->setProperty(StringConstants::nameProperty(), productNameValue);
             dependsItem->setProperty(StringConstants::multiplexConfigurationIdsProperty(), v);
             dependsItem->setProperty(StringConstants::profilesProperty(),
                                      VariantValue::create(QStringList()));
             dependsItem->setFile(aggregator->file());
-            dependsItem->setupForBuiltinType(d->loaderState.parameters().deprecationWarningMode(),
-                                             d->loaderState.logger());
+            dependsItem->setupForBuiltinType(m_loaderState.parameters().deprecationWarningMode(),
+                                             m_loaderState.logger());
             Item::addChild(aggregator, dependsItem);
         }
     }
@@ -154,23 +151,22 @@ QList<Item *> ProductItemMultiplexer::multiplex(
     return additionalProductItems;
 }
 
-MultiplexInfo ProductItemMultiplexer::Private::extractMultiplexInfo(Item *productItem,
-                                                                    Item *qbsModuleItem)
+MultiplexInfo ProductItemMultiplexer::extractMultiplexInfo()
 {
     static const QString mpmKey = QStringLiteral("multiplexMap");
 
-    Evaluator &evaluator = loaderState.evaluator();
+    Evaluator &evaluator = m_loaderState.evaluator();
     JSContext * const ctx = evaluator.engine()->context();
-    const ScopedJsValue multiplexMap(ctx, evaluator.value(qbsModuleItem, mpmKey));
+    const ScopedJsValue multiplexMap(ctx, evaluator.value(m_tempQbsModuleItem, mpmKey));
     const QStringList multiplexByQbsProperties = evaluator.stringListValue(
-        productItem, StringConstants::multiplexByQbsPropertiesProperty());
+        m_productItem, StringConstants::multiplexByQbsPropertiesProperty());
 
     MultiplexInfo multiplexInfo;
     multiplexInfo.aggregate = evaluator.boolValue(
-        productItem, StringConstants::aggregateProperty());
+        m_productItem, StringConstants::aggregateProperty());
 
     const QString multiplexedType = evaluator.stringValue(
-        productItem, StringConstants::multiplexedTypeProperty());
+        m_productItem, StringConstants::multiplexedTypeProperty());
     if (!multiplexedType.isEmpty())
         multiplexInfo.multiplexedType = VariantValue::create(multiplexedType);
 
@@ -183,7 +179,7 @@ MultiplexInfo ProductItemMultiplexer::Private::extractMultiplexInfo(Item *produc
         if (!uniqueMultiplexByQbsProperties.insert(mappedKey).second)
             continue;
 
-        const ScopedJsValue arr(ctx, evaluator.value(qbsModuleItem, key));
+        const ScopedJsValue arr(ctx, evaluator.value(m_tempQbsModuleItem, key));
         if (JS_IsUndefined(arr))
             continue;
         if (!JS_IsArray(ctx, arr))
@@ -210,8 +206,8 @@ MultiplexInfo ProductItemMultiplexer::Private::extractMultiplexInfo(Item *produc
     return multiplexInfo;
 }
 
-MultiplexTable ProductItemMultiplexer::Private::combine(const MultiplexTable &table,
-                                                        const MultiplexRow &values)
+MultiplexTable ProductItemMultiplexer::combine(const MultiplexTable &table,
+                                               const MultiplexRow &values)
 {
     MultiplexTable result;
     if (table.empty()) {
@@ -234,31 +230,7 @@ MultiplexTable ProductItemMultiplexer::Private::combine(const MultiplexTable &ta
     return result;
 }
 
-QVariantMap ProductItemMultiplexer::multiplexIdToVariantMap(const QString &multiplexId)
-{
-    if (multiplexId.isEmpty())
-        return QVariantMap();
-
-    // We assume that MultiplexInfo::toIdString() has been called for this
-    // particular multiplex configuration.
-    QVariantMap result = multiplexConfigurationsById->localData().value(multiplexId);
-    QBS_CHECK(!result.isEmpty());
-    return result;
-}
-
-QString ProductItemMultiplexer::fullProductDisplayName(const QString &name,
-                                                       const QString &multiplexId)
-{
-    static const auto multiplexIdToString =[](const QString &id) {
-        return QString::fromUtf8(QByteArray::fromBase64(id.toUtf8()));
-    };
-    QString result = name;
-    if (!multiplexId.isEmpty())
-        result.append(QLatin1Char(' ')).append(multiplexIdToString(multiplexId));
-    return result;
-}
-
-QString MultiplexInfo::toIdString(size_t row) const
+QString MultiplexInfo::toIdString(size_t row, LoaderState &loaderState) const
 {
     const auto &mprow = table.at(row);
     QVariantMap multiplexConfiguration;
@@ -272,9 +244,16 @@ QString MultiplexInfo::toIdString(size_t row) const
                                    .toBase64());
 
     // Cache for later use in multiplexIdToVariantMap()
-    multiplexConfigurationsById->localData().insert(id, multiplexConfiguration);
+    loaderState.topLevelProject().addMultiplexConfiguration(id, multiplexConfiguration);
 
     return id;
+}
+
+QList<Item *> multiplex(const QString &productName, Item *productItem, Item *tempQbsModuleItem,
+                        const std::function<void ()> &dropTempQbsModule, LoaderState &loaderState)
+{
+    return ProductItemMultiplexer(productName, productItem, tempQbsModuleItem, dropTempQbsModule,
+                                  loaderState).multiplex();
 }
 
 } // namespace qbs::Internal

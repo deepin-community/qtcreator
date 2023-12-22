@@ -41,6 +41,7 @@
 #include <utils/fileutils.h>
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/process.h>
+#include <utils/qtcsettings.h>
 
 #include <QAction>
 #include <QDesktopServices>
@@ -50,6 +51,7 @@
 #include <QTimer>
 
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace QmlProjectManager::Internal {
 
@@ -131,8 +133,8 @@ void QmlProjectPlugin::openQDS(const Utils::FilePath &fileName)
 
 Utils::FilePath QmlProjectPlugin::qdsInstallationEntry()
 {
-    QSettings *settings = Core::ICore::settings();
-    const QString qdsInstallationEntry = "QML/Designer/DesignStudioInstallation"; //set in installer
+    QtcSettings *settings = Core::ICore::settings();
+    const Key qdsInstallationEntry = "QML/Designer/DesignStudioInstallation"; //set in installer
 
     return Utils::FilePath::fromUserInput(settings->value(qdsInstallationEntry).toString());
 }
@@ -264,7 +266,7 @@ void QmlProjectPlugin::initialize()
     Utils::FileIconProvider::registerIconOverlayForSuffix(":/qmlproject/images/qmlproject.png",
                                                          "qmlproject");
 
-    if (QmlProject::isQtDesignStudio()) {
+    if (Core::ICore::isQtDesignStudio()) {
         Core::ActionContainer *menu = Core::ActionManager::actionContainer(
             ProjectExplorer::Constants::M_FILECONTEXT);
         QAction *mainfileAction = new QAction(Tr::tr("Set as Main .qml File"), this);
@@ -353,7 +355,7 @@ void QmlProjectPlugin::initialize()
     }
 
     GenerateCmake::generateMenuEntry(this);
-    if (QmlProject::isQtDesignStudio())
+    if (Core::ICore::isQtDesignStudio())
         GenerateCmake::CmakeProjectConverter::generateMenuEntry(this);
 }
 

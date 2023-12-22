@@ -80,7 +80,7 @@ QmlDesigner::NodeHints::NodeHints(const ModelNode &node) : m_modelNode(node)
         if (!itemLibraryEntryList.isEmpty())
             m_hints = itemLibraryEntryList.constFirst().hints();
     } else { /* If we have meta information we run the complete type hierarchy and check for hints */
-        const auto classHierarchy = m_modelNode.metaInfo().classHierarchy();
+        const auto classHierarchy = m_modelNode.metaInfo().selfAndPrototypes();
         for (const NodeMetaInfo &metaInfo : classHierarchy) {
             QList <ItemLibraryEntry> itemLibraryEntryList = libraryInfo->entriesForType(
                         metaInfo.typeName(), metaInfo.majorVersion(), metaInfo.minorVersion());
@@ -266,7 +266,7 @@ QPair<QString, QVariant> NodeHints::setParentProperty() const
 
     QStringList list = str.split(":");
 
-    if (list.count() != 2)
+    if (list.size() != 2)
         return {};
 
     return qMakePair(list.first().trimmed(), parseValue(list.last().trimmed()));

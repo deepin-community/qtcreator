@@ -26,8 +26,8 @@ Item {
     property alias contentItem: contentItem
     property color backgroundGradientColorStart: "#222222"
     property color backgroundGradientColorEnd: "#999999"
-    property color gridColor: "#aaaaaa"
-    property bool syncBackgroundColor: false
+    property color gridColor: "#cccccc"
+    property bool syncEnvBackground: false
 
     enum SelectionMode { Item, Group }
     enum TransformMode { Move, Rotate, Scale }
@@ -58,7 +58,7 @@ Item {
     onShowEditLightChanged:       _generalHelper.storeToolState(sceneId, "showEditLight", showEditLight)
     onGlobalOrientationChanged:   _generalHelper.storeToolState(sceneId, "globalOrientation", globalOrientation)
     onShowGridChanged:            _generalHelper.storeToolState(sceneId, "showGrid", showGrid);
-    onSyncBackgroundColorChanged: _generalHelper.storeToolState(sceneId, "syncBackgroundColor", syncBackgroundColor);
+    onSyncEnvBackgroundChanged:   _generalHelper.storeToolState(sceneId, "syncEnvBackground", syncEnvBackground);
     onShowSelectionBoxChanged:    _generalHelper.storeToolState(sceneId, "showSelectionBox", showSelectionBox);
     onShowIconGizmoChanged:       _generalHelper.storeToolState(sceneId, "showIconGizmo", showIconGizmo);
     onShowCameraFrustumChanged:   _generalHelper.storeToolState(sceneId, "showCameraFrustum", showCameraFrustum);
@@ -83,13 +83,13 @@ Item {
                                                "showGrid": showGrid,
                                                "gridColor": gridColor,
                                                "importScene": activeScene,
-                                               "cameraZoomFactor": cameraControl._zoomFactor,
+                                               "cameraLookAt": cameraControl._lookAtPoint,
                                                "z": 1});
             editView.usePerspective = Qt.binding(function() {return usePerspective;});
             editView.showSceneLight = Qt.binding(function() {return showEditLight;});
             editView.showGrid = Qt.binding(function() {return showGrid;});
             editView.gridColor = Qt.binding(function() {return gridColor;});
-            editView.cameraZoomFactor = Qt.binding(function() {return cameraControl._zoomFactor;});
+            editView.cameraLookAt = Qt.binding(function() {return cameraControl._lookAtPoint;});
 
             selectionBoxes.length = 0;
             cameraControl.forceActiveFocus();
@@ -136,6 +136,8 @@ Item {
                 }
             }
 
+            updateEnvBackground();
+
             notifyActiveSceneChange();
         }
     }
@@ -175,37 +177,55 @@ Item {
         }
     }
 
-    function alignCamerasToView()
+    function alignCamerasToView(cameraNodes)
     {
         if (editView) {
-            cameraControl.alignCameras(selectedNodes);
+            cameraControl.alignCameras(cameraNodes);
             var propertyNames = ["position", "eulerRotation"];
-            viewRoot.changeObjectProperty(selectedNodes, propertyNames);
-            viewRoot.commitObjectProperty(selectedNodes, propertyNames);
+            viewRoot.changeObjectProperty(cameraNodes, propertyNames);
+            viewRoot.commitObjectProperty(cameraNodes, propertyNames);
         }
     }
 
-    function alignViewToCamera()
+    function alignViewToCamera(cameraNodes)
     {
         if (editView)
-            cameraControl.alignView(selectedNodes);
+            cameraControl.alignView(cameraNodes);
     }
 
-    function updateViewStates(viewStates)
-    {
-        if ("selectBackgroundColor" in viewStates) {
-            var colors = viewStates.selectBackgroundColor
-            if (colors.length === 1) {
-                backgroundGradientColorStart = colors[0];
-                backgroundGradientColorEnd = colors[0];
-            } else {
-                backgroundGradientColorStart = colors[0];
-                backgroundGradientColorEnd = colors[1];
-            }
+    function updateBackgroundColors(colors) {
+        if (colors.length === 1) {
+            backgroundGradientColorStart = colors[0];
+            backgroundGradientColorEnd = colors[0];
+        } else {
+            backgroundGradientColorStart = colors[0];
+            backgroundGradientColorEnd = colors[1];
         }
+    }
 
-        if ("selectGridColor" in viewStates && viewStates.selectGridColor.length === 1)
-            viewRoot.gridColor = viewStates.selectGridColor[0]
+    function updateEnvBackground() {
+        updateBackgroundColors(_generalHelper.bgColor);
+
+        if (!editView)
+            return;
+
+        if (syncEnvBackground) {
+            let bgMode = _generalHelper.sceneEnvironmentBgMode(sceneId);
+            if ((!_generalHelper.sceneEnvironmentLightProbe(sceneId) && bgMode === SceneEnvironment.SkyBox)
+                || (!_generalHelper.sceneEnvironmentSkyBoxCubeMap(sceneId) && bgMode === SceneEnvironment.SkyBoxCubeMap)) {
+                editView.sceneEnv.backgroundMode = SceneEnvironment.Color;
+            } else {
+                editView.sceneEnv.backgroundMode = bgMode;
+            }
+            editView.sceneEnv.lightProbe = _generalHelper.sceneEnvironmentLightProbe(sceneId);
+            editView.sceneEnv.skyBoxCubeMap = _generalHelper.sceneEnvironmentSkyBoxCubeMap(sceneId);
+            editView.sceneEnv.clearColor = _generalHelper.sceneEnvironmentColor(sceneId);
+        } else {
+            editView.sceneEnv.backgroundMode = SceneEnvironment.Transparent;
+            editView.sceneEnv.lightProbe = null;
+            editView.sceneEnv.skyBoxCubeMap = null;
+            editView.sceneEnv.clearColor = "transparent";
+        }
     }
 
     // If resetToDefault is true, tool states not specifically set to anything will be reset to
@@ -222,14 +242,12 @@ Item {
         else if (resetToDefault)
             showGrid = true;
 
-        if ("syncBackgroundColor" in toolStates) {
-            syncBackgroundColor = toolStates.syncBackgroundColor;
-            if (syncBackgroundColor) {
-                var color = _generalHelper.sceneEnvironmentColor(sceneId);
-                updateViewStates({"selectBackgroundColor": color})
-            }
+        if ("syncEnvBackground" in toolStates) {
+            syncEnvBackground = toolStates.syncEnvBackground;
+            updateEnvBackground();
         } else if (resetToDefault) {
-            syncBackgroundColor = false;
+            syncEnvBackground = false;
+            updateEnvBackground();
         }
 
         if ("showSelectionBox" in toolStates)
@@ -282,7 +300,7 @@ Item {
     {
         _generalHelper.storeToolState(sceneId, "showEditLight", showEditLight)
         _generalHelper.storeToolState(sceneId, "showGrid", showGrid)
-        _generalHelper.storeToolState(sceneId, "syncBackgroundColor", syncBackgroundColor)
+        _generalHelper.storeToolState(sceneId, "syncEnvBackground", syncEnvBackground)
         _generalHelper.storeToolState(sceneId, "showSelectionBox", showSelectionBox)
         _generalHelper.storeToolState(sceneId, "showIconGizmo", showIconGizmo)
         _generalHelper.storeToolState(sceneId, "showCameraFrustum", showCameraFrustum)
@@ -310,7 +328,7 @@ Item {
                                                      "geometryName": geometryName});
                     selectionBoxes[selectionBoxes.length] = box;
                     box.view3D = Qt.binding(function() {return editView;});
-                    box.visible = Qt.binding(function() {return showSelectionBox;});
+                    box.showBox = Qt.binding(function() {return showSelectionBox;});
                 }
             }
         }
@@ -698,6 +716,7 @@ Item {
                 }
             }
         }
+
         function onHiddenStateChanged(node)
         {
             for (var i = 0; i < cameraGizmos.length; ++i) {
@@ -728,6 +747,16 @@ Item {
                 }
             }
         }
+
+        function onUpdateDragTooltip()
+        {
+            gizmoLabel.updateLabel();
+            rotateGizmoLabel.updateLabel();
+        }
+
+        function onSceneEnvDataChanged() {
+            updateEnvBackground();
+        }
     }
 
     Node {
@@ -747,7 +776,8 @@ Item {
             clipNear: viewRoot.editView ? viewRoot.editView.orthoCamera.clipNear : 1
             position: viewRoot.editView ? viewRoot.editView.orthoCamera.position : Qt.vector3d(0, 0, 0)
             rotation: viewRoot.editView ? viewRoot.editView.orthoCamera.rotation : Qt.quaternion(1, 0, 0, 0)
-            scale: viewRoot.editView ? viewRoot.editView.orthoCamera.scale : Qt.vector3d(0, 0, 0)
+            horizontalMagnification: viewRoot.editView ? viewRoot.editView.orthoCamera.horizontalMagnification : 1
+            verticalMagnification: viewRoot.editView ? viewRoot.editView.orthoCamera.verticalMagnification : 1
         }
 
         MouseArea3D {
@@ -834,6 +864,7 @@ Item {
                 else
                     viewRoot.changeObjectProperty([viewRoot.selectedNode], propertyNames);
             }
+            onCurrentAngleChanged: rotateGizmoLabel.updateLabel()
         }
 
         LightGizmo {
@@ -1012,6 +1043,27 @@ Item {
                 visible: targetNode.dragging
                 z: 3
 
+                function updateLabel()
+                {
+                    // This is skipped during application shutdown, as calling QQuickText::setText()
+                    // during application shutdown can crash the application.
+                    if (!gizmoLabel.visible || !viewRoot.selectedNode || shuttingDown)
+                        return;
+                    var targetProperty;
+                    if (gizmoLabel.targetNode === moveGizmo)
+                        gizmoLabelText.text = _generalHelper.snapPositionDragTooltip(viewRoot.selectedNode.position);
+                    else
+                        gizmoLabelText.text = _generalHelper.snapScaleDragTooltip(viewRoot.selectedNode.scale);
+                }
+
+                Connections {
+                    target: viewRoot.selectedNode
+                    function onPositionChanged() { gizmoLabel.updateLabel() }
+                    function onScaleChanged() { gizmoLabel.updateLabel() }
+                }
+
+                onVisibleChanged: gizmoLabel.updateLabel()
+
                 Rectangle {
                     color: "white"
                     x: -width / 2
@@ -1021,25 +1073,6 @@ Item {
                     border.width: 1
                     Text {
                         id: gizmoLabelText
-                        text: {
-                            // This is skipped during application shutdown, as calling QQuickText::setText()
-                            // during application shutdown can crash the application.
-                            if (shuttingDown)
-                                return text;
-                            var l = Qt.locale();
-                            var targetProperty;
-                            if (viewRoot.selectedNode) {
-                                if (gizmoLabel.targetNode === moveGizmo)
-                                    targetProperty = viewRoot.selectedNode.position;
-                                else
-                                    targetProperty = viewRoot.selectedNode.scale;
-                                return qsTr("x:") + Number(targetProperty.x).toLocaleString(l, 'f', 1)
-                                    + qsTr(" y:") + Number(targetProperty.y).toLocaleString(l, 'f', 1)
-                                    + qsTr(" z:") + Number(targetProperty.z).toLocaleString(l, 'f', 1);
-                            } else {
-                                return "";
-                            }
-                        }
                         anchors.centerIn: parent
                     }
                 }
@@ -1057,21 +1090,19 @@ Item {
                 parent: rotateGizmo.view3D
                 z: 3
 
+                function updateLabel() {
+                    // This is skipped during application shutdown, as calling QQuickText::setText()
+                    // during application shutdown can crash the application.
+                    if (!rotateGizmoLabel.visible || !rotateGizmo.targetNode || shuttingDown)
+                        return;
+                    var degrees = rotateGizmo.currentAngle * (180 / Math.PI);
+                    rotateGizmoLabelText.text = _generalHelper.snapRotationDragTooltip(degrees);
+                }
+
+                onVisibleChanged: rotateGizmoLabel.updateLabel()
+
                 Text {
                     id: rotateGizmoLabelText
-                    text: {
-                        // This is skipped during application shutdown, as calling QQuickText::setText()
-                        // during application shutdown can crash the application.
-                        if (shuttingDown)
-                            return text;
-                        var l = Qt.locale();
-                        if (rotateGizmo.targetNode) {
-                            var degrees = rotateGizmo.currentAngle * (180 / Math.PI);
-                            return Number(degrees).toLocaleString(l, 'f', 1);
-                        } else {
-                            return "";
-                        }
-                    }
                     anchors.centerIn: parent
                 }
             }
@@ -1134,5 +1165,31 @@ Item {
             color: "white"
             visible: viewRoot.fps > 0
         }
+    }
+
+    Keys.onPressed: (event) => {
+        switch (event.key) {
+        case Qt.Key_Control:
+        case Qt.Key_Shift:
+            gizmoLabel.updateLabel();
+            rotateGizmoLabel.updateLabel();
+            break;
+        default:
+            break;
+        }
+        event.accepted = false;
+    }
+
+    Keys.onReleased: (event) => {
+        switch (event.key) {
+        case Qt.Key_Control:
+        case Qt.Key_Shift:
+            gizmoLabel.updateLabel();
+            rotateGizmoLabel.updateLabel();
+            break;
+        default:
+            break;
+        }
+        event.accepted = false;
     }
 }

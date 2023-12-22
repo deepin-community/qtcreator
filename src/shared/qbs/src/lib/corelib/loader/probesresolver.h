@@ -42,30 +42,20 @@
 #define PROBESRESOLVER_H
 
 #include <language/forward_decls.h>
-
-#include <tools/filetime.h>
+#include <tools/codelocation.h>
 
 #include <QString>
-
-#include <vector>
 
 namespace qbs::Internal {
 class Item;
 class LoaderState;
+class ProductContext;
 
 class ProbesResolver
 {
 public:
     explicit ProbesResolver(LoaderState &loaderState);
-    void setOldProjectProbes(const std::vector<ProbeConstPtr> &oldProbes);
-    void setOldProductProbes(const QHash<QString, std::vector<ProbeConstPtr>> &oldProbes);
-    void printProfilingInfo(int indent);
-
-    struct ProductContext {
-        const QString &name;
-        const QString &uniqueName;
-    };
-    std::vector<ProbeConstPtr> resolveProbes(const ProductContext &productContext, Item *item);
+    void resolveProbes(ProductContext &productContext, Item *item);
 
 private:
     ProbeConstPtr findOldProjectProbe(const QString &globalId, bool condition,
@@ -80,19 +70,9 @@ private:
     bool probeMatches(const ProbeConstPtr &probe, bool condition,
                       const QVariantMap &initialProperties, const QString &configureScript,
                       CompareScript compareScript) const;
-    ProbeConstPtr resolveProbe(const ProductContext &productContext, Item *parent, Item *probe);
-
-    qint64 m_elapsedTimeProbes = 0;
-    quint64 m_probesEncountered = 0;
-    quint64 m_probesRun = 0;
-    quint64 m_probesCachedCurrent = 0;
-    quint64 m_probesCachedOld = 0;
+    void resolveProbe(ProductContext &productContext, Item *parent, Item *probe);
 
     LoaderState &m_loaderState;
-    QHash<QString, std::vector<ProbeConstPtr>> m_oldProjectProbes;
-    QHash<QString, std::vector<ProbeConstPtr>> m_oldProductProbes;
-    FileTime m_lastResolveTime;
-    QHash<CodeLocation, std::vector<ProbeConstPtr>> m_currentProbes;
 };
 
 } // namespace qbs::Internal

@@ -7,6 +7,8 @@
 #include "qmlprojectmanager_global.h"
 #include <projectexplorer/project.h>
 
+#include <QPointer>
+
 namespace QmlProjectManager {
 
 class QmlProject;
@@ -17,14 +19,13 @@ class QMLPROJECTMANAGER_EXPORT QmlProject : public ProjectExplorer::Project
 public:
     explicit QmlProject(const Utils::FilePath &filename);
 
-    static bool isQtDesignStudio();
     static bool isQtDesignStudioStartedFromQtC();
     bool isEditModePreferred() const override;
 
     ProjectExplorer::Tasks projectIssues(const ProjectExplorer::Kit *k) const final;
 
 protected:
-    RestoreResult fromMap(const QVariantMap &map, QString *errorMessage) override;
+    RestoreResult fromMap(const Utils::Store &map, QString *errorMessage) override;
 
 private:
     ProjectExplorer::DeploymentKnowledge deploymentKnowledge() const override;

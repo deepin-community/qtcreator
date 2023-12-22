@@ -86,6 +86,27 @@ static QString testProject(const char *fileName) {
     return testDataDir() + QLatin1Char('/') + QLatin1String(fileName);
 }
 
+class JSSourceValueCreator
+{
+    FileContextPtr m_fileContext;
+    std::vector<std::unique_ptr<QString>> m_strings;
+public:
+    JSSourceValueCreator(const FileContextPtr &fileContext)
+        : m_fileContext(fileContext)
+    {
+    }
+
+    JSSourceValuePtr create(const QString &sourceCode)
+    {
+        JSSourceValuePtr value = JSSourceValue::create();
+        value->setFile(m_fileContext);
+        auto str = std::make_unique<QString>(sourceCode);
+        value->setSourceCode(*str.get());
+        m_strings.push_back(std::move(str));
+        return value;
+    }
+};
+
 TestLanguage::TestLanguage(ILogSink *logSink, Settings *settings)
     : m_logSink(logSink)
     , m_settings(settings)
@@ -165,12 +186,16 @@ TopLevelProjectPtr TestLanguage::resolveProject(const char *relProjectFilePath)
 
 void TestLanguage::init()
 {
+    // clear caches, otherwise StoredVariantValues may end up being at the same address
+    // as the destroyed value
+    m_engine->reset();
     m_logSink->setLogLevel(LoggerInfo);
     defaultParameters = {};
     defaultParameters.setBuildRoot(m_tempDir.path() + "/buildroot");
     defaultParameters.setPropertyCheckingMode(ErrorHandlingMode::Strict);
     defaultParameters.setSettingsDirectory(m_settings->baseDirectory());
     defaultParameters.setTopLevelProfile(profileName());
+    defaultParameters.setMaxJobCount(1);
     defaultParameters.setConfigurationName("default");
     defaultParameters.setEnvironment(QProcessEnvironment::systemEnvironment());
     defaultParameters.setSearchPaths({SRCDIR "/../../../share/qbs"});
@@ -495,6 +520,29 @@ void TestLanguage::conditionalDepends()
         qDebug() << e.toString();
     }
     QCOMPARE(exceptionCaught, false);
+}
+
+void TestLanguage::convertStringList()
+{
+    FileContextPtr fileContext = FileContext::create();
+    fileContext->setFilePath("/dev/null");
+    JSSourceValueCreator sourceValueCreator(fileContext);
+    ItemPool pool;
+    Item *scope = Item::create(&pool, ItemType::Scope);
+    scope->setProperty("x", sourceValueCreator.create("[\"a\", \"b\"]"));
+
+    Evaluator evaluator(m_engine.get());
+    auto variantValue = evaluator.variantValue(scope, "x");
+    // despite we have a stringList prop, we evaluate it as a QVariantList
+    QCOMPARE(variantValue.userType(), QMetaType::Type::QVariantList);
+    // and we have to convert it explicitly
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    variantValue.convert(QMetaType(QMetaType::QStringList));
+#else
+    variantValue.convert(QMetaType::QStringList);
+#endif
+    QCOMPARE(variantValue.userType(), QMetaType::Type::QStringList);
+    QCOMPARE(variantValue, QStringList({"a", "b"}));
 }
 
 void TestLanguage::delayedError()
@@ -854,6 +902,8 @@ void TestLanguage::erroneousFiles_data()
             << "Cyclic dependencies detected.";
     QTest::newRow("dependency_cycle3")
             << "Cyclic dependencies detected.";
+    QTest::newRow("dependency_cycle3a")
+            << "Cyclic dependencies detected.";
     QTest::newRow("dependency_cycle4")
             << "Cyclic dependencies detected.";
     QTest::newRow("references_cycle")
@@ -967,6 +1017,10 @@ void TestLanguage::erroneousFiles_data()
             << "invalid-references.qbs:2:17.*Cannot open '.*nosuchproject.qbs'";
     QTest::newRow("missing-js-file")
             << "missing-js-file-module.qbs.*Cannot open '.*javascriptfile.js'";
+    QTest::newRow("frozen-object") << "'key' is read-only";
+    QTest::newRow("frozen-object-list") << "object is not extensible";
+    QTest::newRow("module-property-binding-in-project")
+        << "Module properties cannot be set in Project items";
 }
 
 void TestLanguage::erroneousFiles()
@@ -1038,6 +1092,7 @@ void TestLanguage::exports()
         product = products.value("B");
         QVERIFY(!!product);
         QVERIFY(product->dependencies.empty());
+        QCOMPARE(product->exportedModule.productDependencies, std::vector<QString>{"C"});
         product = products.value("C");
         QVERIFY(!!product);
         QVERIFY(product->dependencies.empty());
@@ -1559,27 +1614,6 @@ void TestLanguage::invalidOverrides_data()
             << "products.MyOtherProduct.cpp.useRPaths" << QString();
 }
 
-class JSSourceValueCreator
-{
-    FileContextPtr m_fileContext;
-    std::vector<std::unique_ptr<QString>> m_strings;
-public:
-    JSSourceValueCreator(const FileContextPtr &fileContext)
-        : m_fileContext(fileContext)
-    {
-    }
-
-    JSSourceValuePtr create(const QString &sourceCode)
-    {
-        JSSourceValuePtr value = JSSourceValue::create();
-        value->setFile(m_fileContext);
-        auto str = std::make_unique<QString>(sourceCode);
-        value->setSourceCode(*str.get());
-        m_strings.push_back(std::move(str));
-        return value;
-    }
-};
-
 void TestLanguage::itemPrototype()
 {
     FileContextPtr fileContext = FileContext::create();
@@ -1672,6 +1706,24 @@ void TestLanguage::jsImportUsedInMultipleScopes()
     QVERIFY(!exceptionCaught);
 }
 
+void TestLanguage::localProfileAsTopLevelProfile()
+{
+    bool exceptionCaught = false;
+    try {
+        defaultParameters.setTopLevelProfile("test-profile");
+        resolveProject("local-profile-as-top-level-profile.qbs");
+        QVERIFY(!!project);
+        QCOMPARE(int(project->products.size()), 1);
+        const PropertyMapConstPtr &props = project->products.front()->moduleProperties;
+        QCOMPARE(props->qbsPropertyValue("architecture"), "arm");
+        QCOMPARE(props->qbsPropertyValue("targetPlatform"), "macos");
+    } catch (const ErrorInfo &e) {
+        exceptionCaught = true;
+        qDebug() << e.toString();
+    }
+    QCOMPARE(exceptionCaught, false);
+}
+
 void TestLanguage::moduleMergingVariantValues()
 {
     bool exceptionCaught = false;
@@ -1684,6 +1736,157 @@ void TestLanguage::moduleMergingVariantValues()
         qDebug() << e.toString();
     }
     QCOMPARE(exceptionCaught, false);
+}
+
+void TestLanguage::moduleParameters_data()
+{
+    QTest::addColumn<QVariantMap>("inputProperties");
+    QTest::addColumn<QVariantMap>("expectedModuleParameters");
+    QTest::addColumn<bool>("errorExpected");
+
+    QTest::newRow("no overrides")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "false"),
+               std::make_pair("project.overrideFromExport", "false"),
+               std::make_pair("project.overrideFromProduct", "false")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromParameters")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromParameters")})})}
+            << false;
+    QTest::newRow("override from product")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "false"),
+               std::make_pair("project.overrideFromExport", "false"),
+               std::make_pair("project.overrideFromProduct", "true")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})})}
+            << false;
+    QTest::newRow("override from export")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "false"),
+               std::make_pair("project.overrideFromExport", "true"),
+               std::make_pair("project.overrideFromProduct", "false")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromExportDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromParameters")})})}
+            << false;
+    QTest::newRow("override from export and product")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "false"),
+               std::make_pair("project.overrideFromExport", "true"),
+               std::make_pair("project.overrideFromProduct", "true")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})})}
+            << false;
+    QTest::newRow("override from module")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "true"),
+               std::make_pair("project.overrideFromExport", "false"),
+               std::make_pair("project.overrideFromProduct", "false")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromModuleDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromParameters")})})}
+            << false;
+    QTest::newRow("override from module and product")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "true"),
+               std::make_pair("project.overrideFromExport", "false"),
+               std::make_pair("project.overrideFromProduct", "true")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})})}
+            << false;
+    QTest::newRow("override from module and export")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "true"),
+               std::make_pair("project.overrideFromExport", "true"),
+               std::make_pair("project.overrideFromProduct", "false")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromExportDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromParameters")})})}
+            << true;
+    QTest::newRow("override from module, export and product")
+            << QVariantMap{
+               std::make_pair("project.overrideFromModule", "true"),
+               std::make_pair("project.overrideFromExport", "true"),
+               std::make_pair("project.overrideFromProduct", "true")}
+            << QVariantMap{
+               std::make_pair("higher",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})}),
+               std::make_pair("dep",
+                              QVariantMap{std::make_pair("lower",
+                                          QVariantMap{std::make_pair("param", "fromProductDepends")})})}
+            << false;
+}
+
+void TestLanguage::moduleParameters()
+{
+    QFETCH(QVariantMap, inputProperties);
+    QFETCH(QVariantMap, expectedModuleParameters);
+    QFETCH(bool, errorExpected);
+
+    try {
+        defaultParameters.setOverriddenValues(inputProperties);
+        resolveProject("module-parameters/module-parameters.qbs");
+        QVERIFY(!errorExpected);
+        QVERIFY(project);
+        QCOMPARE(int(project->products.size()), 2);
+        const ResolvedProductPtr mainProduct = productsFromProject(project).value("main");
+        QVERIFY(mainProduct);
+        QCOMPARE(int(mainProduct->moduleParameters.size()), 2);
+        for (auto it = expectedModuleParameters.cbegin(); it != expectedModuleParameters.cend();
+             ++it) {
+            const auto findInProduct = [&](const QString &moduleName) {
+                for (auto it = mainProduct->moduleParameters.cbegin();
+                     it != mainProduct->moduleParameters.cend(); ++it) {
+                    if (it.key()->name == moduleName)
+                        return it.value();
+                }
+                return QVariantMap();
+            };
+            const QVariantMap actual = findInProduct(it.key());
+            const QVariantMap expected = it.value().toMap();
+            const bool same = actual == expected;
+            if (!same) {
+                qDebug().noquote() << "---" << expected;
+                qDebug().noquote() << "+++" << actual;
+            }
+            QVERIFY(same);
+        }
+    } catch (const ErrorInfo &e) {
+        QVERIFY2(errorExpected, qPrintable(e.toString()));
+    }
 }
 
 void TestLanguage::modulePrioritizationBySearchPath_data()
@@ -2402,6 +2605,35 @@ void TestLanguage::pathProperties()
     QCOMPARE(exceptionCaught, false);
 }
 
+void TestLanguage::probesAndMultiplexing()
+{
+    bool exceptionCaught = false;
+    try {
+        resolveProject("probes-and-multiplexing.qbs");
+        QVERIFY(project);
+        QCOMPARE(int(project->products.size()), 3);
+        QStringList architectures{"x86", "x86_64", "arm"};
+        for (const ResolvedProductPtr &product : project->products) {
+             const QString arch = product->moduleProperties->moduleProperty("qbs", "architecture")
+                                      .toString();
+             QVERIFY2(architectures.removeOne(arch), qPrintable(arch));
+             QCOMPARE(product->productProperties.value("archFromProbe").toString(), arch);
+             bool foundGroup = false;
+             for (const GroupPtr &group : product->groups) {
+                if (group->name == "theGroup") {
+                    foundGroup = true;
+                    QCOMPARE(group->properties->moduleProperty("qbs", "sysroot"), "/" + arch);
+                }
+             }
+             QVERIFY(foundGroup);
+        }
+    } catch (const ErrorInfo &e) {
+        exceptionCaught = true;
+        qDebug() << e.toString();
+    }
+    QCOMPARE(exceptionCaught, false);
+}
+
 void TestLanguage::profileValuesAndOverriddenValues()
 {
     bool exceptionCaught = false;
@@ -2760,6 +2992,7 @@ void TestLanguage::qbsPropertiesInProjectCondition()
     try {
         resolveProject("qbs-properties-in-project-condition.qbs");
         QVERIFY(!!project);
+        QVERIFY(!project->enabled);
         const QHash<QString, ResolvedProductPtr> products = productsFromProject(project);
         QCOMPARE(products.size(), 0);
     } catch (const ErrorInfo &e) {
@@ -3239,4 +3472,3 @@ int main(int argc, char *argv[])
     TestLanguage tl(ConsoleLogger::instance().logSink(), s.get());
     return QTest::qExec(&tl, argc, argv);
 }
-

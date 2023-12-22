@@ -183,7 +183,7 @@
             and drag the component along the axis.
         \li To move components on a plane, click the plane handle and drag the
             component on the plane.
-        \li To move an component freely in the 3D view, click and drag the gray
+        \li To move components freely in the 3D view, click and drag the gray
             handle at the center of the move gizmo.
      \endlist
 
@@ -221,11 +221,49 @@
             gray handle at the center of the component.
     \endlist
 
+    \section1 Snapping
+
+    With snapping turned on, the objects in the \uicontrol 3D view snap to certain
+    intervals during transformation (move, rotate, scale).
+
+    You can toggle snapping in the following ways:
+
+    \list
+      \li Select \inlineimage icons/snapping-3d.png
+      in the \uicontrol 3D view toolbar.
+      \li Hold down the \key Ctrl key.
+    \endlist
+
+    With snapping turned on, you can press and hold \key Shift to snap objects to one tenth of
+    the specified snap interval.
+
+    \section2 Configuring Snapping
+
+    To edit the snapping settings, select \inlineimage icons/snapping-3d-conf.png
+    in the \uicontrol 3D view toolbar to open the configure dialog.
+
+    In the configure dialog, you can do the following:
+    \list
+      \li Turn snapping on and off separately for the different transformations
+      (move, rotate, scale).
+      \li Set snap intervals for the transformations.
+      \note Changing the snap interval for the position also changes the grid line intervals.
+      \note All the grid lines might not be visible depending on the zoom level in the 3D view.
+      \li Select \uicontrol {Absolute Position} to snap to absolute values. Clear the checkbox
+       to use relative values.The absolute snapping aligns the object with the grid, while the
+       relative snapping moves the object in fixed intervals without changing its alignment.
+       For example, if you have an object that is slightly off the grid and you want to snap it
+       to the grid, use the absolute snapping. If you want to move the object by a certain
+       distance without affecting its orientation, use the relative snapping.
+    \endlist
+
     \section1 Aligning Views and Cameras
 
     To align a camera to the \uicontrol{3D} view:
     \list 1
       \li Select a camera in the \uicontrol{3D} or \uicontrol {Navigator} view.
+      \note If you don't have a camera selected, the most recently selected camera
+      is aligned to the view.
       \li In the \uicontrol{3D} view,
       select \inlineimage icons/align-camera-on.png
       .
@@ -234,9 +272,11 @@
     This moves and rotates the camera so that the camera shows the same view
     as the current view in the \uicontrol{3D} view.
 
-    To align the the \uicontrol{3D} view to a camera:
+    To align the \uicontrol{3D} view to a camera:
         \list 1
       \li Select a camera in the \uicontrol{3D} view or \uicontrol {Navigator}.
+      \note If you don't have a camera selected, the view is aligned to the most recently
+      selected camera.
       \li In the \uicontrol{3D} view,
       select \inlineimage icons/align-view-on.png
       .
@@ -313,7 +353,7 @@
     \endlist
 
     You can pause the particle animation by selecting
-    \inlineimage icons/particle-animation-on.png
+    \inlineimage icons/particle-pause.png
     . When the animation is paused, you can use
     \inlineimage icons/particles-seek.png
     to manually seek forward or backward in the particle animation.
@@ -371,6 +411,16 @@
         \li Toggle Edit Light On/Off
         \li \key U
         \li \l{Using Edit Light}
+    \row
+        \li \inlineimage icons/snapping-3d.png
+        \li Toggle Snapping During Node Drag
+        \li \key Shift + \key Tab
+        \li \l{Snapping}
+    \row
+        \li \inlineimage icons/snapping-3d-conf.png
+        \li Open Snap Configuration Dialog
+        \li
+        \li \l{Configuring Snapping}
     \row
         \li \inlineimage icons/align-camera-on.png
         \li Align Selected Cameras to View

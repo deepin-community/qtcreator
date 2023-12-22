@@ -73,7 +73,8 @@ ItemReader::ItemReader(LoaderState &loaderState) : m_loaderState(loaderState) {}
 
 void ItemReader::init()
 {
-    m_visitorState = std::make_unique<ItemReaderVisitorState>(m_loaderState.logger());
+    m_visitorState = std::make_unique<ItemReaderVisitorState>(
+        m_loaderState.topLevelProject().itemReaderCache(), m_loaderState.logger());
     m_visitorState->setDeprecationWarningMode(m_loaderState.parameters().deprecationWarningMode());
     m_projectFilePath  = m_loaderState.parameters().projectFilePath();
     setSearchPaths(m_loaderState.parameters().searchPaths());
@@ -150,11 +151,6 @@ Item *ItemReader::readFile(const QString &filePath, const CodeLocation &referenc
     }
 }
 
-Set<QString> ItemReader::filesRead() const
-{
-    return m_visitorState->filesRead();
-}
-
 void ItemReader::handlePropertyOptions(Item *optionsItem)
 {
     Evaluator &evaluator = m_loaderState.evaluator();
@@ -218,6 +214,14 @@ void ItemReader::handleAllPropertyOptionsItems(Item *item)
 Item *ItemReader::setupItemFromFile(const QString &filePath, const CodeLocation &referencingLocation)
 {
     Item *item = readFile(filePath, referencingLocation);
+
+    // This is technically not needed, because files are only set up once and then served
+    // from a cache. But it simplifies the checks in item.cpp if we require the locking invariant
+    // to always hold.
+    std::unique_ptr<ModuleItemLocker> locker;
+    if (item->type() == ItemType::Module)
+        locker = std::make_unique<ModuleItemLocker>(*item);
+
     handleAllPropertyOptionsItems(item);
     return item;
 }
@@ -226,7 +230,7 @@ Item *ItemReader::wrapInProjectIfNecessary(Item *item)
 {
     if (item->type() == ItemType::Project)
         return item;
-    Item *prj = Item::create(item->pool(), ItemType::Project);
+    Item *prj = Item::create(&m_loaderState.itemPool(), ItemType::Project);
     Item::addChild(prj, item);
     prj->setFile(item->file());
     prj->setLocation(item->location());

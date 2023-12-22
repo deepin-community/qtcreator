@@ -12,7 +12,7 @@ namespace QmlDesigner {
 template<typename ProjectStorage, typename Mutex>
 class SourcePathCache;
 
-class QmlDocumentParser : public QmlDocumentParserInterface
+class QmlDocumentParser final : public QmlDocumentParserInterface
 {
 public:
     using ProjectStorage = QmlDesigner::ProjectStorage<Sqlite::Database>;
@@ -29,7 +29,7 @@ public:
 #endif
 
     Storage::Synchronization::Type parse(const QString &sourceContent,
-                                         Storage::Synchronization::Imports &imports,
+                                         Storage::Imports &imports,
                                          SourceId sourceId,
                                          Utils::SmallStringView directoryPath) override;
 

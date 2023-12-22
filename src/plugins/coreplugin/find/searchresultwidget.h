@@ -18,6 +18,7 @@ class QToolButton;
 class QCheckBox;
 QT_END_NAMESPACE
 
+namespace Utils { class InfoLabel; }
 namespace Core {
 
 namespace Internal {
@@ -71,6 +72,7 @@ public:
     bool hasFilter() const;
     void showFilterWidget(QWidget *parent);
     void setReplaceEnabled(bool enabled);
+    Utils::SearchResultItems items(bool checkedOnly) const;
 
 public slots:
     void finishSearch(bool canceled, const QString &reason);
@@ -103,7 +105,6 @@ private:
     void continueAfterSizeWarning();
     void cancelAfterSizeWarning();
 
-    Utils::SearchResultItems checkedItems() const;
     void updateMatchesFoundLabel();
 
     SearchResultTreeView *m_searchResultTreeView = nullptr;
@@ -123,7 +124,7 @@ private:
     QWidget *m_descriptionContainer = nullptr;
     QLabel *m_label = nullptr;
     QLabel *m_searchTerm = nullptr;
-    QLabel *m_messageLabel = nullptr;
+    Utils::InfoLabel *m_messageLabel = nullptr;
     QToolButton *m_cancelButton = nullptr;
     QLabel *m_matchesFoundLabel = nullptr;
     bool m_preserveCaseSupported = true;

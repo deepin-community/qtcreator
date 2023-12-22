@@ -3,7 +3,7 @@
 
 #include "loadcoredialog.h"
 
-#include "debuggerkitinformation.h"
+#include "debuggerkitaspect.h"
 #include "debuggertr.h"
 #include "gdb/gdbengine.h"
 
@@ -161,7 +161,10 @@ AttachCoreDialog::~AttachCoreDialog()
 
 int AttachCoreDialog::exec()
 {
-    connect(d->symbolFileName, &PathChooser::textChanged, this, &AttachCoreDialog::changed);
+    connect(d->symbolFileName, &PathChooser::validChanged, this, &AttachCoreDialog::changed);
+    connect(d->coreFileName, &PathChooser::validChanged, this, [this] {
+        coreFileChanged(d->coreFileName->rawFilePath());
+    });
     connect(d->coreFileName, &PathChooser::textChanged, this, [this] {
         coreFileChanged(d->coreFileName->rawFilePath());
     });
@@ -272,7 +275,7 @@ void AttachCoreDialog::coreFileChanged(const FilePath &coreFile)
     if (coreFile.osType() != OsType::OsTypeWindows && coreFile.exists()) {
         Kit *k = d->kitChooser->currentKit();
         QTC_ASSERT(k, return);
-        Runnable debugger = DebuggerKitAspect::runnable(k);
+        ProcessRunData debugger = DebuggerKitAspect::runnable(k);
         CoreInfo cinfo = CoreInfo::readExecutableNameFromCore(debugger, coreFile);
         if (!cinfo.foundExecutableName.isEmpty())
             d->symbolFileName->setFilePath(cinfo.foundExecutableName);

@@ -1,6 +1,8 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+// new properties: QtQuick.Text::wrapMode, QtQuick.Controls.AbstractButton::icon
+
 VersionData {
     name: "Qt for MCUs 2.2"
 
@@ -60,7 +62,10 @@ VersionData {
         "QtQuickUltralite.Layers"
     ]
 
-    bannedImports: ["FlowView"]
+    bannedImports: [
+        "FlowView",
+        "SimulinkConnector"
+    ]
 
     //ComplexProperty is not a type, it's just a way to handle bigger props
     ComplexProperty {

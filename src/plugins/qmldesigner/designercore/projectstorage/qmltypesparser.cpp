@@ -49,7 +49,7 @@ ComponentWithoutNamespaces createComponentNameWithoutNamespaces(const QList<QQml
     return componentWithoutNamespaces;
 }
 
-void appendImports(Storage::Synchronization::Imports &imports,
+void appendImports(Storage::Imports &imports,
                    const QString &dependency,
                    SourceId sourceId,
                    QmlTypesParser::ProjectStorage &storage)
@@ -65,7 +65,7 @@ void appendImports(Storage::Synchronization::Imports &imports,
     imports.emplace_back(cppModuleId, Storage::Version{}, sourceId);
 }
 
-void addImports(Storage::Synchronization::Imports &imports,
+void addImports(Storage::Imports &imports,
                 SourceId sourceId,
                 const QStringList &dependencies,
                 QmlTypesParser::ProjectStorage &storage,
@@ -80,7 +80,7 @@ void addImports(Storage::Synchronization::Imports &imports,
         imports.emplace_back(qmlCppModuleId, Storage::Version{}, sourceId);
 }
 
-Storage::TypeTraits createTypeTraits(QQmlJSScope::AccessSemantics accessSematics)
+Storage::TypeTraits createAccessTypeTraits(QQmlJSScope::AccessSemantics accessSematics)
 {
     switch (accessSematics) {
     case QQmlJSScope::AccessSemantics::Reference:
@@ -94,6 +94,16 @@ Storage::TypeTraits createTypeTraits(QQmlJSScope::AccessSemantics accessSematics
     }
 
     return Storage::TypeTraits::None;
+}
+
+Storage::TypeTraits createTypeTraits(QQmlJSScope::AccessSemantics accessSematics, bool hasCustomParser)
+{
+    auto typeTrait = createAccessTypeTraits(accessSematics);
+
+    if (hasCustomParser)
+        typeTrait = typeTrait | Storage::TypeTraits::UsesCustomParser;
+
+    return typeTrait;
 }
 
 Storage::Version createVersion(QTypeRevision qmlVersion)
@@ -413,7 +423,7 @@ void addType(Storage::Synchronization::Types &types,
         Utils::SmallStringView{typeName},
         Storage::Synchronization::ImportedType{TypeNameString{component.baseTypeName()}},
         Storage::Synchronization::ImportedType{TypeNameString{component.extensionTypeName()}},
-        createTypeTraits(component.accessSemantics()),
+        createTypeTraits(component.accessSemantics(), component.hasCustomParser()),
         sourceId,
         createExports(exports, typeName, storage, cppModuleId),
         createProperties(component.ownProperties(), enumerationTypes, componentNameWithoutNamespace),
@@ -442,7 +452,7 @@ void addTypes(Storage::Synchronization::Types &types,
 } // namespace
 
 void QmlTypesParser::parse(const QString &sourceContent,
-                           Storage::Synchronization::Imports &imports,
+                           Storage::Imports &imports,
                            Storage::Synchronization::Types &types,
                            const Storage::Synchronization::ProjectData &projectData)
 {
@@ -462,7 +472,7 @@ void QmlTypesParser::parse(const QString &sourceContent,
 #else
 
 void QmlTypesParser::parse([[maybe_unused]] const QString &sourceContent,
-                           [[maybe_unused]] Storage::Synchronization::Imports &imports,
+                           [[maybe_unused]] Storage::Imports &imports,
                            [[maybe_unused]] Storage::Synchronization::Types &types,
                            [[maybe_unused]] const Storage::Synchronization::ProjectData &projectData)
 {}

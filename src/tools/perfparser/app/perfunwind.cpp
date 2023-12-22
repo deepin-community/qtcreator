@@ -366,7 +366,7 @@ void PerfUnwind::attr(const PerfRecordAttr &attr)
 }
 
 void PerfUnwind::addAttributes(const PerfEventAttributes &attributes, const QByteArray &name,
-                              const QList<quint64> &ids)
+                               const QList<quint64> &ids)
 {
     auto filteredIds = ids;
     // If we only get one attribute, it doesn't have an ID.
@@ -396,7 +396,7 @@ void PerfUnwind::addAttributes(const PerfEventAttributes &attributes, const QByt
     m_attributes.append(attributes);
     sendAttributes(internalId, attributes, name);
 
-    foreach (quint64 id, filteredIds)
+    for (quint64 id : std::as_const(filteredIds))
         m_attributeIds[id] = internalId;
 }
 
@@ -1026,13 +1026,13 @@ void PerfUnwind::flushEventBuffer(uint desiredBufferSize)
     std::stable_sort(m_taskEventsBuffer.begin(), m_taskEventsBuffer.end(), sortByTime<TaskEvent>);
 
     if (m_stats.enabled) {
-        for (const auto &sample : qAsConst(m_sampleBuffer)) {
+        for (const auto &sample : std::as_const(m_sampleBuffer)) {
             if (sample.time() < m_lastFlushMaxTime)
                 ++m_stats.numTimeViolatingSamples;
             else
                 break;
         }
-        for (const auto &mmap : qAsConst(m_mmapBuffer)) {
+        for (const auto &mmap : std::as_const(m_mmapBuffer)) {
             if (mmap.time() < m_lastFlushMaxTime)
                 ++m_stats.numTimeViolatingMmaps;
             else

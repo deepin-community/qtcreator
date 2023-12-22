@@ -39,53 +39,19 @@
 
 #pragma once
 
-#include <tools/pimpl.h>
-#include <tools/set.h>
-
-#include <QtGlobal>
-
-#include <functional>
-
-QT_BEGIN_NAMESPACE
-class QString;
-QT_END_NAMESPACE
-
 namespace qbs::Internal {
 class Item;
 class LoaderState;
 class ProductContext;
-class StoredModuleProviderInfo;
 enum class Deferral;
 
 // Collects the products' dependencies and builds the list of modules from them.
 // Actual loading of module files is offloaded to ModuleLoader.
-class DependenciesResolver
-{
-public:
-    DependenciesResolver(LoaderState &loaderState);
-    ~DependenciesResolver();
+void resolveDependencies(ProductContext &product, Deferral deferral, LoaderState &loaderState);
 
-    // Returns false if the product has unhandled product dependencies and thus needs
-    // to be deferred, true otherwise.
-    bool resolveDependencies(ProductContext &product, Deferral deferral);
-
-    void checkDependencyParameterDeclarations(const Item *productItem,
-                                              const QString &productName) const;
-
-    void setStoredModuleProviderInfo(const StoredModuleProviderInfo &moduleProviderInfo);
-    StoredModuleProviderInfo storedModuleProviderInfo() const;
-    const Set<QString> &tempQbsFiles() const;
-
-    void printProfilingInfo(int indent);
-
-    // Note: This function is never called for regular loading of the base module into a product,
-    //       but only for the special cases of loading the dummy base module into a project
-    //       and temporarily providing a base module for product multiplexing.
-    Item *loadBaseModule(ProductContext &product, Item *item);
-
-private:
-    class Private;
-    Pimpl<Private> d;
-};
+// Note: This function is never called for regular loading of the base module into a product,
+//       but only for the special cases of loading the dummy base module into a project
+//       and temporarily providing a base module for product multiplexing.
+Item *loadBaseModule(ProductContext &product, Item *item, LoaderState &loaderState);
 
 } // namespace qbs::Internal

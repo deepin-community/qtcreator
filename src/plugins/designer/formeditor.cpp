@@ -25,38 +25,41 @@
 #include <coreplugin/minisplitter.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/outputpane.h>
+
 #include <utils/infobar.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcsettings.h>
+#include <utils/stringutils.h>
+#include <utils/theme/theme.h>
 
-#include <QDesignerFormEditorPluginInterface>
-#include <QDesignerFormEditorInterface>
-#include <QDesignerComponents>
-#include <QDesignerFormWindowManagerInterface>
-#include <QDesignerWidgetBoxInterface>
 #include <abstractobjectinspector.h>
-#include <QDesignerPropertyEditorInterface>
 #include <QDesignerActionEditorInterface>
+#include <QDesignerComponents>
+#include <QDesignerFormEditorInterface>
+#include <QDesignerFormEditorPluginInterface>
+#include <QDesignerFormWindowManagerInterface>
+#include <QDesignerFormWindowToolInterface>
+#include <QDesignerPropertyEditorInterface>
+#include <QDesignerWidgetBoxInterface>
 
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
 #include <QCursor>
+#include <QDebug>
 #include <QDockWidget>
+#include <QElapsedTimer>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMessageBox>
-#include <QKeySequence>
+#include <QPainter>
+#include <QPluginLoader>
 #include <QPrintDialog>
 #include <QPrinter>
-#include <QPainter>
 #include <QStyle>
+#include <QTime>
 #include <QToolBar>
 #include <QVBoxLayout>
-
-#include <QDebug>
-#include <QSettings>
-#include <QPluginLoader>
-#include <QTime>
-#include <QElapsedTimer>
 
 #include <algorithm>
 
@@ -77,6 +80,9 @@ static inline QIcon designerIcon(const QString &iconName)
         qWarning() << "Unable to locate " << iconName;
     return icon;
 }
+
+Q_GLOBAL_STATIC(QString, sQtPluginPath);
+Q_GLOBAL_STATIC(QStringList, sAdditionalPluginPaths);
 
 using namespace Core;
 using namespace Designer::Constants;
@@ -123,6 +129,13 @@ public:
     }
 };
 
+class ToolData
+{
+public:
+    int index;
+    QByteArray className;
+};
+
 // FormEditorData
 
 class FormEditorData : public QObject
@@ -131,15 +144,15 @@ public:
     FormEditorData();
     ~FormEditorData();
 
-    void activateEditMode(int id);
-    void toolChanged(int);
+    void activateEditMode(const ToolData &toolData);
+    void toolChanged(QDesignerFormWindowInterface *form, int);
     void print();
     void setPreviewMenuEnabled(bool e);
     void updateShortcut(Command *command);
 
     void fullInit();
 
-    void saveSettings(QSettings *s);
+    void saveSettings(QtcSettings *s);
 
     void initDesignerSubWindows();
 
@@ -160,6 +173,7 @@ public:
                                   const QString &actionName,
                                   Id id,
                                   int toolNumber,
+                                  const QByteArray &toolClassName,
                                   const QString &iconName = QString(),
                                   const QString &keySequence = QString());
     Command *addToolAction(QAction *a,
@@ -203,9 +217,35 @@ public:
 
 static FormEditorData *d = nullptr;
 
-FormEditorData::FormEditorData() :
-    m_formeditor(QDesignerComponents::createFormEditor(nullptr))
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+static QStringList designerPluginPaths()
 {
+    const QStringList qtPluginPath = sQtPluginPath->isEmpty()
+                                         ? QDesignerComponents::defaultPluginPaths()
+                                         : QStringList(*sQtPluginPath);
+    return qtPluginPath + *sAdditionalPluginPaths;
+}
+#endif
+
+FormEditorData::FormEditorData()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    m_formeditor = QDesignerComponents::createFormEditorWithPluginPaths(designerPluginPaths(),
+                                                                        nullptr);
+#else
+    // Qt < 6.7.0 doesn't have API for changing the plugin path yet.
+    // Work around it by temporarily changing the application's library paths,
+    // which are used for Designer's plugin paths.
+    // This must be done before creating the FormEditor, and with it QDesignerPluginManager.
+    const QStringList restoreLibraryPaths = sQtPluginPath->isEmpty()
+                                                ? QStringList()
+                                                : QCoreApplication::libraryPaths();
+    if (!sQtPluginPath->isEmpty())
+        QCoreApplication::setLibraryPaths(QStringList(*sQtPluginPath));
+    m_formeditor = QDesignerComponents::createFormEditor(nullptr);
+    if (!sQtPluginPath->isEmpty())
+        QCoreApplication::setLibraryPaths(restoreLibraryPaths);
+#endif
     if (Designer::Constants::Internal::debug)
         qDebug() << Q_FUNC_INFO;
     QTC_ASSERT(!d, return);
@@ -230,7 +270,7 @@ FormEditorData::FormEditorData() :
         m_settingsPages.append(settingsPage);
     }
 
-    QObject::connect(EditorManager::instance(), &EditorManager::currentEditorChanged, [this](IEditor *editor) {
+    QObject::connect(EditorManager::instance(), &EditorManager::currentEditorChanged, this, [this](IEditor *editor) {
         if (Designer::Constants::Internal::debug)
             qDebug() << Q_FUNC_INFO << editor << " of " << m_fwm->formWindowCount();
 
@@ -251,7 +291,7 @@ FormEditorData::FormEditorData() :
 FormEditorData::~FormEditorData()
 {
     if (m_initStage == FullyInitialized) {
-        QSettings *s = ICore::settings();
+        QtcSettings *s = ICore::settings();
         s->beginGroup(settingsGroupC);
         m_editorWidget->saveSettings(s);
         s->endGroup();
@@ -360,7 +400,7 @@ void FormEditorData::fullInit()
         delete initTime;
     }
 
-    QObject::connect(EditorManager::instance(), &EditorManager::editorsClosed,
+    QObject::connect(EditorManager::instance(), &EditorManager::editorsClosed, this,
                      [this] (const QList<IEditor *> editors) {
         for (IEditor *editor : editors)
             m_editorWidget->removeFormWindowEditor(editor);
@@ -368,7 +408,7 @@ void FormEditorData::fullInit()
 
     // Nest toolbar and editor widget
     m_editorWidget = new EditorWidget;
-    QSettings *settings = ICore::settings();
+    QtcSettings *settings = ICore::settings();
     settings->beginGroup(settingsGroupC);
     m_editorWidget->restoreSettings(settings);
     settings->endGroup();
@@ -487,7 +527,7 @@ void FormEditorData::setupActions()
 
     m_actionPrint = new QAction(this);
     bindShortcut(ActionManager::registerAction(m_actionPrint, Core::Constants::PRINT, m_contexts), m_actionPrint);
-    QObject::connect(m_actionPrint, &QAction::triggered, [this]() { print(); });
+    connect(m_actionPrint, &QAction::triggered, this, &FormEditorData::print);
 
     //'delete' action. Do not set a shortcut as Designer handles
     // the 'Delete' key by event filter. Setting a shortcut triggers
@@ -500,30 +540,53 @@ void FormEditorData::setupActions()
 
     m_actionGroupEditMode = new QActionGroup(this);
     m_actionGroupEditMode->setExclusive(true);
-    QObject::connect(m_actionGroupEditMode, &QActionGroup::triggered,
-            [this](QAction *a) { activateEditMode(a->data().toInt()); });
+    QObject::connect(m_actionGroupEditMode, &QActionGroup::triggered, this, [this](QAction *a) {
+        activateEditMode(a->data().value<ToolData>());
+    });
 
     medit->addSeparator(m_contexts, Core::Constants::G_EDIT_OTHER);
 
     m_toolActionIds.push_back("FormEditor.WidgetEditor");
-    createEditModeAction(m_actionGroupEditMode, m_contexts, medit,
-                         Tr::tr("Edit Widgets"), m_toolActionIds.back(),
-                         EditModeWidgetEditor, "widgettool.png", Tr::tr("F3"));
+    createEditModeAction(m_actionGroupEditMode,
+                         m_contexts,
+                         medit,
+                         Tr::tr("Edit Widgets"),
+                         m_toolActionIds.back(),
+                         EditModeWidgetEditor,
+                         "qdesigner_internal::WidgetEditorTool",
+                         "widgettool.png",
+                         Tr::tr("F3"));
 
     m_toolActionIds.push_back("FormEditor.SignalsSlotsEditor");
-    createEditModeAction(m_actionGroupEditMode, m_contexts, medit,
-                         Tr::tr("Edit Signals/Slots"), m_toolActionIds.back(),
-                         EditModeSignalsSlotEditor, "signalslottool.png", Tr::tr("F4"));
+    createEditModeAction(m_actionGroupEditMode,
+                         m_contexts,
+                         medit,
+                         Tr::tr("Edit Signals/Slots"),
+                         m_toolActionIds.back(),
+                         EditModeSignalsSlotEditor,
+                         "qdesigner_internal::SignalSlotEditorTool",
+                         "signalslottool.png",
+                         Tr::tr("F4"));
 
     m_toolActionIds.push_back("FormEditor.BuddyEditor");
-    createEditModeAction(m_actionGroupEditMode, m_contexts, medit,
-                         Tr::tr("Edit Buddies"), m_toolActionIds.back(),
-                         EditModeBuddyEditor, "buddytool.png");
+    createEditModeAction(m_actionGroupEditMode,
+                         m_contexts,
+                         medit,
+                         Tr::tr("Edit Buddies"),
+                         m_toolActionIds.back(),
+                         EditModeBuddyEditor,
+                         "qdesigner_internal::BuddyEditorTool",
+                         "buddytool.png");
 
     m_toolActionIds.push_back("FormEditor.TabOrderEditor");
-    createEditModeAction(m_actionGroupEditMode, m_contexts, medit,
-                         Tr::tr("Edit Tab Order"),  m_toolActionIds.back(),
-                         EditModeTabOrderEditor, "tabordertool.png");
+    createEditModeAction(m_actionGroupEditMode,
+                         m_contexts,
+                         medit,
+                         Tr::tr("Edit Tab Order"),
+                         m_toolActionIds.back(),
+                         EditModeTabOrderEditor,
+                         "qdesigner_internal::TabOrderEditorTool",
+                         "tabordertool.png");
 
     //tool actions
     m_toolActionIds.push_back("FormEditor.LayoutHorizontally");
@@ -605,7 +668,7 @@ void FormEditorData::setupActions()
     m_actionAboutPlugins->setEnabled(false);
 
     // FWM
-    QObject::connect(m_fwm, &QDesignerFormWindowManagerInterface::activeFormWindowChanged,
+    QObject::connect(m_fwm, &QDesignerFormWindowManagerInterface::activeFormWindowChanged, this,
         [this] (QDesignerFormWindowInterface *afw) {
             m_fwm->closeAllPreviews();
             setPreviewMenuEnabled(afw != nullptr);
@@ -670,7 +733,7 @@ void FormEditorData::setPreviewMenuEnabled(bool e)
     m_previewInStyleMenu->setEnabled(e);
 }
 
-void FormEditorData::saveSettings(QSettings *s)
+void FormEditorData::saveSettings(QtcSettings *s)
 {
     s->beginGroup(settingsGroupC);
     m_editorWidget->saveSettings(s);
@@ -693,13 +756,14 @@ void FormEditorData::bindShortcut(Command *command, QAction *action)
 
 // Create an action to activate a designer tool
 QAction *FormEditorData::createEditModeAction(QActionGroup *ag,
-                                     const Context &context,
-                                     ActionContainer *medit,
-                                     const QString &actionName,
-                                     Id id,
-                                     int toolNumber,
-                                     const QString &iconName,
-                                     const QString &keySequence)
+                                              const Context &context,
+                                              ActionContainer *medit,
+                                              const QString &actionName,
+                                              Id id,
+                                              int toolNumber,
+                                              const QByteArray &toolClassName,
+                                              const QString &iconName,
+                                              const QString &keySequence)
 {
     auto rc = new QAction(actionName, ag);
     rc->setCheckable(true);
@@ -711,7 +775,7 @@ QAction *FormEditorData::createEditModeAction(QActionGroup *ag,
         command->setDefaultKeySequence(QKeySequence(keySequence));
     bindShortcut(command, rc);
     medit->addAction(command, Core::Constants::G_EDIT_OTHER);
-    rc->setData(toolNumber);
+    rc->setData(QVariant::fromValue(ToolData{toolNumber, toolClassName}));
     ag->addAction(rc);
     return rc;
 }
@@ -739,7 +803,9 @@ IEditor *FormEditorData::createEditor()
     QDesignerFormWindowInterface *form = m_fwm->createFormWindow(nullptr);
     QTC_ASSERT(form, return nullptr);
     form->setPalette(Theme::initialPalette());
-    QObject::connect(form, &QDesignerFormWindowInterface::toolChanged, [this] (int i) { toolChanged(i); });
+    connect(form, &QDesignerFormWindowInterface::toolChanged, this, [this, form](int index) {
+        toolChanged(form, index);
+    });
 
     auto widgetHost = new SharedTools::WidgetHost( /* parent */ nullptr, form);
     FormWindowEditor *formWindowEditor = m_xmlEditorFactory->create(form);
@@ -792,26 +858,48 @@ void FormEditorData::updateShortcut(Command *command)
         a->setShortcut(command->action()->shortcut());
 }
 
-void FormEditorData::activateEditMode(int id)
+static void setTool(QDesignerFormWindowInterface *formWindow, const ToolData &toolData)
 {
-    if (const int count = m_fwm->formWindowCount())
-        for (int i = 0; i <  count; i++)
-             m_fwm->formWindow(i)->setCurrentTool(id);
+    // check for tool action with correct object name,
+    // otherwise fall back to index
+    if (!toolData.className.isEmpty()) {
+        const int toolCount = formWindow->toolCount();
+        for (int tool = 0; tool < toolCount; ++tool) {
+            if (formWindow->tool(tool)->metaObject()->className() == toolData.className) {
+                formWindow->setCurrentTool(tool);
+                return;
+            }
+        }
+    }
+    formWindow->setCurrentTool(toolData.index);
 }
 
-void FormEditorData::toolChanged(int t)
+void FormEditorData::activateEditMode(const ToolData &toolData)
 {
-    typedef QList<QAction *> ActionList;
-    if (const QAction *currentAction = m_actionGroupEditMode->checkedAction())
-        if (currentAction->data().toInt() == t)
+    if (const int count = m_fwm->formWindowCount()) {
+        for (int i = 0; i < count; i++)
+            setTool(m_fwm->formWindow(i), toolData);
+    }
+}
+
+void FormEditorData::toolChanged(QDesignerFormWindowInterface *form, int t)
+{
+    // check for action with correct object name,
+    // otherwise fall back to index
+    QDesignerFormWindowToolInterface *tool = form->tool(t);
+    const QList<QAction *> actions = m_actionGroupEditMode->actions();
+    QAction *candidateByIndex = nullptr;
+    for (QAction *action : actions) {
+        const auto toolData = action->data().value<ToolData>();
+        if (!toolData.className.isEmpty() && toolData.className == tool->metaObject()->className()) {
+            action->setChecked(true);
             return;
-    const ActionList actions = m_actionGroupEditMode->actions();
-    const ActionList::const_iterator cend = actions.constEnd();
-    for (ActionList::const_iterator it = actions.constBegin(); it != cend; ++it)
-        if ( (*it)->data().toInt() == t) {
-            (*it)->setChecked(true);
-            break;
         }
+        if (toolData.index == t)
+            candidateByIndex = action;
+    }
+    if (candidateByIndex)
+        candidateByIndex->setChecked(true);
 }
 
 void FormEditorData::print()
@@ -871,5 +959,35 @@ void FormEditorData::print()
     printer->setPageOrientation(oldOrientation);
 }
 
+void setQtPluginPath(const QString &qtPluginPath)
+{
+    QTC_CHECK(!d);
+    *sQtPluginPath = QDir::fromNativeSeparators(qtPluginPath);
+#if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
+    // Cut a "/designer" postfix off, if present.
+    // For Qt < 6.7.0 we hack the plugin path by temporarily setting the application library paths
+    // and Designer adds "/designer" to these.
+    static const QString postfix = "/designer";
+    *sQtPluginPath = Utils::trimBack(*sQtPluginPath, '/');
+    if (sQtPluginPath->endsWith(postfix))
+        sQtPluginPath->chop(postfix.size());
+    if (!QFileInfo::exists(*sQtPluginPath + postfix)) {
+        qWarning() << qPrintable(
+            QLatin1String(
+                "Warning: The path \"%1\" passed to -designer-qt-pluginpath does not exist. "
+                "Note that \"%2\" at the end is enforced.")
+                .arg(*sQtPluginPath + postfix, postfix));
+    }
+#endif
+}
+
+void addPluginPath(const QString &pluginPath)
+{
+    QTC_CHECK(!d);
+    sAdditionalPluginPaths->append(pluginPath);
+}
+
 } // namespace Internal
 } // namespace Designer
+
+Q_DECLARE_METATYPE(Designer::Internal::ToolData)

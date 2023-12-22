@@ -114,6 +114,13 @@ void PdbEngine::setupEngine()
 
     CommandLine cmd{m_interpreter, {bridge, scriptFile.path()}};
     cmd.addArg(runParameters().inferior.workingDirectory.path());
+    cmd.addArg("--");
+    QStringList arguments = runParameters().inferior.command.splitArguments();
+    if (!arguments.isEmpty() && arguments.constFirst() == "-u")
+        arguments.removeFirst(); // unbuffered added by run config
+    if (!arguments.isEmpty())
+        arguments.removeFirst(); // file added by run config
+    cmd.addArgs(arguments);
     showMessage("STARTING " + cmd.toUserOutput());
     m_proc.setEnvironment(runParameters().debugger.environment);
     m_proc.setCommand(cmd);
@@ -543,7 +550,7 @@ void PdbEngine::updateLocals()
 
     const bool alwaysVerbose = qtcEnvironmentVariableIsSet("QTC_DEBUGGER_PYTHON_VERBOSE");
     cmd.arg("passexceptions", alwaysVerbose);
-    cmd.arg("fancy", debuggerSettings()->useDebuggingHelpers.value());
+    cmd.arg("fancy", settings().useDebuggingHelpers());
 
     //cmd.arg("resultvarname", m_resultVarName);
     //m_lastDebuggableCommand = cmd;

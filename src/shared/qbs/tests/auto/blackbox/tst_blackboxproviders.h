@@ -41,10 +41,12 @@ public:
     TestBlackboxProviders();
 
 private slots:
+    void brokenProvider();
     void fallbackModuleProvider_data();
     void fallbackModuleProvider();
     void moduleProviders();
     void moduleProvidersCache();
+    void nonEagerModuleProvider();
     void probeInModuleProvider();
     void providersProperties();
     void qbsModulePropertiesInProviders();
@@ -55,6 +57,7 @@ private slots:
     void qbsModuleProvidersCompatibility();
     void qbsModuleProvidersCompatibility_data();
     void qbspkgconfigModuleProvider();
+    void removalVersion();
 };
 
 #endif // TST_BLACKBOXPROVIDERS_H

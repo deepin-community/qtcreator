@@ -125,6 +125,8 @@ private:
     void resolveImportSupport();
     void updateMaterialPreviewData(const QVector<PropertyValueContainer> &valueChanges);
     void updateRotationBlocks(const QVector<PropertyValueContainer> &valueChanges);
+    void updateSnapSettings(const QVector<PropertyValueContainer> &valueChanges);
+    void updateColorSettings(const QVector<PropertyValueContainer> &valueChanges);
     void removeRotationBlocks(const QVector<qint32> &instanceIds);
     void getNodeAtPos(const QPointF &pos);
 
@@ -134,7 +136,10 @@ private:
     void resetParticleSystem();
     void handleParticleSystemDeselected();
 #endif
-    void setSceneEnvironmentColor(const PropertyValueContainer &container);
+    void setSceneEnvironmentData(qint32 instanceId);
+    QVariantList alignCameraList() const;
+    void updateSceneEnvToHelper();
+    bool isSceneEnvironmentBgProperty(const PropertyName &name) const;
 
     RenderViewData m_editView3DData;
     RenderViewData m_modelNode3DImageViewData;
@@ -171,6 +176,9 @@ private:
     QObject *m_3dHelper = nullptr;
     int m_need3DEditViewRender = 0;
     QSet<QObject *> m_dynamicObjectConstructors;
+
+    // Current or previous camera selections for each scene
+    QHash<QObject *, QObjectList> m_selectedCameras; // key: scene root, value: camera node
 
     struct PreviewData {
         QString env;

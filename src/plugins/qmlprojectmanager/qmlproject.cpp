@@ -4,7 +4,7 @@
 #include "qmlproject.h"
 
 #include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtsupportconstants.h>
 
 #include <QTimer>
@@ -33,15 +33,16 @@
 
 #include <QDebug>
 #include <QLoggingCategory>
-#include <QMessageBox>
 #include <QRegularExpression>
 #include <QTextCodec>
 #include <QTimer>
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace QmlProjectManager {
+
 QmlProject::QmlProject(const Utils::FilePath &fileName)
     : Project(QString::fromLatin1(Constants::QMLPROJECT_MIMETYPE), fileName)
 {
@@ -52,7 +53,7 @@ QmlProject::QmlProject(const Utils::FilePath &fileName)
     setNeedsBuildConfigurations(false);
     setBuildSystemCreator([](Target *t) { return new QmlBuildSystem(t); });
 
-    if (QmlProject::isQtDesignStudio()) {
+    if (Core::ICore::isQtDesignStudio()) {
         if (allowOnlySingleProject()) {
             EditorManager::closeAllDocuments();
             ProjectManager::closeAllProjects();
@@ -67,43 +68,27 @@ void QmlProject::parsingFinished(const Target *target, bool success)
     // trigger only once
     disconnect(this, &QmlProject::anyParsingFinished, this, &QmlProject::parsingFinished);
 
-    // FIXME: what to do in this case?
     if (!target || !success || !activeTarget())
         return;
 
-    auto targetActive = activeTarget();
-    auto qmlBuildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
-        targetActive->buildSystem());
-
-    const Utils::FilePath mainUiFile = qmlBuildSystem->mainUiFilePath();
-
-    if (mainUiFile.completeSuffix() == "ui.qml" && mainUiFile.exists()) {
-        QTimer::singleShot(1000, [mainUiFile]() {
-            Core::EditorManager::openEditor(mainUiFile, Utils::Id());
-        });
+    const auto qmlBuildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
+        activeTarget()->buildSystem());
+    if (!qmlBuildSystem)
         return;
-    }
 
-    Utils::FilePaths uiFiles = collectUiQmlFilesForFolder(
-        projectDirectory().pathAppended("content"));
-    if (uiFiles.isEmpty()) {
-        uiFiles = collectUiQmlFilesForFolder(projectDirectory());
-        if (uiFiles.isEmpty())
-            return;
-    }
-
-    Utils::FilePath currentFile;
-    if (auto cd = Core::EditorManager::currentDocument())
-        currentFile = cd->filePath();
-
-    if (currentFile.isEmpty() || !isKnownFile(currentFile)) {
-        QTimer::singleShot(1000, [uiFiles]() {
-            Core::EditorManager::openEditor(uiFiles.first(), Utils::Id());
+    const auto openFile = [&](const Utils::FilePath file) {
+        //why is this timer needed here?
+        QTimer::singleShot(1000, this, [file] {
+            Core::EditorManager::openEditor(file, Utils::Id());
         });
-    }
+    };
+
+    const Utils::FilePath fileToOpen = qmlBuildSystem->getStartupQmlFileWithFallback();
+    if (!fileToOpen.isEmpty() && fileToOpen.exists() && !fileToOpen.isDir())
+        openFile(fileToOpen);
 }
 
-Project::RestoreResult QmlProject::fromMap(const QVariantMap &map, QString *errorMessage)
+Project::RestoreResult QmlProject::fromMap(const Store &map, QString *errorMessage)
 {
     RestoreResult result = Project::fromMap(map, errorMessage);
     if (result != RestoreResult::Ok)
@@ -128,7 +113,7 @@ Project::RestoreResult QmlProject::fromMap(const QVariantMap &map, QString *erro
 
     // FIXME: are there any other way?
     // What if it's not a Design Studio project? What should we do then?
-    if (QmlProject::isQtDesignStudio()) {
+    if (Core::ICore::isQtDesignStudio()) {
         int preferedVersion = preferedQtTarget(activeTarget());
 
         setKitWithVersion(preferedVersion, kits);
@@ -175,6 +160,14 @@ Utils::FilePaths QmlProject::collectUiQmlFilesForFolder(const Utils::FilePath &f
     return uiFiles;
 }
 
+Utils::FilePaths QmlProject::collectQmlFiles() const
+{
+    const Utils::FilePaths qmlFiles = files([&](const Node *node) {
+        return node->filePath().completeSuffix() == "qml";
+    });
+    return qmlFiles;
+}
+
 Tasks QmlProject::projectIssues(const Kit *k) const
 {
     Tasks result = Project::projectIssues(k);
@@ -214,13 +207,6 @@ Tasks QmlProject::projectIssues(const Kit *k) const
     return result;
 }
 
-bool QmlProject::isQtDesignStudio()
-{
-    QSettings *settings = Core::ICore::settings();
-    const QString qdsStandaloneEntry = "QML/Designer/StandAloneMode";
-    return settings->value(qdsStandaloneEntry, false).toBool();
-}
-
 bool QmlProject::isQtDesignStudioStartedFromQtC()
 {
     return qEnvironmentVariableIsSet(Constants::enviromentLaunchedQDS);
@@ -233,7 +219,7 @@ DeploymentKnowledge QmlProject::deploymentKnowledge() const
 
 bool QmlProject::isEditModePreferred() const
 {
-    return !isQtDesignStudio();
+    return !Core::ICore::isQtDesignStudio();
 }
 
 int QmlProject::preferedQtTarget(Target *target)
@@ -247,9 +233,9 @@ int QmlProject::preferedQtTarget(Target *target)
 
 bool QmlProject::allowOnlySingleProject()
 {
-    QSettings *settings = Core::ICore::settings();
-    auto key = "QML/Designer/AllowMultipleProjects";
-    return !settings->value(QString::fromUtf8(key), false).toBool();
+    QtcSettings *settings = Core::ICore::settings();
+    const Key key = "QML/Designer/AllowMultipleProjects";
+    return !settings->value(key, false).toBool();
 }
 
 } // namespace QmlProjectManager

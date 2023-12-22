@@ -1,6 +1,9 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+// new type: QtQuick.AnimatedSprite
+// new property: QtQuick.Loader::sourceComponent
+
 VersionData {
     name: "Qt for MCUs 2.4"
 
@@ -58,7 +61,10 @@ VersionData {
         "QtQuickUltralite.Layers"
     ]
 
-    bannedImports: ["FlowView"]
+    bannedImports: [
+        "FlowView",
+        "SimulinkConnector"
+    ]
 
     //ComplexProperty is not a type, it's just a way to handle bigger props
     ComplexProperty {
@@ -206,5 +212,9 @@ VersionData {
     QtQuick.Shapes.ShapePath {
         bannedProperties: ["dashOffset", "dashPattern",
             "fillGradient", "strokeStyle"]
+    }
+
+    QtQuickUltralite.Extras.ItemBuffer {
+        allowedProperties: ["rotation", "scale", "transformOrigin"]
     }
 }

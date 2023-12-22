@@ -27,7 +27,9 @@
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/target.h>
 
+#include <projectexplorer/devicesupport/idevice.h>
 #include <qmlprojectmanager/qmlproject.h>
+#include <qtsupport/qtkitaspect.h>
 
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
@@ -86,7 +88,7 @@ CrumbleBarModel::CrumbleBarModel(QObject *)
 
 int CrumbleBarModel::rowCount(const QModelIndex &) const
 {
-    return crumbleBar()->path().count();
+    return crumbleBar()->path().size();
 }
 
 QHash<int, QByteArray> CrumbleBarModel::roleNames() const
@@ -132,23 +134,27 @@ void CrumbleBarModel::onCrumblePathElementClicked(int i)
 
 WorkspaceModel::WorkspaceModel(QObject *)
 {
-    connect(designModeWidget(), &Internal::DesignModeWidget::initialized, this, [this]() {
+    auto connectDockManager = [this]() -> bool {
         const auto dockManager = designModeWidget()->dockManager();
+        if (!dockManager)
+            return false;
 
         connect(dockManager, &ADS::DockManager::workspaceListChanged, this, [this]() {
             beginResetModel();
             endResetModel();
         });
-
         beginResetModel();
         endResetModel();
-    });
+        return true;
+    };
+    if (!connectDockManager())
+        connect(designModeWidget(), &Internal::DesignModeWidget::initialized, this, connectDockManager);
 }
 
 int WorkspaceModel::rowCount(const QModelIndex &) const
 {
     if (designModeWidget() && designModeWidget()->dockManager())
-        return designModeWidget()->dockManager()->workspaces().count();
+        return designModeWidget()->dockManager()->workspaces().size();
 
     return 0;
 }
@@ -288,19 +294,25 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
             this,
             &ToolBarBackend::currentStyleChanged);
 
-    connect(designModeWidget(), &Internal::DesignModeWidget::initialized, this, [this]() {
+    auto connectDockManager = [this]() -> bool {
         const auto dockManager = designModeWidget()->dockManager();
+        if (!dockManager)
+            return false;
 
-        connect(dockManager, &ADS::DockManager::workspaceLoaded, this, [this](const QString &) {
-            emit currentWorkspaceChanged();
-        });
-
-        connect(dockManager, &ADS::DockManager::workspaceListChanged, this, [this]() {
-            emit currentWorkspaceChanged();
-        });
-
+        connect(dockManager,
+                &ADS::DockManager::workspaceLoaded,
+                this,
+                &ToolBarBackend::currentWorkspaceChanged);
+        connect(dockManager,
+                &ADS::DockManager::workspaceListChanged,
+                this,
+                &ToolBarBackend::currentWorkspaceChanged);
         emit currentWorkspaceChanged();
-    });
+        return true;
+    };
+
+    if (!connectDockManager())
+        connect(designModeWidget(), &Internal::DesignModeWidget::initialized, this, connectDockManager);
 
     auto editorManager = Core::EditorManager::instance();
 
@@ -476,7 +488,7 @@ void ToolBarBackend::setCurrentStyle(int index)
     QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_STATUSBAR_SET_STYLE);
     const QList<StyleWidgetEntry> items = ChangeStyleWidgetAction::getAllStyleItems();
 
-    QTC_ASSERT(items.count() > index, return );
+    QTC_ASSERT(items.size() > index, return);
     QTC_ASSERT(index > 0, return );
 
     QTC_ASSERT(currentDesignDocument(), return );
@@ -492,17 +504,33 @@ void ToolBarBackend::setCurrentStyle(int index)
     view->resetPuppet();
 }
 
+ProjectExplorer::Kit *kitForDisplayName(const QString &displayName)
+{
+    const auto kits = ProjectExplorer::KitManager::kits();
+
+    for (auto kit : kits) {
+        if (kit->displayName() == displayName)
+            return kit;
+    }
+
+    return {};
+}
+
 void ToolBarBackend::setCurrentKit(int index)
 {
     auto project = ProjectExplorer::ProjectManager::startupProject();
     QTC_ASSERT(project, return );
 
-    const auto kits = ProjectExplorer::KitManager::kits();
+    const auto kits = ToolBarBackend::kits();
 
-    QTC_ASSERT(kits.count() > index, return );
+    QTC_ASSERT(kits.size() > index, return );
     QTC_ASSERT(index >= 0, return );
 
-    const auto kit = kits.at(index);
+    const auto kitDisplayName = kits.at(index);
+
+    const auto kit = kitForDisplayName(kitDisplayName);
+
+    QTC_ASSERT(kit, return );
 
     auto newTarget = project->target(kit);
     if (!newTarget)
@@ -538,6 +566,7 @@ void ToolBarBackend::updateDocumentModel()
         m_openDocuments.append(entry->displayName());
 
     emit openDocumentsChanged();
+    emit documentIndexChanged();
 }
 
 int ToolBarBackend::documentIndex() const
@@ -607,8 +636,16 @@ int ToolBarBackend::currentStyle() const
 
 QStringList ToolBarBackend::kits() const
 {
-    return Utils::transform(ProjectExplorer::KitManager::kits(),
-                            [](ProjectExplorer::Kit *kit) { return kit->displayName(); });
+    auto kits = Utils::filtered(ProjectExplorer::KitManager::kits(), [](ProjectExplorer::Kit *kit) {
+        const auto qtVersion = QtSupport::QtKitAspect::qtVersion(kit);
+        const auto dev = ProjectExplorer::DeviceKitAspect::device(kit);
+
+        return kit->isValid() && !kit->isReplacementKit() && qtVersion && qtVersion->isValid()
+               && dev
+            /*&& kit->isAutoDetected() */;
+    });
+
+    return Utils::transform(kits, [](ProjectExplorer::Kit *kit) { return kit->displayName(); });
 }
 
 int ToolBarBackend::currentKit() const

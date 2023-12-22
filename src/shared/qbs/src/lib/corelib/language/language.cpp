@@ -51,7 +51,8 @@
 #include <buildgraph/rulegraph.h> // TODO: Move to language?
 #include <buildgraph/transformer.h>
 #include <jsextensions/jsextensions.h>
-#include <loader/productitemmultiplexer.h>
+#include <language/value.h>
+#include <loader/loaderutils.h>
 #include <logging/categories.h>
 #include <logging/translator.h>
 #include <tools/buildgraphlocker.h>
@@ -117,6 +118,12 @@ bool Probe::needsReconfigure(const FileTime &referenceTime) const
     return Internal::any_of(m_importedFilesUsed, criterion);
 }
 
+void Probe::restoreValues()
+{
+    for (auto it = m_properties.begin(), end = m_properties.end(); it != end; ++it) {
+        m_values[it.key()] = VariantValue::createStored(it.value());
+    }
+}
 
 /*!
  * \class SourceArtifact
@@ -427,7 +434,7 @@ QString ResolvedProduct::uniqueName() const
 
 QString ResolvedProduct::fullDisplayName() const
 {
-    return ProductItemMultiplexer::fullProductDisplayName(name, multiplexConfigurationId);
+    return fullProductDisplayName(name, multiplexConfigurationId);
 }
 
 QString ResolvedProduct::profile() const
@@ -728,7 +735,7 @@ Set<QString> SourceWildCards::expandPatterns(const GroupConstPtr &group,
     for (QString pattern : patterns) {
         pattern.prepend(expandedPrefix);
         pattern.replace(QLatin1Char('\\'), QLatin1Char('/'));
-        QStringList parts = pattern.split(QLatin1Char('/'), QBS_SKIP_EMPTY_PARTS);
+        QStringList parts = pattern.split(QLatin1Char('/'), Qt::SkipEmptyParts);
         if (FileInfo::isAbsolute(pattern)) {
             QString rootDir;
             if (HostOsInfo::isWindowsHost() && pattern.at(0) != QLatin1Char('/')) {

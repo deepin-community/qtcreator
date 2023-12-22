@@ -11,6 +11,7 @@
 #include "../projectexplorertr.h"
 #include "../projecttree.h"
 
+#include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditor.h>
 #include <coreplugin/messagemanager.h>
@@ -59,7 +60,7 @@ private:
     QVariant data(int column, int role) const override
     {
         if (column != 0 || role != Qt::DisplayRole)
-            return QVariant();
+            return {};
         return m_candidate->file.filePath().toUserOutput();
     }
 
@@ -192,7 +193,7 @@ JsonWizard::GeneratorFiles JsonWizard::generateFileList()
                               Tr::tr("The wizard failed to generate files.<br>"
                                  "The error message was: \"%1\".").arg(errorMessage));
         reject();
-        return GeneratorFiles();
+        return {};
     }
 
     QList<GeneratorFile *> projectFiles;
@@ -216,7 +217,7 @@ QString JsonWizard::stringValue(const QString &n) const
 {
     QVariant v = value(n);
     if (!v.isValid())
-        return QString();
+        return {};
 
     if (v.typeId() == QVariant::String) {
         QString tmp = m_expander.expand(v.toString());
@@ -271,7 +272,7 @@ QVariant JsonWizard::value(const QString &n) const
         return v;
     if (hasField(n))
         return field(n); // Cannot contain macros!
-    return QVariant();
+    return {};
 }
 
 bool JsonWizard::boolFromVariant(const QVariant &v, MacroExpander *expander)
@@ -287,7 +288,7 @@ QString JsonWizard::stringListToArrayString(const QStringList &list, const Macro
 {
     // Todo: Handle ' embedded in the strings better.
     if (list.isEmpty())
-        return QString();
+        return {};
 
     QStringList tmp = Utils::transform(list, [expander](const QString &i) {
         return expander->expand(i).replace(QLatin1Char('\''), QLatin1String("\\'"));
@@ -350,6 +351,14 @@ void JsonWizard::accept()
             QMessageBox::warning(this, Tr::tr("Failed to Format Files"), errorMessage);
         return;
     }
+
+    const QList<Core::IDocument *> documentsToClose
+        = transform(m_files, [](const GeneratorFile &file) -> Core::IDocument * {
+              if ((file.file.attributes() & Core::GeneratedFile::OpenEditorAttribute) == 0)
+                  return nullptr;
+              return Core::DocumentModel::documentForFilePath(file.file.filePath());
+          });
+    Core::EditorManager::closeDocuments(documentsToClose, /*askAboutModifiedEditors=*/false);
 
     emit preWriteFiles(m_files);
     if (!JsonWizardGenerator::writeFiles(this, &m_files, &errorMessage)) {
@@ -424,6 +433,10 @@ void JsonWizard::openFiles(const JsonWizard::GeneratorFiles &files)
 {
     QString errorMessage;
     bool openedSomething = stringValue("DoNotOpenFile") == "true";
+    static const auto formatFile = [](Core::IEditor *editor) {
+        editor->document()->formatContents();
+        editor->document()->save(nullptr);
+    };
     for (const JsonWizard::GeneratorFile &f : files) {
         const Core::GeneratedFile &file = f.file;
         if (!file.filePath().exists()) {
@@ -454,8 +467,12 @@ void JsonWizard::openFiles(const JsonWizard::GeneratorFiles &files)
                 break;
             } else if (file.attributes() & Core::GeneratedFile::TemporaryFile) {
                 editor->document()->setTemporary(true);
+            } else {
+                formatFile(editor);
             }
             openedSomething = true;
+        } else if (file.filePath().fileSize() < 100 * 1024 ) {
+            Core::EditorManager::runWithTemporaryEditor(file.filePath(), formatFile);
         }
     }
 

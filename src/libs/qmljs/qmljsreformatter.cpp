@@ -590,11 +590,32 @@ protected:
         return true;
     }
 
-    bool visit(UiObjectDefinition *ast) override
+    bool visit(UiAnnotation *ast) override
     {
+        out("@");
         accept(ast->qualifiedTypeNameId);
         out(" ");
         accept(ast->initializer);
+        return false;
+    }
+
+    bool visit(UiAnnotationList *ast) override
+    {
+        for (UiAnnotationList *it = ast; it; it = it->next) {
+            accept(it->annotation);
+            newLine();
+        }
+        return false;
+    }
+
+    bool visit(UiObjectDefinition *ast) override
+    {
+        accept(ast->annotations);
+
+        accept(ast->qualifiedTypeNameId);
+        out(" ");
+        accept(ast->initializer);
+
         return false;
     }
 
@@ -687,9 +708,12 @@ protected:
 
     bool visit(UiScriptBinding *ast) override
     {
+        accept(ast->annotations);
+
         accept(ast->qualifiedId);
         out(": ", ast->colonToken);
         accept(ast->statement);
+
         return false;
     }
 
@@ -1258,6 +1282,10 @@ protected:
         out(ast->rparenToken);
         if (ast->isArrowFunction && !ast->formals)
             out("()");
+        if (ast->typeAnnotation) {
+            out(": ");
+            out(ast->typeAnnotation->type->toString());
+        }
         out(" ");
         if (ast->isArrowFunction)
             out("=> ");
@@ -1290,6 +1318,7 @@ protected:
     {
         for (UiObjectMemberList *it = ast; it; it = it->next) {
             accept(it->member);
+
             if (it->next)
                 newLine();
         }
@@ -1381,6 +1410,10 @@ protected:
     {
         for (FormalParameterList *it = ast; it; it = it->next) {
             accept(it->element);
+            if (it->element->typeAnnotation) {
+                out(": ");
+                out(it->element->typeAnnotation->type->toString());
+            }
             if (it->next)
                 out(", ");
         }

@@ -545,7 +545,7 @@ void StyleHelper::drawIconWithShadow(const QIcon &icon, const QRect &rect,
                                      QPainter *p, QIcon::Mode iconMode, int dipRadius, const QColor &color, const QPoint &dipOffset)
 {
     QPixmap cache;
-    const int devicePixelRatio = p->device()->devicePixelRatio();
+    const qreal devicePixelRatio = p->device()->devicePixelRatioF();
     QString pixmapName = QString::fromLatin1("icon %0 %1 %2 %3")
             .arg(icon.cacheKey()).arg(iconMode).arg(rect.height()).arg(devicePixelRatio);
 
@@ -557,7 +557,7 @@ void StyleHelper::drawIconWithShadow(const QIcon &icon, const QRect &rect,
         // pixels.
         QWindow *window = dynamic_cast<QWidget*>(p->device())->window()->windowHandle();
         QPixmap px = icon.pixmap(window, rect.size(), iconMode);
-        int radius = dipRadius * devicePixelRatio;
+        int radius = int(dipRadius * devicePixelRatio);
         QPoint offset = dipOffset * devicePixelRatio;
         cache = QPixmap(px.size() + QSize(radius * 2, radius * 2));
         cache.fill(Qt::transparent);
@@ -712,6 +712,12 @@ bool StyleHelper::isQDSTheme()
     return creatorTheme() ? creatorTheme()->flag(Theme::QDSTheme) : false;
 }
 
+Qt::HighDpiScaleFactorRoundingPolicy StyleHelper::defaultHighDpiScaleFactorRoundingPolicy()
+{
+    return HostOsInfo::isMacHost() ? Qt::HighDpiScaleFactorRoundingPolicy::Unset
+                                   : Qt::HighDpiScaleFactorRoundingPolicy::Round;
+}
+
 QIcon StyleHelper::getIconFromIconFont(const QString &fontName, const QList<IconFontHelper> &parameters)
 {
     QFontDatabase a;
@@ -847,7 +853,7 @@ QString StyleHelper::dpiSpecificImageFile(const QString &fileName)
     if (qApp->devicePixelRatio() > 1.0) {
         const QString atDprfileName =
                 imageFileWithResolution(fileName, qRound(qApp->devicePixelRatio()));
-        if (QFile::exists(atDprfileName))
+        if (QFileInfo::exists(atDprfileName))
             return atDprfileName;
     }
     return fileName;
@@ -867,7 +873,7 @@ QList<int> StyleHelper::availableImageResolutions(const QString &fileName)
     QList<int> result;
     const int maxResolutions = qApp->devicePixelRatio();
     for (int i = 1; i <= maxResolutions; ++i)
-        if (QFile::exists(imageFileWithResolution(fileName, i)))
+        if (QFileInfo::exists(imageFileWithResolution(fileName, i)))
             result.append(i);
     return result;
 }

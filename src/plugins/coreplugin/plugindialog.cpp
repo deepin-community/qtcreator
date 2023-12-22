@@ -8,8 +8,6 @@
 #include "icore.h"
 #include "plugininstallwizard.h"
 
-#include <app/app_version.h>
-
 #include <extensionsystem/plugindetailsview.h>
 #include <extensionsystem/pluginerrorview.h>
 #include <extensionsystem/pluginmanager.h>
@@ -54,7 +52,7 @@ PluginDialog::PluginDialog(QWidget *parent)
         buttonBox,
     }.attachTo(this);
 
-    resize(650, 400);
+    resize(760, 440);
     setWindowTitle(Tr::tr("Installed Plugins"));
 
     connect(m_view, &ExtensionSystem::PluginView::currentPluginChanged,

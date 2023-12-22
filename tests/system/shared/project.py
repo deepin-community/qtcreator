@@ -81,8 +81,8 @@ def __createProjectOrFileSelectType__(category, template, fromWelcome = False, i
     return __getSupportedPlatforms__(str(text), template)[0]
 
 def __createProjectSetNameAndPath__(path, projectName = None, checks = True):
-    directoryEdit = waitForObject("{type='Utils::FancyLineEdit' unnamed='1' visible='1' "
-                                  "toolTip~='Full path: .*'}")
+    pathChooser = waitForObject("{type='Utils::PathChooser' name='baseFolder' visible='1'}")
+    directoryEdit = getChildByClass(pathChooser, "Utils::FancyLineEdit")
     replaceEditorContent(directoryEdit, path)
     projectNameEdit = waitForObject("{name='nameLineEdit' visible='1' "
                                     "type='Utils::FancyLineEdit'}")
@@ -248,11 +248,16 @@ def createProject_Qt_GUI(path, projectName, checks=True, addToVersionControl="<N
 # param path specifies where to create the project
 # param projectName is the name for the new project
 # param checks turns tests in the function on if set to True
-def createProject_Qt_Console(path, projectName, checks = True, buildSystem = None):
+def createProject_Qt_Console(path, projectName, checks = True, buildSystem = None, targets=[]):
     available = __createProjectOrFileSelectType__("  Application (Qt)", "Qt Console Application")
     __createProjectSetNameAndPath__(path, projectName, checks)
     buildSystem = __handleBuildSystem__(buildSystem)
     __createProjectHandleTranslationSelection__()
+    if targets:
+        available = set(targets).intersection(available)
+        if len(available) < len(targets):
+            test.warning("Could not use all desired targets.",
+                         "%s vs %s" % (str(available), str(targets)))
     __selectQtVersionDesktop__(buildSystem, checks, available)
 
     expectedFiles = []

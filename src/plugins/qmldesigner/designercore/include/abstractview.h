@@ -119,6 +119,7 @@ public:
     bool hasModelNodeForInternalId(qint32 internalId) const;
 
     QList<ModelNode> allModelNodes() const;
+    QList<ModelNode> allModelNodesUnordered() const;
     QList<ModelNode> allModelNodesOfType(const NodeMetaInfo &typeName) const;
 
     void emitDocumentMessage(const QList<DocumentMessage> &errors, const QList<DocumentMessage> &warnings = {});
@@ -147,6 +148,8 @@ public:
     virtual void modelAttached(Model *model);
     virtual void modelAboutToBeDetached(Model *model);
 
+    virtual void refreshMetaInfos(const TypeIds &deletedTypeIds);
+
     virtual void nodeCreated(const ModelNode &createdNode);
     virtual void nodeAboutToBeRemoved(const ModelNode &removedNode);
     virtual void nodeRemoved(const ModelNode &removedNode, const NodeAbstractProperty &parentProperty,
@@ -161,7 +164,8 @@ public:
     virtual void variantPropertiesChanged(const QList<VariantProperty> &propertyList,
                                           PropertyChangeFlags propertyChange);
     virtual void bindingPropertiesAboutToBeChanged(const QList<BindingProperty> &propertyList);
-    virtual void bindingPropertiesChanged(const QList<BindingProperty> &propertyList, PropertyChangeFlags propertyChange);
+    virtual void bindingPropertiesChanged(const QList<BindingProperty> &propertyList,
+                                          PropertyChangeFlags propertyChange);
     virtual void signalHandlerPropertiesChanged(const QVector<SignalHandlerProperty> &propertyList,
                                                 PropertyChangeFlags propertyChange);
     virtual void signalDeclarationPropertiesChanged(const QVector<SignalDeclarationProperty> &propertyList,
@@ -304,5 +308,6 @@ private:
 };
 
 QMLDESIGNERCORE_EXPORT QList<Internal::InternalNodePointer> toInternalNodeList(const QList<ModelNode> &nodeList);
-QMLDESIGNERCORE_EXPORT QList<ModelNode> toModelNodeList(const QList<Internal::InternalNodePointer> &nodeList, AbstractView *view);
+QMLDESIGNERCORE_EXPORT QList<ModelNode> toModelNodeList(
+    const QList<Internal::InternalNodePointer> &nodeList, Model *model, AbstractView *view);
 } // namespace QmlDesigner

@@ -34,10 +34,13 @@
 #include <coreplugin/idocument.h>
 #include <coreplugin/inavigationwidgetfactory.h>
 
+#include <qmlprojectmanager/qmlproject.h>
+
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
+#include <utils/transientscroll.h>
 
 #include <QActionGroup>
 #include <QApplication>
@@ -94,7 +97,7 @@ DesignModeWidget::DesignModeWidget()
     , m_crumbleBar(new CrumbleBar(this))
 {
     setAcceptDrops(true);
-    if (Utils::StyleHelper::isQDSTheme())
+    if (Utils::StyleHelper::isQDSTheme() || Core::ICore::isQtDesignStudio())
         qApp->setStyle(QmlDesignerBasePlugin::style());
 }
 
@@ -125,7 +128,6 @@ QWidget *DesignModeWidget::createProjectExplorerWidget(QWidget *parent)
 
     if (navigationView.widget) {
         QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
-        sheet += Utils::FileReader::fetchQrc(":/qmldesigner/scrollbar.css");
         sheet += "QLabel { background-color: #4f4f4f; }";
         navigationView.widget->setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
         navigationView.widget->setParent(parent);
@@ -179,18 +181,23 @@ void DesignModeWidget::setup()
     ADS::DockManager::setConfigFlag(ADS::DockManager::DockAreaHasUndockButton, false);
     ADS::DockManager::setConfigFlag(ADS::DockManager::DockAreaHasTabsMenuButton, false);
     ADS::DockManager::setConfigFlag(ADS::DockManager::OpaqueSplitterResize, true);
-    ADS::DockManager::setConfigFlag(ADS::DockManager::AllTabsHaveCloseButton, true);
+    ADS::DockManager::setConfigFlag(ADS::DockManager::AllTabsHaveCloseButton, false);
+    ADS::DockManager::setConfigFlag(ADS::DockManager::RetainTabSizeWhenCloseButtonHidden, true);
+
+    //ADS::DockManager::setAutoHideConfigFlags(ADS::DockManager::DefaultAutoHideConfig);
+
     m_dockManager = new ADS::DockManager(this);
     m_dockManager->setSettings(settings);
     m_dockManager->setWorkspacePresetsPath(
         Core::ICore::resourcePath("qmldesigner/workspacePresets/").toString());
 
     QString sheet = QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/dockwidgets.css"));
-    sheet += QString::fromUtf8(Utils::FileReader::fetchQrc(":/qmldesigner/scrollbar.css"));
     m_dockManager->setStyleSheet(Theme::replaceCssColors(sheet));
 
     // Setup icons
-    const QString closeUnicode = Theme::getIconUnicode(Theme::Icon::adsClose);
+    const QString closeUnicode = Theme::getIconUnicode(Theme::Icon::close_small);
+    const QString maximizeUnicode = Theme::getIconUnicode(Theme::Icon::maxBar_small);
+    const QString normalUnicode = Theme::getIconUnicode(Theme::Icon::normalBar_small);
 
     const QString fontName = "qtds_propertyIconFont.ttf";
     const QSize size = QSize(28, 28);
@@ -202,12 +209,40 @@ void DesignModeWidget::setup()
     auto tabCloseIconFocus = Utils::StyleHelper::IconFontHelper(
         closeUnicode, Theme::getColor(Theme::DSdockWidgetTitleBar), size, QIcon::Selected, QIcon::Off);
 
-    const QIcon tabsCloseIcon = Utils::StyleHelper::getIconFromIconFont(
-                fontName, {tabCloseIconNormal,
-                           tabCloseIconActive,
-                           tabCloseIconFocus});
+    const QIcon tabsCloseIcon = Utils::StyleHelper::getIconFromIconFont(fontName,
+                                                                        {tabCloseIconNormal,
+                                                                         tabCloseIconActive,
+                                                                         tabCloseIconFocus});
 
     ADS::DockManager::iconProvider().registerCustomIcon(ADS::TabCloseIcon, tabsCloseIcon);
+
+    auto floatingWidgetCloseIconNormal = Utils::StyleHelper::IconFontHelper(
+        closeUnicode, Theme::getColor(Theme::DStitleBarText), QSize(17, 17), QIcon::Normal, QIcon::Off);
+    const QIcon floatingWidgetCloseIcon = Utils::StyleHelper::getIconFromIconFont(
+        fontName, {floatingWidgetCloseIconNormal});
+
+    ADS::DockManager::iconProvider().registerCustomIcon(ADS::FloatingWidgetCloseIcon,
+                                                        floatingWidgetCloseIcon);
+
+    auto floatingWidgetMaxIconNormal = Utils::StyleHelper::IconFontHelper(maximizeUnicode,
+                                                                          Theme::getColor(
+                                                                              Theme::DStitleBarText),
+                                                                          QSize(17, 17),
+                                                                          QIcon::Normal,
+                                                                          QIcon::Off);
+    const QIcon floatingWidgetMaxIcon = Utils::StyleHelper::getIconFromIconFont(
+        fontName, {floatingWidgetMaxIconNormal});
+
+    ADS::DockManager::iconProvider().registerCustomIcon(ADS::FloatingWidgetMaximizeIcon,
+                                                        floatingWidgetMaxIcon);
+
+    auto floatingWidgetNormalIconNormal = Utils::StyleHelper::IconFontHelper(
+        normalUnicode, Theme::getColor(Theme::DStitleBarText), QSize(17, 17), QIcon::Normal, QIcon::Off);
+    const QIcon floatingWidgetNormalIcon = Utils::StyleHelper::getIconFromIconFont(
+        fontName, {floatingWidgetNormalIconNormal});
+
+    ADS::DockManager::iconProvider().registerCustomIcon(ADS::FloatingWidgetNormalIcon,
+                                                        floatingWidgetNormalIcon);
 
     // Setup Actions and Menus
     Core::ActionContainer *mview = Core::ActionManager::actionContainer(Core::Constants::M_VIEW);
@@ -266,7 +301,6 @@ void DesignModeWidget::setup()
 
         // Apply stylesheet to QWidget
         QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
-        sheet += Utils::FileReader::fetchQrc(":/qmldesigner/scrollbar.css");
         sheet += "QLabel { background-color: creatorTheme.DSsectionHeadBackground; }";
         navigationView.widget->setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
 
@@ -394,6 +428,8 @@ void DesignModeWidget::setup()
         setupNavigatorHistory(currentDesignDocument()->textEditor());
 
     m_dockManager->initialize();
+    if (style()->styleHint(QStyle::SH_ScrollBar_Transient, nullptr, this))
+        Utils::GlobalTransientSupport::support(m_dockManager);
 
     // Hide all floating widgets if the initial mode isn't design mode
     if (Core::ModeManager::instance()->currentModeId() != Core::Constants::MODE_DESIGN) {
@@ -587,11 +623,9 @@ void DesignModeWidget::initialize()
     if (m_initStatus == NotInitialized) {
         m_initStatus = Initializing;
         setup();
+        emit initialized();
     }
-
     m_initStatus = Initialized;
-
-    emit initialized();
 }
 
 } // namespace Internal

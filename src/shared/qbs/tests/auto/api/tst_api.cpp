@@ -928,16 +928,12 @@ void TestApi::dependencyOnMultiplexedType()
         } else {
             QVERIFY(p.name() == "p2");
             ++p2Count;
-
-            // FIXME: This is an odd effect of our current algorithm: We collect the products
-            // matching the requested type and add Depends items with their names ("p1" in
-            // this case). Later, the algorithm checking for compatibility regarding the
-            // multiplexing axes picks the aggregate. However, the aggregate does not have
-            // a matching type... It's not entirely clear what the real expected
-            // result should be here.
-            QCOMPARE(p.dependencies().size(), 2);
+            QVERIFY(p.dependencies().contains("dep"));
         }
     }
+    QCOMPARE(depCount, 1);
+    QCOMPARE(p1Count, 3);
+    QCOMPARE(p2Count, 1);
     std::unique_ptr<qbs::BuildJob> buildJob(project.buildAllProducts(qbs::BuildOptions()));
     waitForFinished(buildJob.get());
     QVERIFY2(!buildJob->error().hasError(), qPrintable(buildJob->error().toString()));
@@ -1426,6 +1422,9 @@ void TestApi::infiniteLoopBuilding_data()
     QTest::addColumn<QString>("projectDirName");
     QTest::newRow("JS Command") << QString("infinite-loop-js");
     QTest::newRow("Process Command") << QString("infinite-loop-process");
+    QTest::newRow("Scanner (scan property)") << QString("infinite-loop-scanning-scan");
+    QTest::newRow("Scanner (searchPaths property)")
+            << QString("infinite-loop-scanning-searchpaths");
 }
 
 void TestApi::infiniteLoopResolving()
@@ -1554,27 +1553,30 @@ void TestApi::linkDynamicAndStaticLibs()
     BuildDescriptionReceiver bdr;
     qbs::BuildOptions options;
     options.setEchoMode(qbs::CommandEchoModeCommandLine);
+    m_logSink->output.clear();
     const qbs::ErrorInfo errorInfo = doBuildProject("link-dynamiclibs-staticlibs", &bdr, nullptr,
                                                     nullptr, options);
     VERIFY_NO_ERROR(errorInfo);
 
+    const bool isGcc = m_logSink->output.contains("is gcc: true");
+    const bool isNotGcc = m_logSink->output.contains("is gcc: false");
+    if (isNotGcc)
+        QSKIP("The remainder of this test applies only to GCC");
+    QVERIFY(isGcc);
+
     // The dependent static libs should not appear in the link command for the executable.
-    const SettingsPtr s = settings();
-    const qbs::Profile buildProfile(profileName(), s.get());
-    if (profileToolchain(buildProfile).contains("gcc")) {
-        static const std::regex appLinkCmdRex(" -o [^ ]*/HelloWorld" QBS_HOST_EXE_SUFFIX " ");
-        QString appLinkCmd;
-        for (const QString &line : std::as_const(bdr.descriptionLines)) {
-            const auto ln = line.toStdString();
-            if (std::regex_search(ln, appLinkCmdRex)) {
-                appLinkCmd = line;
-                break;
-            }
+    static const std::regex appLinkCmdRex(" -o [^ ]*/HelloWorld" QBS_HOST_EXE_SUFFIX " ");
+    QString appLinkCmd;
+    for (const QString &line : std::as_const(bdr.descriptionLines)) {
+        const auto ln = line.toStdString();
+        if (std::regex_search(ln, appLinkCmdRex)) {
+            appLinkCmd = line;
+            break;
         }
-        QVERIFY(!appLinkCmd.isEmpty());
-        QVERIFY(!appLinkCmd.contains("static1"));
-        QVERIFY(!appLinkCmd.contains("static2"));
     }
+    QVERIFY(!appLinkCmd.isEmpty());
+    QVERIFY(!appLinkCmd.contains("static1"));
+    QVERIFY(!appLinkCmd.contains("static2"));
 }
 
 void TestApi::linkStaticAndDynamicLibs()
@@ -1589,31 +1591,32 @@ void TestApi::linkStaticAndDynamicLibs()
     const bool isNormalUnix = m_logSink->output.contains("is normal unix: yes");
     const bool isNotNormalUnix = m_logSink->output.contains("is normal unix: no");
     QVERIFY2(isNormalUnix != isNotNormalUnix, qPrintable(m_logSink->output));
+    const bool isGcc = m_logSink->output.contains("is gcc: true");
+    const bool isNotGcc = m_logSink->output.contains("is gcc: false");
+    if (isNotGcc)
+        QSKIP("The remainder of this test applies only to GCC");
+    QVERIFY(isGcc);
 
     // The dependencies libdynamic1.so and libstatic2.a must not appear in the link command for the
     // executable. The -rpath-link line for libdynamic1.so must be there.
-    const SettingsPtr s = settings();
-    const qbs::Profile buildProfile(profileName(), s.get());
-    if (profileToolchain(buildProfile).contains("gcc")) {
-        static const std::regex appLinkCmdRex(" -o [^ ]*/HelloWorld" QBS_HOST_EXE_SUFFIX " ");
-        QString appLinkCmd;
-        for (const QString &line : std::as_const(bdr.descriptionLines)) {
-            const auto ln = line.toStdString();
-            if (std::regex_search(ln, appLinkCmdRex)) {
-                appLinkCmd = line;
-                break;
-            }
+    static const std::regex appLinkCmdRex(" -o [^ ]*/HelloWorld" QBS_HOST_EXE_SUFFIX " ");
+    QString appLinkCmd;
+    for (const QString &line : std::as_const(bdr.descriptionLines)) {
+        const auto ln = line.toStdString();
+        if (std::regex_search(ln, appLinkCmdRex)) {
+            appLinkCmd = line;
+            break;
         }
-        QVERIFY(!appLinkCmd.isEmpty());
-        if (isNormalUnix) {
-            const std::regex rpathLinkRex("-rpath-link=\\S*/"
-                                          + relativeProductBuildDir("dynamic2").toStdString());
-            const auto ln = appLinkCmd.toStdString();
-            QVERIFY(std::regex_search(ln, rpathLinkRex));
-        }
-        QVERIFY(!appLinkCmd.contains("libstatic2.a"));
-        QVERIFY(!appLinkCmd.contains("libdynamic2.so"));
     }
+    QVERIFY(!appLinkCmd.isEmpty());
+    if (isNormalUnix) {
+        const std::regex rpathLinkRex("-rpath-link=\\S*/"
+                                      + relativeProductBuildDir("dynamic2").toStdString());
+        const auto ln = appLinkCmd.toStdString();
+        QVERIFY(std::regex_search(ln, rpathLinkRex));
+    }
+    QVERIFY(!appLinkCmd.contains("libstatic2.a"));
+    QVERIFY(!appLinkCmd.contains("libdynamic2.so"));
 }
 
 void TestApi::listBuildSystemFiles()
@@ -2217,7 +2220,7 @@ void TestApi::newPatternMatch()
 void TestApi::nonexistingProjectPropertyFromProduct()
 {
     qbs::SetupProjectParameters setupParams
-            = defaultSetupParameters("nonexistingprojectproperties");
+            = defaultSetupParameters("nonexistingprojectproperties/invalidaccessfromproduct.qbs");
     std::unique_ptr<qbs::SetupProjectJob> job(qbs::Project().setupProject(setupParams,
                                                                         m_logSink, nullptr));
     waitForFinished(job.get());
@@ -2526,6 +2529,7 @@ qbs::SetupProjectParameters TestApi::defaultSetupParameters(const QString &proje
     setupParams.setLibexecPath(QDir::cleanPath(QCoreApplication::applicationDirPath()
             + QLatin1String("/" QBS_RELATIVE_LIBEXEC_PATH)));
     setupParams.setTopLevelProfile(profileName());
+    setupParams.setMaxJobCount(2);
     setupParams.setConfigurationName(QStringLiteral("default"));
     setupParams.setSettingsDirectory(settings()->baseDirectory());
     return setupParams;
@@ -2710,12 +2714,14 @@ void TestApi::restoredWarnings()
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
     job.reset(nullptr);
-    QCOMPARE(toSet(m_logSink->warnings).size(), 3);
+    QCOMPARE(toSet(m_logSink->warnings).size(), 5);
     const auto beforeErrors = m_logSink->warnings;
     for (const qbs::ErrorInfo &e : beforeErrors) {
         const QString msg = e.toString();
         QVERIFY2(msg.contains("Superfluous version")
                  || msg.contains("Property 'blubb' is not declared")
+                 || msg.contains("this one comes from a thread")
+                 || msg.contains("Product 'theOtherProduct' had errors and was disabled")
                  || msg.contains("Product 'theProduct' had errors and was disabled"),
                  qPrintable(msg));
     }
@@ -2726,7 +2732,7 @@ void TestApi::restoredWarnings()
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
     job.reset(nullptr);
-    QCOMPARE(toSet(m_logSink->warnings).size(), 3);
+    QCOMPARE(toSet(m_logSink->warnings).size(), 5);
     m_logSink->warnings.clear();
 
     // Re-resolving with changes: Errors come from the re-resolving, stored ones must be suppressed.
@@ -2737,13 +2743,15 @@ void TestApi::restoredWarnings()
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
     job.reset(nullptr);
-    QCOMPARE(toSet(m_logSink->warnings).size(), 4); // One more for the additional group
+    QCOMPARE(toSet(m_logSink->warnings).size(), 6); // One more for the additional group
     const auto afterErrors = m_logSink->warnings;
     for (const qbs::ErrorInfo &e : afterErrors) {
         const QString msg = e.toString();
         QVERIFY2(msg.contains("Superfluous version")
                  || msg.contains("Property 'blubb' is not declared")
                  || msg.contains("blubb.cpp' does not exist")
+                 || msg.contains("this one comes from a thread")
+                 || msg.contains("Product 'theOtherProduct' had errors and was disabled")
                  || msg.contains("Product 'theProduct' had errors and was disabled"),
                  qPrintable(msg));
     }

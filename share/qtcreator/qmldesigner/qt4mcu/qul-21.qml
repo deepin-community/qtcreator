@@ -1,6 +1,8 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+// new property: QtQuick.Text::elide
+
 VersionData {
     name: "Qt for MCUs 2.1"
 
@@ -60,7 +62,10 @@ VersionData {
         "QtQuickUltralite.Layers"
     ]
 
-    bannedImports: ["FlowView"]
+    bannedImports: [
+        "FlowView",
+        "SimulinkConnector"
+    ]
 
     //ComplexProperty is not a type, it's just a way to handle bigger props
     ComplexProperty {

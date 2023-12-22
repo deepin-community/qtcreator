@@ -10,6 +10,7 @@
 #include <qmldesignerconstants.h>
 
 #include <coreplugin/icore.h>
+
 #include <utils/filepath.h>
 #include <utils/qtcassert.h>
 
@@ -17,6 +18,8 @@
 #include <QQmlEngine>
 #include <QStatusBar>
 #include <QToolBar>
+
+using namespace Utils;
 
 namespace QmlDesigner {
 
@@ -65,6 +68,8 @@ Utils::UniqueObjectPtr<QToolBar> ToolBar::create()
 
     toolBar->setFloatable(false);
     toolBar->setMovable(false);
+    toolBar->setProperty("_q_custom_style_skipolish", true);
+    toolBar->setContentsMargins(0, 0, 0, 0);
 
     auto quickWidget = std::make_unique<StudioQuickWidget>();
 
@@ -127,8 +132,8 @@ Utils::UniqueObjectPtr<QWidget> ToolBar::createStatusBar()
 
 bool ToolBar::isVisible()
 {
-    QSettings *settings = Core::ICore::settings();
-    const QString qdsToolbarEntry = "QML/Designer/TopToolBar";
+    QtcSettings *settings = Core::ICore::settings();
+    const Key qdsToolbarEntry = "QML/Designer/TopToolBar";
 
     return settings->value(qdsToolbarEntry, false).toBool();
 }

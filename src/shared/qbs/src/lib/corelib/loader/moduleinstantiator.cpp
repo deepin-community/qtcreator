@@ -55,39 +55,39 @@
 #include <utility>
 
 namespace qbs::Internal {
-class ModuleInstantiator::Private
+
+static std::pair<const Item *, Item *>
+getOrSetModuleInstanceItem(Item *container, Item *moduleItem, const QualifiedId &moduleName,
+                           const QString &id, bool replace, LoaderState &loaderState);
+
+class ModuleInstantiator
 {
 public:
-    Private(LoaderState &loaderState) : loaderState(loaderState) {}
+    ModuleInstantiator(const InstantiationContext &context, LoaderState &loaderState)
+        : context(context), loaderState(loaderState) {}
 
-    void overrideProperties(const Context &context);
-    void setupScope(const Context &context);
-    void exchangePlaceholderItem(Item *product, Item *loadingItem, const QString &loadingName,
-        Item *moduleItemForItemValues, const QualifiedId &moduleName, const QString &id,
-        bool isProductDependency, bool alreadyLoaded);
-    std::pair<const Item *, Item *>
-    getOrSetModuleInstanceItem(Item *container, Item *moduleItem, const QualifiedId &moduleName,
-                               const QString &id, bool replace);
+    void instantiate();
 
+private:
+    void overrideProperties();
+    void setupScope();
+    void exchangePlaceholderItem(Item *loadingItem, Item *moduleItemForItemValues);
+
+    const InstantiationContext &context;
     LoaderState &loaderState;
-    qint64 elapsedTime = 0;
 };
 
-ModuleInstantiator::ModuleInstantiator(LoaderState &loaderState)
-    : d(makePimpl<Private>(loaderState)) {}
-ModuleInstantiator::~ModuleInstantiator() = default;
-
-void ModuleInstantiator::instantiate(const Context &context)
+void ModuleInstantiator::instantiate()
 {
-    AccumulatingTimer timer(d->loaderState.parameters().logElapsedTime()
-                            ? &d->elapsedTime : nullptr);
+    AccumulatingTimer timer(loaderState.parameters().logElapsedTime()
+                            ? &context.product.timingData.moduleInstantiation : nullptr);
 
     // This part needs to be done only once per module and product, and only if the module
     // was successfully loaded.
     if (context.module && !context.alreadyLoaded) {
         context.module->setType(ItemType::ModuleInstance);
-        d->overrideProperties(context);
-        d->setupScope(context);
+        overrideProperties();
+        setupScope();
     }
 
     // This strange-looking code deals with the fact that our syntax cannot properly handle
@@ -109,33 +109,28 @@ void ModuleInstantiator::instantiate(const Context &context)
     //  }
     // It's debatable whether that's a good feature, but it has been working (accidentally?)
     // for a long time, and removing it now would break a lot of existing projects.
-    d->exchangePlaceholderItem(
-        context.product, context.loadingItem, context.loadingName, moduleItemForItemValues,
-        context.moduleName, context.id, context.exportingProduct, context.alreadyLoaded);
+    exchangePlaceholderItem(context.loadingItem, moduleItemForItemValues);
 
-    if (!context.alreadyLoaded && context.product && context.product != context.loadingItem) {
-        d->exchangePlaceholderItem(
-            context.product, context.product, context.productName, moduleItemForItemValues,
-            context.moduleName, context.id, context.exportingProduct, context.alreadyLoaded);
+    if (!context.alreadyLoaded && context.product.item
+            && context.product.item != context.loadingItem) {
+        exchangePlaceholderItem(context.product.item, moduleItemForItemValues);
     }
 }
 
-void ModuleInstantiator::Private::exchangePlaceholderItem(
-    Item *product, Item *loadingItem, const QString &loadingName, Item *moduleItemForItemValues,
-    const QualifiedId &moduleName, const QString &id, bool isProductModule, bool alreadyLoaded)
+void ModuleInstantiator::exchangePlaceholderItem(Item *loadingItem, Item *moduleItemForItemValues)
 {
     // If we have a module item, set an item value pointing to it as a property on the loading item.
     // Evict a possibly existing placeholder item, and return it to us, so we can merge its values
     // into the instance.
     const auto &[oldItem, newItem] = getOrSetModuleInstanceItem(
-        loadingItem, moduleItemForItemValues, moduleName, id, true);
+        loadingItem, moduleItemForItemValues, context.moduleName, context.id, true, loaderState);
 
     // The new item always exists, even if we don't have a module item. In that case, the
     // function created a placeholder item for us, which we then have to turn into a
     // non-present module.
     QBS_CHECK(newItem);
     if (!moduleItemForItemValues) {
-        createNonPresentModule(loaderState.itemPool(), moduleName.toString(),
+        createNonPresentModule(loaderState.itemPool(), context.moduleName.toString(),
                                QLatin1String("not found"), newItem);
         return;
     }
@@ -148,7 +143,7 @@ void ModuleInstantiator::Private::exchangePlaceholderItem(
     //      (see getOrSetModuleInstanceItem() below for details).
     if (oldItem == newItem) {
         QBS_CHECK(oldItem->type() == ItemType::ModuleInstance);
-        QBS_CHECK(alreadyLoaded || isProductModule);
+        QBS_CHECK(context.alreadyLoaded || context.exportingProduct);
         return;
     }
 
@@ -172,22 +167,96 @@ void ModuleInstantiator::Private::exchangePlaceholderItem(
     }
 
     // Now merge the locally attached values into the actual module instance.
-    loaderState.propertyMerger().mergeFromLocalInstance(product, loadingItem, loadingName,
-                                                        oldItem, moduleItemForItemValues);
+    mergeFromLocalInstance(context.product, loadingItem, context.loadingName, oldItem,
+                           moduleItemForItemValues, loaderState);
 
     // TODO: We'd like to delete the placeholder item here, because it's not
     //       being referenced anymore and there's a lot of them. However, this
     //       is not supported by ItemPool. Investigate the use of std::pmr.
 }
 
-Item *ModuleInstantiator::retrieveModuleInstanceItem(Item *containerItem, const QualifiedId &name)
+Item *retrieveModuleInstanceItem(Item *containerItem, const QualifiedId &name,
+                                 LoaderState &loaderState)
 {
-    return d->getOrSetModuleInstanceItem(containerItem, nullptr, name, {}, false).second;
+    return getOrSetModuleInstanceItem(containerItem, nullptr, name, {}, false, loaderState).second;
 }
 
-Item *ModuleInstantiator::retrieveQbsItem(Item *containerItem)
+Item *retrieveQbsItem(Item *containerItem, LoaderState &loaderState)
 {
-    return retrieveModuleInstanceItem(containerItem, StringConstants::qbsModule());
+    return retrieveModuleInstanceItem(containerItem, StringConstants::qbsModule(), loaderState);
+}
+
+void ModuleInstantiator::overrideProperties()
+{
+    // Users can override module properties on the command line with the
+    // modules.<module-name>.<property-name>:<value> syntax.
+    // For simplicity and backwards compatibility, qbs properties can also be given without
+    // the "modules." prefix, i.e. just qbs.<property-name>:<value>.
+    // In addition, users can override module properties just for certain products
+    // using the products.<product-name>.<module-name>.<property-name>:<value> syntax.
+    // Such product-specific overrides have higher precedence.
+    const QString fullName = context.moduleName.toString();
+    const QString generalOverrideKey = QStringLiteral("modules.") + fullName;
+    const QString perProductOverrideKey = StringConstants::productsOverridePrefix()
+                                          + context.product.name + QLatin1Char('.') + fullName;
+    const SetupProjectParameters &parameters = loaderState.parameters();
+    Logger &logger = loaderState.logger();
+    context.module->overrideProperties(parameters.overriddenValuesTree(), generalOverrideKey,
+                                       parameters, logger);
+    if (fullName == StringConstants::qbsModule()) {
+        context.module->overrideProperties(parameters.overriddenValuesTree(), fullName, parameters,
+                                           logger);
+    }
+    context.module->overrideProperties(parameters.overriddenValuesTree(), perProductOverrideKey,
+                                       parameters, logger);
+}
+
+void ModuleInstantiator::setupScope()
+{
+    Item * const scope = Item::create(&loaderState.itemPool(), ItemType::Scope);
+    QBS_CHECK(context.module->file());
+    scope->setFile(context.module->file());
+    QBS_CHECK(context.product.project->scope);
+    context.product.project->scope->copyProperty(StringConstants::projectVar(), scope);
+    if (context.product.scope)
+        context.product.scope->copyProperty(StringConstants::productVar(), scope);
+    else
+        QBS_CHECK(context.moduleName.toString() == StringConstants::qbsModule()); // Dummy product.
+
+    if (!context.module->id().isEmpty())
+        scope->setProperty(context.module->id(), ItemValue::create(context.module));
+    for (Item * const child : context.module->children()) {
+        child->setScope(scope);
+        if (!child->id().isEmpty())
+            scope->setProperty(child->id(), ItemValue::create(child));
+    }
+    context.module->setScope(scope);
+
+    if (context.exportingProduct) {
+        QBS_CHECK(context.exportingProduct->type() == ItemType::Product);
+
+        const auto exportingProductItemValue = ItemValue::create(context.exportingProduct);
+        scope->setProperty(QStringLiteral("exportingProduct"), exportingProductItemValue);
+
+        const auto importingProductItemValue = ItemValue::create(context.product.item);
+        scope->setProperty(QStringLiteral("importingProduct"), importingProductItemValue);
+
+        // FIXME: This looks wrong. Introduce exportingProject variable?
+        scope->setProperty(StringConstants::projectVar(),
+                           ItemValue::create(context.exportingProduct->parent()));
+
+        PropertyDeclaration pd(StringConstants::qbsSourceDirPropertyInternal(),
+                               PropertyDeclaration::String, QString(),
+                               PropertyDeclaration::PropertyNotAvailableInConfig);
+        context.module->setPropertyDeclaration(pd.name(), pd);
+        context.module->setProperty(pd.name(), context.exportingProduct->property(
+                                                   StringConstants::sourceDirectoryProperty()));
+    }
+}
+
+void instantiateModule(const InstantiationContext &context, LoaderState &loaderState)
+{
+    ModuleInstantiator(context, loaderState).instantiate();
 }
 
 // This important function deals with retrieving and setting (pseudo-)module instances from/on
@@ -220,9 +289,9 @@ Item *ModuleInstantiator::retrieveQbsItem(Item *containerItem)
 // Use case 4: Module propagation to the the Group level.
 // In all cases, the first returned item is the existing one, and the second returned item
 // is the new one. Depending on the use case, they might be null and might also be the same item.
-std::pair<const Item *, Item *> ModuleInstantiator::Private::getOrSetModuleInstanceItem(
+std::pair<const Item *, Item *> getOrSetModuleInstanceItem(
     Item *container, Item *moduleItem, const QualifiedId &moduleName, const QString &id,
-    bool replace)
+    bool replace, LoaderState &loaderState)
 {
     Item *instance = container;
     const QualifiedId itemValueName
@@ -248,92 +317,14 @@ std::pair<const Item *, Item *> ModuleInstantiator::Private::getOrSetModuleInsta
             Item *newItem = i < itemValueName.size() - 1
                                 ? Item::create(&loaderState.itemPool(), ItemType::ModulePrefix)
                                 : moduleItem
-                                  ? moduleItem
-                                  : Item::create(&loaderState.itemPool(),
-                                                 ItemType::ModuleInstancePlaceholder);
+                                      ? moduleItem
+                                      : Item::create(&loaderState.itemPool(),
+                                                     ItemType::ModuleInstancePlaceholder);
             instance->setProperty(moduleNameSegment, ItemValue::create(newItem));
             instance = newItem;
         }
     }
     return {nullptr, instance};
-}
-
-void ModuleInstantiator::printProfilingInfo(int indent)
-{
-    if (!d->loaderState.parameters().logElapsedTime())
-        return;
-    d->loaderState.logger().qbsLog(LoggerInfo, true)
-            << QByteArray(indent, ' ')
-            << Tr::tr("Instantiating modules took %1.")
-               .arg(elapsedTimeString(d->elapsedTime));
-}
-
-void ModuleInstantiator::Private::overrideProperties(const ModuleInstantiator::Context &context)
-{
-    // Users can override module properties on the command line with the
-    // modules.<module-name>.<property-name>:<value> syntax.
-    // For simplicity and backwards compatibility, qbs properties can also be given without
-    // the "modules." prefix, i.e. just qbs.<property-name>:<value>.
-    // In addition, users can override module properties just for certain products
-    // using the products.<product-name>.<module-name>.<property-name>:<value> syntax.
-    // Such product-specific overrides have higher precedence.
-    const QString fullName = context.moduleName.toString();
-    const QString generalOverrideKey = QStringLiteral("modules.") + fullName;
-    const QString perProductOverrideKey = StringConstants::productsOverridePrefix()
-                                          + context.productName + QLatin1Char('.') + fullName;
-    const SetupProjectParameters &parameters = loaderState.parameters();
-    Logger &logger = loaderState.logger();
-    context.module->overrideProperties(parameters.overriddenValuesTree(), generalOverrideKey,
-                                       parameters, logger);
-    if (fullName == StringConstants::qbsModule()) {
-        context.module->overrideProperties(parameters.overriddenValuesTree(), fullName, parameters,
-                                           logger);
-    }
-    context.module->overrideProperties(parameters.overriddenValuesTree(), perProductOverrideKey,
-                                       parameters, logger);
-}
-
-void ModuleInstantiator::Private::setupScope(const ModuleInstantiator::Context &context)
-{
-    Item * const scope = Item::create(&loaderState.itemPool(), ItemType::Scope);
-    QBS_CHECK(context.module->file());
-    scope->setFile(context.module->file());
-    QBS_CHECK(context.projectScope);
-    context.projectScope->copyProperty(StringConstants::projectVar(), scope);
-    if (context.productScope)
-        context.productScope->copyProperty(StringConstants::productVar(), scope);
-    else
-        QBS_CHECK(context.moduleName.toString() == StringConstants::qbsModule()); // Dummy product.
-
-    if (!context.module->id().isEmpty())
-        scope->setProperty(context.module->id(), ItemValue::create(context.module));
-    for (Item * const child : context.module->children()) {
-        child->setScope(scope);
-        if (!child->id().isEmpty())
-            scope->setProperty(child->id(), ItemValue::create(child));
-    }
-    context.module->setScope(scope);
-
-    if (context.exportingProduct) {
-        QBS_CHECK(context.exportingProduct->type() == ItemType::Product);
-
-        const auto exportingProductItemValue = ItemValue::create(context.exportingProduct);
-        scope->setProperty(QStringLiteral("exportingProduct"), exportingProductItemValue);
-
-        const auto importingProductItemValue = ItemValue::create(context.product);
-        scope->setProperty(QStringLiteral("importingProduct"), importingProductItemValue);
-
-        // FIXME: This looks wrong. Introduce exportingProject variable?
-        scope->setProperty(StringConstants::projectVar(),
-                           ItemValue::create(context.exportingProduct->parent()));
-
-        PropertyDeclaration pd(StringConstants::qbsSourceDirPropertyInternal(),
-                               PropertyDeclaration::String, QString(),
-                               PropertyDeclaration::PropertyNotAvailableInConfig);
-        context.module->setPropertyDeclaration(pd.name(), pd);
-        context.module->setProperty(pd.name(), context.exportingProduct->property(
-                                                   StringConstants::sourceDirectoryProperty()));
-    }
 }
 
 } // namespace qbs::Internal

@@ -44,10 +44,7 @@ enum class View3DActionType {
     ParticlesPlay,
     ParticlesRestart,
     ParticlesSeek,
-    SelectBackgroundColor,
-    SelectGridColor,
-    ResetBackgroundColor,
-    SyncBackgroundColor,
+    SyncEnvBackground,
     GetNodeAtPos,
     SetBakeLightsView3D
 };

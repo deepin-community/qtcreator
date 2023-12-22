@@ -171,11 +171,13 @@ def invokeMenuItem(menu, item, *subItems):
     numberedPrefix = "%d | "
     for subItem in subItems:
         # we might have numbered sub items (e.g. "Recent Files") - these have this special prefix
-        # but on macOS we don't add these prefixes
-        if platform.system() == 'Darwin' and subItem.startswith(numberedPrefix):
-            subItem = subItem[5:]
+        hasNumPrefix = subItem.startswith(numberedPrefix)
+        if hasNumPrefix and platform.system() == 'Darwin':
+            # on macOS we don't add these prefixes
+            subItem = subItem[len(numberedPrefix):]
+            hasNumPrefix = False
 
-        if subItem.startswith(numberedPrefix):
+        if hasNumPrefix:
             triggered = False
             for i in range(1, 10):
                 try:
@@ -190,8 +192,7 @@ def invokeMenuItem(menu, item, *subItems):
                           "Function arguments: '%s', '%s', %s" % (menu, item, str(subItems)))
                 break # we failed to trigger - no need to process subItems further
         else:
-            noAmpersandItem = item.replace('&', '')
-            waitForObject("{type='QMenu' title='%s'}" % noAmpersandItem, 2000)
+            waitForObject("{type='QMenu' title='%s'}" % str(itemObject.text), 2000)
             itemObject = waitForObjectItem(itemObject, subItem)
             waitFor("itemObject.enabled", 2000)
             activateItem(itemObject)
@@ -611,8 +612,12 @@ def stringify(obj):
     if isinstance(obj, stringTypes):
         return obj
     if isinstance(obj, bytes):
-        tmp = obj.decode('cp1252') if platform.system() in ('Microsoft','Windows') else obj.decode()
-        return tmp
+        if not platform.system() in ('Microsoft', 'Windows'):
+            return obj.decode()
+        try:
+            return obj.decode('cp1252')
+        except UnicodeDecodeError:
+            return obj.decode('utf-8')
 
 
 class GitClone:

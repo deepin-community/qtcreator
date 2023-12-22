@@ -32,7 +32,6 @@
 #include <coreplugin/modemanager.h>
 
 #include <QAction>
-#include <QCollator>
 #include <QGuiApplication>
 #include <QItemDelegate>
 #include <QKeyEvent>
@@ -49,8 +48,7 @@
 
 using namespace Utils;
 
-namespace ProjectExplorer {
-namespace Internal {
+namespace ProjectExplorer::Internal {
 
 const int RunColumnWidth = 30;
 
@@ -142,18 +140,8 @@ private:
 
 static bool compareItems(const TreeItem *ti1, const TreeItem *ti2)
 {
-    static const QCollator collator = [] {
-        QCollator collator;
-        collator.setNumericMode(true);
-        collator.setCaseSensitivity(Qt::CaseInsensitive);
-        return collator;
-    }();
-
-    const int result = collator.compare(static_cast<const GenericItem *>(ti1)->rawDisplayName(),
-                                        static_cast<const GenericItem *>(ti2)->rawDisplayName());
-    if (result != 0)
-        return result < 0;
-    return ti1 < ti2;
+    return caseFriendlyCompare(static_cast<const GenericItem *>(ti1)->rawDisplayName(),
+                               static_cast<const GenericItem *>(ti2)->rawDisplayName()) < 0;
 }
 
 class GenericModel : public TreeModel<GenericItem, GenericItem>
@@ -500,7 +488,6 @@ SelectorView::SelectorView(QWidget *parent) : TreeView(parent)
     setFocusPolicy(Qt::NoFocus);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setAlternatingRowColors(false);
-    setUniformRowHeights(true);
     setIndentation(0);
     setFocusPolicy(Qt::WheelFocus);
     setItemDelegate(new TargetSelectorDelegate(this));
@@ -565,9 +552,9 @@ int SelectorView::padding()
 /////////
 // KitAreaWidget
 /////////
-void doLayout(KitAspectWidget *widget, Layouting::LayoutItem &builder)
+void doLayout(KitAspect *aspect, Layouting::LayoutItem &builder)
 {
-    widget->addToLayout(builder);
+    aspect->addToLayout(builder);
 }
 
 class KitAreaWidget : public QWidget
@@ -578,34 +565,37 @@ public:
         : QWidget(parent)
     {
         connect(KitManager::instance(), &KitManager::kitUpdated, this, &KitAreaWidget::updateKit);
+        auto layout = new QVBoxLayout;
+        layout->setContentsMargins({});
+        setLayout(layout);
     }
 
     ~KitAreaWidget() override { setKit(nullptr); }
 
     void setKit(Kit *k)
     {
-        qDeleteAll(m_widgets);
-        m_widgets.clear();
+        qDeleteAll(m_kitAspects);
+        m_kitAspects.clear();
+        delete m_gridWidget;
+        m_gridWidget = nullptr;
 
         if (!k)
             return;
 
-        delete layout();
-
         Layouting::Grid grid;
-        for (KitAspect *aspect : KitManager::kitAspects()) {
-            if (k && k->isMutable(aspect->id())) {
-                KitAspectWidget *widget = aspect->createConfigWidget(k);
-                m_widgets << widget;
-                grid.addItems({aspect->displayName(), widget, Layouting::br});
+        for (KitAspectFactory *factory : KitManager::kitAspectFactories()) {
+            if (k && k->isMutable(factory->id())) {
+                KitAspect *aspect = factory->createKitAspect(k);
+                m_kitAspects << aspect;
+                grid.addItems({aspect, Layouting::br});
             }
         }
-        grid.attachTo(this);
-        layout()->setContentsMargins(3, 3, 3, 3);
-
+        m_gridWidget = grid.emerge();
+        m_gridWidget->layout()->setContentsMargins(3, 3, 3, 3);
+        layout()->addWidget(m_gridWidget);
         m_kit = k;
 
-        setHidden(m_widgets.isEmpty());
+        setHidden(m_kitAspects.isEmpty());
     }
 
 private:
@@ -615,12 +605,12 @@ private:
             return;
 
         bool addedMutables = false;
-        QList<const KitAspect *> knownList
-            = Utils::transform(m_widgets, &KitAspectWidget::kitInformation);
+        QList<const KitAspectFactory *> knownList
+            = Utils::transform(m_kitAspects, &KitAspect::factory);
 
-        for (KitAspect *aspect : KitManager::kitAspects()) {
-            const Utils::Id currentId = aspect->id();
-            if (m_kit->isMutable(currentId) && !knownList.removeOne(aspect)) {
+        for (KitAspectFactory *factory : KitManager::kitAspectFactories()) {
+            const Utils::Id currentId = factory->id();
+            if (m_kit->isMutable(currentId) && !knownList.removeOne(factory)) {
                 addedMutables = true;
                 break;
             }
@@ -632,13 +622,14 @@ private:
             setKit(m_kit);
         } else {
             // Refresh all widgets if the number of mutable settings did not change
-            for (KitAspectWidget *w : std::as_const(m_widgets))
+            for (KitAspect *w : std::as_const(m_kitAspects))
                 w->refresh();
         }
     }
 
     Kit *m_kit = nullptr;
-    QList<KitAspectWidget *> m_widgets;
+    QWidget *m_gridWidget = nullptr;
+    QList<KitAspect *> m_kitAspects;
 };
 
 /////////
@@ -928,13 +919,12 @@ void MiniProjectTargetSelector::doLayout(bool keepSize)
         if (keepSize) {
             heightWithoutKitArea = height() - oldSummaryLabelY + 1;
         } else {
-            // Clamp the size of the listwidgets to be
-            // at least as high as the sidebar button
-            // and at most twice as high
+            // Clamp the size of the listwidgets to be at least as high as the sidebar button
+            // and at most half the height of the entire Qt Creator window.
             heightWithoutKitArea = summaryLabelHeight
                     + qBound(alignedWithActionHeight,
                              maxItemCount * 30 + bottomMargin + titleWidgetsHeight,
-                             alignedWithActionHeight * 2);
+                             Core::ICore::mainWindow()->height() / 2);
         }
 
         int titleY = summaryLabelY + summaryLabelHeight;
@@ -1592,7 +1582,6 @@ void MiniProjectTargetSelector::switchToProjectsMode()
     hide();
 }
 
-} // namespace Internal
-} // namespace ProjectExplorer
+} // ProjectExplorer::Internal
 
 #include <miniprojecttargetselector.moc>

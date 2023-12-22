@@ -4,11 +4,11 @@
 #include "mcusupportplugin.h"
 
 #include "mcubuildstep.h"
-#include "mcukitinformation.h"
 #include "mcukitmanager.h"
 #include "mcuqmlprojectnode.h"
 #include "mcusupportconstants.h"
 #include "mcusupportdevice.h"
+#include "mcusupportimportprovider.h"
 #include "mcusupportoptions.h"
 #include "mcusupportoptionspage.h"
 #include "mcusupportrunconfiguration.h"
@@ -102,8 +102,8 @@ public:
     SettingsHandler::Ptr m_settingsHandler{new SettingsHandler};
     McuSupportOptions m_options{m_settingsHandler};
     McuSupportOptionsPage optionsPage{m_options, m_settingsHandler};
-    McuDependenciesKitAspect environmentPathsKitAspect;
     MCUBuildStepFactory mcuBuildStepFactory;
+    McuSupportImportProvider mcuImportProvider;
 }; // class McuSupportPluginPrivate
 
 static McuSupportPluginPrivate *dd{nullptr};
@@ -125,7 +125,10 @@ void McuSupportPlugin::initialize()
 
     // Temporary fix for CodeModel/Checker race condition
     // Remove after https://bugreports.qt.io/browse/QTCREATORBUG-29269 is closed
-    connect(QmlJS::ModelManagerInterface::instance(),
+
+    if (!Core::ICore::isQtDesignStudio()) {
+        connect(
+            QmlJS::ModelManagerInterface::instance(),
             &QmlJS::ModelManagerInterface::documentUpdated,
             [lasttime = QTime::currentTime()](QmlJS::Document::Ptr doc) mutable {
                 // Prevent inifinite recall loop
@@ -157,6 +160,7 @@ void McuSupportPlugin::initialize()
                     ->action()
                     ->trigger();
             });
+    }
 
     dd->m_options.registerQchFiles();
     dd->m_options.registerExamples();

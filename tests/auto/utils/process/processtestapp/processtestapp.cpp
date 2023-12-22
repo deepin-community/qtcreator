@@ -161,10 +161,16 @@ int ProcessTestApp::BlockingProcess::main()
 {
     std::cout << "Blocking process successfully executed." << std::endl;
     const BlockType blockType = BlockType(qEnvironmentVariableIntValue(envVar()));
+    bool dummy = true;
     switch (blockType) {
     case BlockType::EndlessLoop:
-        while (true)
-            ;
+        while (true) {
+            if (dummy) {
+                // Note: Keep these lines, otherwise the compiler may optimize out the empty loop.
+                std::cout << "EndlessLoop started" << std::endl;
+                dummy = false;
+            }
+        }
         break;
     case BlockType::InfiniteSleep:
         QThread::sleep(INT_MAX);
@@ -239,7 +245,7 @@ int ProcessTestApp::RecursiveBlockingProcess::main()
         std::cout << s_leafProcessStarted << std::flush;
         while (true) {
             // TODO: make it configurable so that we could test the reaper timeout
-            QThread::msleep(100);
+            QThread::msleep(10);
 #ifndef Q_OS_WIN
             if (s_terminate.load()) {
                 std::cout << s_leafProcessTerminated << std::flush;
@@ -254,7 +260,7 @@ int ProcessTestApp::RecursiveBlockingProcess::main()
     process.setProcessChannelMode(QProcess::ForwardedChannels);
     process.start();
     while (true) {
-        if (process.waitForFinished(1000))
+        if (process.waitForFinished(10))
             return 0;
 #ifndef Q_OS_WIN
         if (s_terminate.load()) {

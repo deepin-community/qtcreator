@@ -7,6 +7,8 @@
 #include "cmakeprojectmanagertr.h"
 
 #include <coreplugin/icore.h>
+#include <coreplugin/dialogs/ioptionspage.h>
+
 #include <projectexplorer/projectexplorerconstants.h>
 
 #include <utils/layoutbuilder.h>
@@ -15,23 +17,14 @@ using namespace Utils;
 
 namespace CMakeProjectManager::Internal {
 
-static CMakeSpecificSettings *theSettings;
-
-CMakeSpecificSettings *CMakeSpecificSettings::instance()
+CMakeSpecificSettings &settings()
 {
+    static CMakeSpecificSettings theSettings;
     return theSettings;
 }
 
 CMakeSpecificSettings::CMakeSpecificSettings()
 {
-    theSettings = this;
-
-    setId(Constants::Settings::GENERAL_ID);
-    setDisplayName(::CMakeProjectManager::Tr::tr("General"));
-    setDisplayCategory("CMake");
-    setCategory(Constants::Settings::CATEGORY);
-    setCategoryIconPath(Constants::Icons::SETTINGS_CATEGORY);
-
     setLayouter([this] {
         using namespace Layouting;
         return Column {
@@ -61,6 +54,12 @@ CMakeSpecificSettings::CMakeSpecificSettings()
     // never save this to the settings:
     ninjaPath.setToSettingsTransformation(
         [](const QVariant &) { return QVariant::fromValue(QString()); });
+    ninjaPath.setFromSettingsTransformation([](const QVariant &from) {
+        // Sometimes the installer appends the same ninja path to the qtcreator.ini file
+        const QString path = from.canConvert<QStringList>() ? from.toStringList().last()
+                                                            : from.toString();
+        return FilePath::fromUserInput(path).toVariant();
+    });
 
     packageManagerAutoSetup.setSettingsKey("PackageManagerAutoSetup");
     packageManagerAutoSetup.setDefaultValue(true);
@@ -90,5 +89,21 @@ CMakeSpecificSettings::CMakeSpecificSettings()
 
     readSettings();
 }
+
+class CMakeSpecificSettingsPage final : public Core::IOptionsPage
+{
+public:
+    CMakeSpecificSettingsPage()
+    {
+        setId(Constants::Settings::GENERAL_ID);
+        setDisplayName(::CMakeProjectManager::Tr::tr("General"));
+        setDisplayCategory("CMake");
+        setCategory(Constants::Settings::CATEGORY);
+        setCategoryIconPath(Constants::Icons::SETTINGS_CATEGORY);
+        setSettingsProvider([] { return &settings(); });
+    }
+};
+
+const CMakeSpecificSettingsPage settingsPage;
 
 } // CMakeProjectManager::Internal

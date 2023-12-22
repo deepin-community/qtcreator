@@ -13,12 +13,18 @@ import ContentLibraryBackend
 Item {
     id: root
 
+    property bool adsFocus: false
+    // objectName is used by the dock widget to find this particular ScrollView
+    // and set the ads focus on it.
+    objectName: "__mainSrollView"
+
     // Called also from C++ to close context menu on focus out
     function closeContextMenu()
     {
         materialsView.closeContextMenu()
         texturesView.closeContextMenu()
         environmentsView.closeContextMenu()
+        effectsView.closeContextMenu()
         HelperWidgets.Controller.closeContextMenu()
     }
 
@@ -67,6 +73,7 @@ Item {
                         materialsView.expandVisibleSections()
                         texturesView.expandVisibleSections()
                         environmentsView.expandVisibleSections()
+                        effectsView.expandVisibleSections()
                     }
                 }
 
@@ -76,7 +83,8 @@ Item {
                     height: StudioTheme.Values.toolbarHeight
                     tabsModel: [{name: qsTr("Materials"),    icon: StudioTheme.Constants.material_medium},
                                 {name: qsTr("Textures"),     icon: StudioTheme.Constants.textures_medium},
-                                {name: qsTr("Environments"), icon: StudioTheme.Constants.languageList_medium}]
+                                {name: qsTr("Environments"), icon: StudioTheme.Constants.languageList_medium},
+                                {name: qsTr("Effects"),      icon: StudioTheme.Constants.effects}]
                 }
             }
         }
@@ -93,12 +101,14 @@ Item {
             ContentLibraryMaterialsView {
                 id: materialsView
 
+                adsFocus: root.adsFocus
                 width: root.width
 
                 searchBox: searchBox
 
                 onUnimport: (bundleMat) => {
-                    confirmUnimportDialog.targetBundleMaterial = bundleMat
+                    confirmUnimportDialog.targetBundleItem = bundleMat
+                    confirmUnimportDialog.targetBundleType = "material"
                     confirmUnimportDialog.open()
                 }
             }
@@ -106,6 +116,7 @@ Item {
             ContentLibraryTexturesView {
                 id: texturesView
 
+                adsFocus: root.adsFocus
                 width: root.width
                 model: ContentLibraryBackend.texturesModel
                 sectionCategory: "ContentLib_Tex"
@@ -116,11 +127,27 @@ Item {
             ContentLibraryTexturesView {
                 id: environmentsView
 
+                adsFocus: root.adsFocus
                 width: root.width
                 model: ContentLibraryBackend.environmentsModel
                 sectionCategory: "ContentLib_Env"
 
                 searchBox: searchBox
+            }
+
+            ContentLibraryEffectsView {
+                id: effectsView
+
+                adsFocus: root.adsFocus
+                width: root.width
+
+                searchBox: searchBox
+
+                onUnimport: (bundleItem) => {
+                    confirmUnimportDialog.targetBundleItem = bundleItem
+                    confirmUnimportDialog.targetBundleType = "effect"
+                    confirmUnimportDialog.open()
+                }
             }
         }
     }

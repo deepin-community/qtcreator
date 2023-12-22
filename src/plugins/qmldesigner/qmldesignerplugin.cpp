@@ -39,7 +39,6 @@
 
 #include <qmlprojectmanager/qmlproject.h>
 
-#include <app/app_version.h>
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
@@ -132,6 +131,20 @@ QtQuickDesignerFactory::QtQuickDesignerFactory()
 
 } // namespace Internal
 
+struct TraceIdentifierData
+{
+    TraceIdentifierData(const QString &_identifier, const QString &_newIdentifer, int _duration)
+        : identifier(_identifier), newIdentifer(_newIdentifer), maxDuration(_duration)
+    {}
+
+    TraceIdentifierData() = default;
+
+    QString identifier;
+    QString newIdentifer;
+    int maxDuration;
+    int time = 0;
+};
+
 class QmlDesignerPluginPrivate
 {
 public:
@@ -146,6 +159,9 @@ public:
     bool blockEditorChange = false;
     Utils::UniqueObjectPtr<QToolBar> toolBar;
     Utils::UniqueObjectPtr<QWidget> statusBar;
+    QHash<QString, TraceIdentifierData> m_traceIdentifierDataHash;
+    QHash<QString, TraceIdentifierData> m_activeTraceIdentifierDataHash;
+    QElapsedTimer timer;
 };
 
 QmlDesignerPlugin *QmlDesignerPlugin::m_instance = nullptr;
@@ -244,13 +260,14 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
         ->addAction(cmd, Core::Constants::G_HELP_SUPPORT);
 
     connect(action, &QAction::triggered, this, [this] {
-        lauchFeedbackPopupInternal(Core::Constants::IDE_DISPLAY_NAME);
+        lauchFeedbackPopupInternal(QGuiApplication::applicationDisplayName());
     });
 
     if (!Utils::HostOsInfo::canCreateOpenGLContext(errorMessage))
         return false;
     d = new QmlDesignerPluginPrivate;
-    if (QmlProjectManager::QmlProject::isQtDesignStudio())
+    d->timer.start();
+    if (Core::ICore::isQtDesignStudio())
         GenerateResource::generateMenuEntry(this);
 
     const QString fontPath
@@ -275,7 +292,7 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
         Core::AsynchronousMessageBox::warning(composedTitle, description.toString());
     });
 
-    if (QmlProjectManager::QmlProject::isQtDesignStudio()) {
+    if (Core::ICore::isQtDesignStudio()) {
         d->toolBar = ToolBar::create();
         d->statusBar = ToolBar::createStatusBar();
     }
@@ -285,58 +302,7 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
 
 bool QmlDesignerPlugin::delayedInitialize()
 {
-    // adding default path to item library plugins
-    const QString postfix = Utils::HostOsInfo::isMacHost() ? QString("/QmlDesigner")
-                                                           : QString("/qmldesigner");
-    const QStringList pluginPaths =
-        Utils::transform(ExtensionSystem::PluginManager::pluginPaths(), [postfix](const QString &p) {
-            return QString(p + postfix);
-        });
-
-    MetaInfo::initializeGlobal(pluginPaths, d->externalDependencies);
-
-    d->viewManager.registerView(std::make_unique<ConnectionView>(d->externalDependencies));
-
-    auto timelineView = d->viewManager.registerView(
-        std::make_unique<TimelineView>(d->externalDependencies));
-    timelineView->registerActions();
-
-    d->viewManager.registerView(
-        std::make_unique<CurveEditorView>(d->externalDependencies));
-
-    auto eventlistView = d->viewManager.registerView(
-        std::make_unique<EventListPluginView>(d->externalDependencies));
-    eventlistView->registerActions();
-
-    auto transitionEditorView = d->viewManager.registerView(
-        std::make_unique<TransitionEditorView>(d->externalDependencies));
-    transitionEditorView->registerActions();
-
-    d->viewManager.registerFormEditorTool(std::make_unique<SourceTool>());
-    d->viewManager.registerFormEditorTool(std::make_unique<ColorTool>());
-    d->viewManager.registerFormEditorTool(std::make_unique<TextTool>());
-    d->viewManager.registerFormEditorTool(
-        std::make_unique<PathTool>(d->externalDependencies));
-    d->viewManager.registerFormEditorTool(std::make_unique<TransitionTool>());
-
-    if (QmlProjectManager::QmlProject::isQtDesignStudio()) {
-        d->mainWidget.initialize();
-
-        emitUsageStatistics("StandaloneMode");
-        if (QmlProjectManager::QmlProject::isQtDesignStudioStartedFromQtC())
-            emitUsageStatistics("QDSlaunchedFromQtC");
-        emitUsageStatistics("qdsStartupCount");
-
-        FoundLicense license = checkLicense();
-        if (license == FoundLicense::enterprise)
-            Core::ICore::appendAboutInformation(tr("License: Enterprise"));
-        else if (license == FoundLicense::professional)
-            Core::ICore::appendAboutInformation(tr("License: Professional"));
-
-        if (!licensee().isEmpty())
-            Core::ICore::appendAboutInformation(tr("Licensee: %1").arg(licensee()));
-    }
-
+    enforceDelayedInitialize();
     return true;
 }
 
@@ -353,11 +319,15 @@ void QmlDesignerPlugin::extensionsInitialized()
     actionManager.createDefaultAddResourceHandler();
     actionManager.createDefaultModelNodePreviewImageHandlers();
     actionManager.polishActions();
+
+    registerCombinedTracedPoints(Constants::EVENT_STATE_ADDED,
+                                 Constants::EVENT_STATE_CLONED,
+                                 Constants::EVENT_STATE_ADDED_AND_CLONED);
 }
 
 ExtensionSystem::IPlugin::ShutdownFlag QmlDesignerPlugin::aboutToShutdown()
 {
-    if (QmlProjectManager::QmlProject::isQtDesignStudio())
+    if (Core::ICore::isQtDesignStudio())
         emitUsageStatistics("qdsShutdownCount");
 
     return SynchronousShutdown;
@@ -449,15 +419,50 @@ void QmlDesignerPlugin::integrateIntoQtCreator(QWidget *modeWidget)
             });
 }
 
+void QmlDesignerPlugin::clearDesigner()
+{
+    if (d->documentManager.hasCurrentDesignDocument()) {
+        deactivateAutoSynchronization();
+        d->mainWidget.saveSettings();
+    }
+}
+
+void QmlDesignerPlugin::resetDesignerDocument()
+{
+    d->shortCutManager.disconnectUndoActions(currentDesignDocument());
+    d->documentManager.setCurrentDesignDocument(nullptr);
+    d->shortCutManager.updateActions(nullptr);
+    d->shortCutManager.updateUndoActions(nullptr);
+}
+
+void QmlDesignerPlugin::setupDesigner()
+{
+    d->shortCutManager.disconnectUndoActions(currentDesignDocument());
+    d->documentManager.setCurrentDesignDocument(Core::EditorManager::currentEditor());
+    d->shortCutManager.connectUndoActions(currentDesignDocument());
+
+    if (d->documentManager.hasCurrentDesignDocument()) {
+        activateAutoSynchronization();
+        d->shortCutManager.updateActions(currentDesignDocument()->textEditor());
+        d->viewManager.pushFileOnCrumbleBar(currentDesignDocument()->fileName());
+        d->viewManager.setComponentViewToMaster();
+    }
+
+    d->shortCutManager.updateUndoActions(currentDesignDocument());
+}
+
 void QmlDesignerPlugin::showDesigner()
 {
     QTC_ASSERT(!d->documentManager.hasCurrentDesignDocument(), return);
+
+    enforceDelayedInitialize();
 
     d->mainWidget.initialize();
 
     const Utils::FilePath fileName = Core::EditorManager::currentEditor()->document()->filePath();
     const QStringList allUiQmlFiles = allUiQmlFilesforCurrentProject(fileName);
-    if (warningsForQmlFilesInsteadOfUiQmlEnabled() && !fileName.endsWith(".ui.qml") && !allUiQmlFiles.isEmpty()) {
+    if (warningsForQmlFilesInsteadOfUiQmlEnabled() && !fileName.endsWith(".ui.qml")
+        && !allUiQmlFiles.isEmpty()) {
         OpenUiQmlFileDialog dialog(&d->mainWidget);
         dialog.setUiQmlFiles(projectPath(fileName), allUiQmlFiles);
         dialog.exec();
@@ -469,56 +474,25 @@ void QmlDesignerPlugin::showDesigner()
         }
     }
 
-    d->shortCutManager.disconnectUndoActions(currentDesignDocument());
-    d->documentManager.setCurrentDesignDocument(Core::EditorManager::currentEditor());
-    d->shortCutManager.connectUndoActions(currentDesignDocument());
-
-    if (d->documentManager.hasCurrentDesignDocument()) {
-        activateAutoSynchronization();
-        d->shortCutManager.updateActions(currentDesignDocument()->textEditor());
-        d->viewManager.pushFileOnCrumbleBar(currentDesignDocument()->fileName());
-    }
-
-    d->shortCutManager.updateUndoActions(currentDesignDocument());
+    setupDesigner();
 
     m_usageTimer.restart();
 }
 
 void QmlDesignerPlugin::hideDesigner()
 {
-    if (d->documentManager.hasCurrentDesignDocument()) {
-        deactivateAutoSynchronization();
-        d->mainWidget.saveSettings();
-    }
-
-    d->shortCutManager.disconnectUndoActions(currentDesignDocument());
-    d->documentManager.setCurrentDesignDocument(nullptr);
-    d->shortCutManager.updateUndoActions(nullptr);
+    clearDesigner();
+    resetDesignerDocument();
     emitUsageStatisticsTime(Constants::EVENT_DESIGNMODE_TIME, m_usageTimer.elapsed());
 }
 
 void QmlDesignerPlugin::changeEditor()
 {
     if (d->blockEditorChange)
-         return;
+        return;
 
-    if (d->documentManager.hasCurrentDesignDocument()) {
-        deactivateAutoSynchronization();
-        d->mainWidget.saveSettings();
-    }
-
-    d->shortCutManager.disconnectUndoActions(currentDesignDocument());
-    d->documentManager.setCurrentDesignDocument(Core::EditorManager::currentEditor());
-    d->mainWidget.initialize();
-    d->shortCutManager.connectUndoActions(currentDesignDocument());
-
-    if (d->documentManager.hasCurrentDesignDocument()) {
-        activateAutoSynchronization();
-        d->viewManager.pushFileOnCrumbleBar(currentDesignDocument()->fileName());
-        d->viewManager.setComponentViewToMaster();
-    }
-
-    d->shortCutManager.updateUndoActions(currentDesignDocument());
+    clearDesigner();
+    setupDesigner();
 }
 
 void QmlDesignerPlugin::jumpTextCursorToSelectedModelNode()
@@ -613,6 +587,70 @@ Model *QmlDesignerPlugin::currentModel() const
     return currentDesignDocument()->currentModel();
 }
 
+QmlDesignerPluginPrivate *QmlDesignerPlugin::privateInstance()
+{
+    QTC_ASSERT(instance(), return nullptr);
+    return instance()->d;
+}
+
+void QmlDesignerPlugin::enforceDelayedInitialize()
+{
+    if (m_delayedInitialized)
+        return;
+
+    // adding default path to item library plugins
+    const QString postfix = Utils::HostOsInfo::isMacHost() ? QString("/QmlDesigner")
+                                                           : QString("/qmldesigner");
+    const QStringList pluginPaths = Utils::transform(ExtensionSystem::PluginManager::pluginPaths(),
+                                                     [postfix](const QString &p) {
+                                                         return QString(p + postfix);
+                                                     });
+
+    MetaInfo::initializeGlobal(pluginPaths, d->externalDependencies);
+
+    d->viewManager.registerView(std::make_unique<ConnectionView>(d->externalDependencies));
+
+    auto timelineView = d->viewManager.registerView(
+        std::make_unique<TimelineView>(d->externalDependencies));
+    timelineView->registerActions();
+
+    d->viewManager.registerView(std::make_unique<CurveEditorView>(d->externalDependencies));
+
+    auto eventlistView = d->viewManager.registerView(
+        std::make_unique<EventListPluginView>(d->externalDependencies));
+    eventlistView->registerActions();
+
+    auto transitionEditorView = d->viewManager.registerView(
+        std::make_unique<TransitionEditorView>(d->externalDependencies));
+    transitionEditorView->registerActions();
+
+    d->viewManager.registerFormEditorTool(std::make_unique<SourceTool>());
+    d->viewManager.registerFormEditorTool(std::make_unique<ColorTool>());
+    d->viewManager.registerFormEditorTool(std::make_unique<TextTool>());
+    d->viewManager.registerFormEditorTool(std::make_unique<PathTool>(d->externalDependencies));
+    d->viewManager.registerFormEditorTool(std::make_unique<TransitionTool>());
+
+    if (Core::ICore::isQtDesignStudio()) {
+        d->mainWidget.initialize();
+
+        emitUsageStatistics("StandaloneMode");
+        if (QmlProjectManager::QmlProject::isQtDesignStudioStartedFromQtC())
+            emitUsageStatistics("QDSlaunchedFromQtC");
+        emitUsageStatistics("qdsStartupCount");
+
+        FoundLicense license = checkLicense();
+        if (license == FoundLicense::enterprise)
+            Core::ICore::appendAboutInformation(tr("License: Enterprise"));
+        else if (license == FoundLicense::professional)
+            Core::ICore::appendAboutInformation(tr("License: Professional"));
+
+        if (!licensee().isEmpty())
+            Core::ICore::appendAboutInformation(tr("Licensee: %1").arg(licensee()));
+    }
+
+    m_delayedInitialized = true;
+}
+
 DesignDocument *QmlDesignerPlugin::currentDesignDocument() const
 {
     if (d)
@@ -674,6 +712,35 @@ void QmlDesignerPlugin::emitUsageStatistics(const QString &identifier)
 {
     QTC_ASSERT(instance(), return);
     emit instance()->usageStatisticsNotifier(normalizeIdentifier(identifier));
+
+    TraceIdentifierData activeData = privateInstance()->m_activeTraceIdentifierDataHash.value(
+        identifier);
+
+    if (activeData.time) {
+        const int currentTime = privateInstance()->timer.elapsed();
+        const int currentDuration = (currentTime - activeData.time);
+        if (currentDuration < activeData.maxDuration)
+            instance()->emitUsageStatisticsUsageDuration(activeData.newIdentifer, currentDuration);
+
+        privateInstance()->m_activeTraceIdentifierDataHash.remove(identifier);
+    }
+
+    TraceIdentifierData data = privateInstance()->m_traceIdentifierDataHash.value(identifier);
+
+    if (!data.identifier.isEmpty()) {
+        data.time = privateInstance()->timer.elapsed();
+        privateInstance()->m_activeTraceIdentifierDataHash.insert(data.identifier, data);
+    }
+
+    const auto values = privateInstance()->m_activeTraceIdentifierDataHash.values();
+    for (const auto &activeData : values) {
+        const int currentTime = privateInstance()->timer.elapsed();
+        const int currentDuration = (currentTime - activeData.time);
+
+        if (currentDuration > activeData.maxDuration) {
+            privateInstance()->m_activeTraceIdentifierDataHash.remove(activeData.identifier);
+        }
+    }
 }
 
 void QmlDesignerPlugin::emitUsageStatisticsContextAction(const QString &identifier)
@@ -726,6 +793,18 @@ void QmlDesignerPlugin::trackWidgetFocusTime(QWidget *widget, const QString &ide
                     lastIdentifier.clear();
                 }
             });
+}
+
+void QmlDesignerPlugin::registerCombinedTracedPoints(const QString &identifierFirst,
+                                                     const QString &identifierSecond,
+                                                     const QString &newIdentifier,
+                                                     int maxDuration)
+{
+    QTC_ASSERT(privateInstance(), return );
+    privateInstance()->m_traceIdentifierDataHash.insert(identifierFirst,
+                                                        TraceIdentifierData(identifierSecond,
+                                                                            newIdentifier,
+                                                                            maxDuration));
 }
 
 void QmlDesignerPlugin::lauchFeedbackPopup(const QString &identifier)
@@ -791,6 +870,12 @@ void QmlDesignerPlugin::emitUsageStatisticsTime(const QString &identifier, int e
 
     QTC_ASSERT(instance(), return);
     emit instance()->usageStatisticsUsageTimer(normalizeIdentifier(identifier), elapsed);
+}
+
+void QmlDesignerPlugin::emitUsageStatisticsUsageDuration(const QString &identifier, int elapsed)
+{
+    QTC_ASSERT(instance(), return );
+    emit instance()->usageStatisticsUsageDuration(identifier, elapsed);
 }
 
 QmlDesignerPlugin *QmlDesignerPlugin::instance()

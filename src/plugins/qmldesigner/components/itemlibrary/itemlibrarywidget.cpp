@@ -3,6 +3,7 @@
 
 #include "itemlibrarywidget.h"
 
+#include "itemlibraryconstants.h"
 #include "itemlibraryiconimageprovider.h"
 #include "itemlibraryimport.h"
 
@@ -82,7 +83,7 @@ bool ItemLibraryWidget::eventFilter(QObject *obj, QEvent *event)
                 // For drag to be handled correctly, we must have the component properly imported
                 // beforehand, so we import the module immediately when the drag starts
                 if (!entry.requiredImport().isEmpty()
-                    && !Utils::addImportWithCheck(entry.requiredImport(), m_model)) {
+                    && !ModelUtils::addImportWithCheck(entry.requiredImport(), m_model)) {
                     qWarning() << __FUNCTION__ << "Required import adding failed:"
                                << entry.requiredImport();
                 }
@@ -183,16 +184,11 @@ void ItemLibraryWidget::setItemLibraryInfo(ItemLibraryInfo *itemLibraryInfo)
     if (m_itemLibraryInfo) {
         disconnect(m_itemLibraryInfo.data(), &ItemLibraryInfo::entriesChanged,
                    this, &ItemLibraryWidget::delayedUpdateModel);
-        disconnect(m_itemLibraryInfo.data(), &ItemLibraryInfo::priorityImportsChanged,
-                   this, &ItemLibraryWidget::handlePriorityImportsChanged);
     }
     m_itemLibraryInfo = itemLibraryInfo;
     if (itemLibraryInfo) {
         connect(m_itemLibraryInfo.data(), &ItemLibraryInfo::entriesChanged,
                 this, &ItemLibraryWidget::delayedUpdateModel);
-        connect(m_itemLibraryInfo.data(), &ItemLibraryInfo::priorityImportsChanged,
-                this, &ItemLibraryWidget::handlePriorityImportsChanged);
-        m_addModuleModel->setPriorityImports(m_itemLibraryInfo->priorityImports());
     }
     delayedUpdateModel();
 }
@@ -217,7 +213,7 @@ QString ItemLibraryWidget::getDependencyImport(const Import &import)
 
     const QStringList splitImport = import.url().split('.');
 
-    if (splitImport.count() > 1) {
+    if (splitImport.size() > 1) {
         if (prefixDependencies.contains(splitImport.first()))
             return splitImport.first();
     }
@@ -338,7 +334,7 @@ void ItemLibraryWidget::updateModel()
 
 void ItemLibraryWidget::updatePossibleImports(const Imports &possibleImports)
 {
-    m_addModuleModel->update(difference(possibleImports, m_model->imports()));
+    m_addModuleModel->update(set_difference(possibleImports, m_model->imports()));
     delayedUpdateModel();
 }
 
@@ -352,14 +348,6 @@ void ItemLibraryWidget::updateSearch()
     m_itemLibraryModel->setSearchText(m_filterText);
     m_itemsWidget->update();
     m_addModuleModel->setSearchText(m_filterText);
-}
-
-void ItemLibraryWidget::handlePriorityImportsChanged()
-{
-    if (!m_itemLibraryInfo.isNull()) {
-        m_addModuleModel->setPriorityImports(m_itemLibraryInfo->priorityImports());
-        m_addModuleModel->update(difference(m_model->possibleImports(), m_model->imports()));
-    }
 }
 
 void ItemLibraryWidget::setIsDragging(bool val)

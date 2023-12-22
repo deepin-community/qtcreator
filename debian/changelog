@@ -1,8 +1,84 @@
-qtcreator (11.0.0-0deepin) UNRELEASED; urgency=medium
+qtcreator (12.0.1-1) experimental; urgency=medium
 
-  * New upstream release
+  * Team upload.
+  * New upstream release.
+  * Tweak the configuration for the CI on salsa so it can be actually run.
 
- -- Tianyu Chen <sweetyfish@deepin.org>  Mon, 14 Aug 2023 10:22:23 +0800
+ -- Pino Toscano <pino@debian.org>  Sat, 16 Dec 2023 15:41:13 +0100
+
+qtcreator (12.0.0-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pino Toscano <pino@debian.org>  Thu, 23 Nov 2023 22:17:43 +0100
+
+qtcreator (11.0.3-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update the patches:
+    - upstream_ClangTools-Add-support-for-yaml-cpp-0.8.patch: drop, backported
+      from upsteam
+
+ -- Pino Toscano <pino@debian.org>  Thu, 28 Sep 2023 13:04:08 +0200
+
+qtcreator (11.0.2-1) experimental; urgency=medium
+
+  * Team upload.
+  * Upload to experimental, as QML Designer needs Qt 6.4.3, which is not present
+    in Debian at the time of this writing.
+  * New upstream release.
+  * Switch Vcs-* fields to the 'experimental' packaging branch.
+  * Update the build dependencies according to the upstream build system:
+    - add xxd
+    - add qt6-qmllint-plugins as workaround for a missing dependency in
+      qt6-declarative-dev
+
+ -- Pino Toscano <pino@debian.org>  Sun, 27 Aug 2023 22:30:32 +0200
+
+qtcreator (10.0.2-4) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Pino Toscano ]
+  * Revert the changes done in 10.0.2-2 and 10.0.2-3:
+    - first of all, they were uploaded totally untested, unreviewed, as
+      "team upload", whereas they were effectively NMUs, as Gianfranco is not
+      part of the team
+    - the fix-yaml-cpp-search.patch patch is an own creation not forwarded
+      upstream
+    - the nonsense in dh_auto_clean, i.e. removing cmake/Findyaml-cpp.cmake,
+      causes the above patch to even not work at all
+  * Backport upstream commit 170f9acfb41704b68e2ba98690fd6d5e98addd85 to find
+    yaml-cpp 0.8; patch upstream_ClangTools-Add-support-for-yaml-cpp-0.8.patch.
+    (Closes: #1050367)
+  * Drop build tweaks for mipsel, as that architecture was recently
+    discontinued.
+  * Update lintian overrides.
+
+  [ Lisandro Damián Nicanor Pérez Meyer ]
+  * Update Qt packages listed as build dependencies that have changed their
+    name.
+
+ -- Pino Toscano <pino@debian.org>  Sun, 27 Aug 2023 20:45:25 +0200
+
+qtcreator (10.0.2-3) unstable; urgency=medium
+
+  * Team upload.
+  * Fix yaml-cpp find and link with a non-retro-compatible patch.
+
+ -- Gianfranco Costamagna <locutusofborg@debian.org>  Thu, 24 Aug 2023 11:15:57 +0200
+
+qtcreator (10.0.2-2) unstable; urgency=medium
+
+  [ Gianfranco Costamagna ]
+  * Remove cmake/Findyaml-cpp.cmake for compatibility with the new yaml-cpp
+    (Closes: #1050367).
+
+  [ Simon Quigley ]
+  * Ack and team upload, thanks Gianfranco!
+
+ -- Gianfranco Costamagna <locutusofborg@debian.org>  Wed, 23 Aug 2023 19:24:47 -0500
 
 qtcreator (10.0.2-1) unstable; urgency=medium
 

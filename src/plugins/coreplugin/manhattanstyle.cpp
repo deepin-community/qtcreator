@@ -442,6 +442,10 @@ int ManhattanStyle::styleHint(StyleHint hint, const QStyleOption *option, const 
         ret = QGuiApplication::keyboardModifiers()
               == (HostOsInfo::isMacHost() ? Qt::MetaModifier : Qt::ControlModifier);
         break;
+    case QStyle::SH_Slider_AbsoluteSetButtons:
+        // Make QSlider jump on left mouse click
+        ret = Qt::LeftButton | Qt::MiddleButton | Qt::RightButton;
+        break;
     default:
         break;
     }
@@ -728,8 +732,17 @@ void ManhattanStyle::drawPrimitiveForPanelWidget(PrimitiveElement element,
                         painter->drawLine(borderRect.topRight(), borderRect.bottomRight());
                     }
                 } else if (option->state & State_Enabled && option->state & State_MouseOver) {
-                    StyleHelper::drawPanelBgRect(
-                        painter, rect, creatorTheme()->color(Theme::FancyToolButtonHoverColor));
+                    if (widget->property(StyleHelper::C_TOOLBAR_ACTIONWIDGET).toBool()) {
+                        painter->save();
+                        painter->setBrush(creatorTheme()->color(Theme::FancyToolButtonHoverColor));
+                        painter->drawRoundedRect(rect, 5, 5);
+                        painter->restore();
+                    } else {
+                        StyleHelper::drawPanelBgRect(painter,
+                                                     rect,
+                                                     creatorTheme()->color(
+                                                         Theme::FancyToolButtonHoverColor));
+                    }
                 }
             if (option->state & State_HasFocus && (option->state & State_KeyboardFocusChange)) {
                 QColor highlight = option->palette.highlight().color();

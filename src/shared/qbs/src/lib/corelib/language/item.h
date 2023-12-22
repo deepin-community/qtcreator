@@ -53,7 +53,9 @@
 #include <QtCore/qlist.h>
 #include <QtCore/qmap.h>
 
-#include <optional>
+#include <atomic>
+#include <mutex>
+#include <utility>
 #include <vector>
 
 namespace qbs {
@@ -64,32 +66,30 @@ namespace Internal {
 class ItemObserver;
 class ItemPool;
 class Logger;
+class ModuleItemLocker;
+class ProductContext;
 
 class QBS_AUTOTEST_EXPORT Item : public QbsQmlJS::Managed
 {
     friend class ASTPropertiesItemHandler;
     friend class ItemPool;
     friend class ItemReaderASTVisitor;
+    friend class ModuleItemLocker;
     Q_DISABLE_COPY(Item)
-    Item(ItemPool *pool, ItemType type);
+    Item(ItemType type) : m_type(type) {}
 
 public:
     struct Module
     {
         QualifiedId name;
         Item *item = nullptr;
-        struct ProductInfo {
-            ProductInfo(Item *i, const QString &m, const QString &p)
-                : item(i), multiplexId(m), profile(p) {}
-            Item *item = nullptr;
-            QString multiplexId;
-            QString profile;
-        };
-        std::optional<ProductInfo> productInfo; // Set if and only if the dep is a product.
+        ProductContext *product = nullptr; // Set if and only if the dep is a product.
 
         // All items that declared an explicit dependency on this module. Can contain any
         // number of module instances and at most one product.
-        std::vector<Item *> loadingItems;
+        using ParametersWithPriority = std::pair<QVariantMap, int>;
+        using LoadingItemInfo = std::pair<Item *, ParametersWithPriority>;
+        std::vector<LoadingItemInfo> loadingItems;
 
         QVariantMap parameters;
         VersionRange versionRange;
@@ -105,8 +105,7 @@ public:
     using PropertyMap = QMap<QString, ValuePtr>;
 
     static Item *create(ItemPool *pool, ItemType type);
-    Item *clone() const;
-    ItemPool *pool() const { return m_pool; }
+    Item *clone(ItemPool &pool) const;
 
     const QString &id() const { return m_id; }
     const CodeLocation &location() const { return m_location; }
@@ -119,8 +118,8 @@ public:
     const QList<Item *> &children() const { return m_children; }
     QList<Item *> &children() { return m_children; }
     Item *child(ItemType type, bool checkForMultiple = true) const;
-    const PropertyMap &properties() const { return m_properties; }
-    PropertyMap &properties() { return m_properties; }
+    const PropertyMap &properties() const { assertModuleLocked(); return m_properties; }
+    PropertyMap &properties() { assertModuleLocked(); return m_properties; }
     const PropertyDeclarationMap &propertyDeclarations() const { return m_propertyDeclarations; }
     PropertyDeclaration propertyDeclaration(const QString &name, bool allowExpired = true) const;
 
@@ -141,14 +140,15 @@ public:
     bool hasOwnProperty(const QString &name) const;
     ValuePtr property(const QString &name) const;
     ValuePtr ownProperty(const QString &name) const;
-    ItemValuePtr itemProperty(const QString &name, const Item *itemTemplate = nullptr);
-    ItemValuePtr itemProperty(const QString &name, const ItemValueConstPtr &value);
+    ItemValuePtr itemProperty(const QString &name, ItemPool &pool, const Item *itemTemplate = nullptr);
+    ItemValuePtr itemProperty(const QString &name, const ItemValueConstPtr &value, ItemPool &pool);
     JSSourceValuePtr sourceProperty(const QString &name) const;
     VariantValuePtr variantProperty(const QString &name) const;
     bool isOfTypeOrhasParentOfType(ItemType type) const;
-    void setObserver(ItemObserver *observer) const;
+    void addObserver(ItemObserver *observer) const;
+    void removeObserver(ItemObserver *observer) const;
     void setProperty(const QString &name, const ValuePtr &value);
-    void setProperties(const PropertyMap &props) { m_properties = props; }
+    void setProperties(const PropertyMap &props) { assertModuleLocked(); m_properties = props; }
     void removeProperty(const QString &name);
     void setPropertyDeclaration(const QString &name, const PropertyDeclaration &declaration);
     void setPropertyDeclarations(const PropertyDeclarationMap &decls);
@@ -180,18 +180,22 @@ public:
 
 private:
     ItemValuePtr itemProperty(const QString &name, const Item *itemTemplate,
-                              const ItemValueConstPtr &itemValue);
+                              const ItemValueConstPtr &itemValue, ItemPool &pool);
 
     void dump(int indentation) const;
 
-    ItemPool *m_pool;
-    mutable ItemObserver *m_observer;
+    void lockModule() const;
+    void unlockModule() const;
+    void assertModuleLocked() const;
+
+    mutable std::vector<ItemObserver *> m_observers;
+    mutable std::mutex m_observersMutex;
     QString m_id;
     CodeLocation m_location;
-    Item *m_prototype;
-    Item *m_scope;
-    Item *m_outerItem;
-    Item *m_parent;
+    Item *m_prototype = nullptr;
+    Item *m_scope = nullptr;
+    Item *m_outerItem = nullptr;
+    Item *m_parent = nullptr;
     QList<Item *> m_children;
     FileContextPtr m_file;
     PropertyMap m_properties;
@@ -199,6 +203,10 @@ private:
     PropertyDeclarationMap m_expiredPropertyDeclarations;
     Modules m_modules;
     ItemType m_type;
+    mutable std::mutex m_moduleMutex;
+#ifndef NDEBUG
+    mutable std::atomic_bool m_moduleLocked = false;
+#endif
 };
 
 inline bool operator<(const Item::Module &m1, const Item::Module &m2) { return m1.name < m2.name; }
@@ -206,6 +214,22 @@ inline bool operator<(const Item::Module &m1, const Item::Module &m2) { return m
 Item *createNonPresentModule(ItemPool &pool, const QString &name, const QString &reason,
                              Item *module);
 void setScopeForDescendants(Item *item, Item *scope);
+
+// This mechanism is needed because Module items are shared between products (not doing so
+// would be prohibitively expensive).
+// The competing accesses are between
+//  - Attaching a temporary qbs module for evaluating the Module condition.
+//  - Cloning the module when creating an instance.
+//  - Directly accessing Module properties, which happens rarely (as opposed to properties of
+//    an instance).
+class ModuleItemLocker
+{
+public:
+    ModuleItemLocker(const Item &item) : m_item(item) { item.lockModule(); }
+    ~ModuleItemLocker() { m_item.unlockModule(); }
+private:
+    const Item &m_item;
+};
 
 } // namespace Internal
 } // namespace qbs

@@ -73,9 +73,11 @@ class ProductsCollector::Private
 public:
     Private(LoaderState &loaderState) : loaderState(loaderState) {}
 
-    void handleProject(Item *projectItem, const Set<QString> &referencedFilePaths);
+    void handleProject(Item *projectItem, ProjectContext *parentProject,
+                       const Set<QString> &referencedFilePaths);
     QList<Item *> multiplexProductItem(ProductContext &dummyContext, Item *productItem);
-    void prepareProduct(ProjectContext &projectContext, Item *productItem);
+    void prepareProduct(ProjectContext &projectContext, Item *productItem,
+                        ProductContext *mainProduct = nullptr);
     void handleSubProject(ProjectContext &projectContext, Item *projectItem,
                           const Set<QString> &referencedFilePaths);
     void copyProperties(const Item *sourceProject, Item *targetProject);
@@ -86,17 +88,18 @@ public:
     bool checkExportItemCondition(Item *exportItem, const ProductContext &product);
     void initProductProperties(const ProductContext &product);
     void checkProjectNamesInOverrides();
-    void collectProductsByName();
+    void collectProductsByNameAndItem();
     void checkProductNamesInOverrides();
+    void mergeProperty(Item *dst, const QString &name, const ValuePtr &value);
 
     LoaderState &loaderState;
     Settings settings{loaderState.parameters().settingsDirectory()};
     Set<QString> disabledProjects;
     Version qbsVersion;
     Item *tempScopeItem = nullptr;
-    qint64 elapsedTimePrepareProducts = 0;
 
 private:
+    // TODO: Put this in loaderutils
     class TempBaseModuleAttacher {
     public:
         TempBaseModuleAttacher(Private *d, ProductContext &product);
@@ -118,24 +121,15 @@ ProductsCollector::~ProductsCollector() = default;
 
 void ProductsCollector::run(Item *rootProject)
 {
-    d->handleProject(rootProject, {QDir::cleanPath(d->loaderState.parameters().projectFilePath())});
+    d->handleProject(rootProject, nullptr, {rootProject->file()->filePath()});
     d->checkProjectNamesInOverrides();
-    d->collectProductsByName();
+    d->collectProductsByNameAndItem();
     d->checkProductNamesInOverrides();
+    d->loaderState.topLevelProject().checkForLocalProfileAsTopLevelProfile(
+                d->loaderState.parameters().topLevelProfile());
 }
 
-void ProductsCollector::printProfilingInfo(int indent)
-{
-    if (!d->loaderState.parameters().logElapsedTime())
-        return;
-    const QByteArray prefix(indent, ' ');
-    d->loaderState.logger().qbsLog(LoggerInfo, true)
-        << prefix
-        << Tr::tr("Preparing products took %1.")
-           .arg(elapsedTimeString(d->elapsedTimePrepareProducts));
-}
-
-void ProductsCollector::Private::handleProject(Item *projectItem,
+void ProductsCollector::Private::handleProject(Item *projectItem, ProjectContext *parentProject,
                                                const Set<QString> &referencedFilePaths)
 {
     const SetupProjectParameters &parameters = loaderState.parameters();
@@ -146,9 +140,11 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
 
     auto p = std::make_unique<ProjectContext>();
     auto &projectContext = *p;
+    projectContext.item = projectItem;
+    projectContext.parent = parentProject;
     projectContext.topLevelProject = &topLevelProject;
     ItemValuePtr itemValue = ItemValue::create(projectItem);
-    projectContext.scope = Item::create(projectItem->pool(), ItemType::Scope);
+    projectContext.scope = Item::create(&loaderState.itemPool(), ItemType::Scope);
     projectContext.scope->setFile(projectItem->file());
     projectContext.scope->setProperty(StringConstants::projectVar(), itemValue);
     ProductContext dummyProduct;
@@ -156,7 +152,7 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
     dummyProduct.moduleProperties = parameters.finalBuildConfigurationTree();
     dummyProduct.profileModuleProperties = dummyProduct.moduleProperties;
     dummyProduct.profileName = parameters.topLevelProfile();
-    loaderState.dependenciesResolver().loadBaseModule(dummyProduct, projectItem);
+    loadBaseModule(dummyProduct, projectItem, loaderState);
 
     projectItem->overrideProperties(parameters.overriddenValuesTree(),
                                     StringConstants::projectPrefix(), parameters, logger);
@@ -166,6 +162,9 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
         projectItem->setProperty(StringConstants::nameProperty(),
                                  VariantValue::create(projectContext.name));
     }
+    if (parentProject)
+        parentProject->children.push_back(p.get());
+    topLevelProject.addProject(p.release());
     projectItem->overrideProperties(parameters.overriddenValuesTree(),
                                     StringConstants::projectsOverridePrefix() + projectContext.name,
                                     parameters, logger);
@@ -173,11 +172,9 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
         disabledProjects.insert(projectContext.name);
         return;
     }
-    topLevelProject.projects.push_back(p.release());
     SearchPathsManager searchPathsManager(itemReader, itemReader.readExtraSearchPaths(projectItem)
                                           << projectItem->file()->dirPath());
     projectContext.searchPathsStack = itemReader.extraSearchPathsStack();
-    projectContext.item = projectItem;
 
     const QString minVersionStr
         = evaluator.stringValue(projectItem, StringConstants::minimumQbsVersionProperty(),
@@ -199,10 +196,9 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
     for (Item * const child : projectItem->children())
         child->setScope(projectContext.scope);
 
-    projectContext.topLevelProject->probes << loaderState.probesResolver().resolveProbes(
-            {dummyProduct.name, dummyProduct.uniqueName()}, projectItem);
+    ProbesResolver(loaderState).resolveProbes(dummyProduct, projectItem);
 
-    loaderState.localProfiles().collectProfilesFromItems(projectItem, projectContext.scope);
+    collectProfilesFromItems(projectItem, projectContext.scope, loaderState);
 
     QList<Item *> multiplexedProducts;
     for (Item * const child : projectItem->children()) {
@@ -223,7 +219,7 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
             break;
         case ItemType::Project:
             copyProperties(projectItem, child);
-            handleProject(child, referencedFilePaths);
+            handleProject(child, &projectContext, referencedFilePaths);
             break;
         default:
             break;
@@ -253,7 +249,7 @@ void ProductsCollector::Private::handleProject(Item *projectItem,
             break;
         case ItemType::Project:
             copyProperties(projectItem, subItem);
-            handleProject(subItem,
+            handleProject(subItem, &projectContext,
                           Set<QString>(referencedFilePaths) << subItem->file()->filePath());
             break;
         default:
@@ -278,28 +274,36 @@ QList<Item *> ProductsCollector::Private::multiplexProductItem(ProductContext &d
                                     loaderState.parameters(), loaderState.logger());
     dummyContext.item = productItem;
     TempBaseModuleAttacher tbma(this, dummyContext);
-    return loaderState.multiplexer().multiplex(productName, productItem, tbma.tempBaseModuleItem(),
-                                               [&] { tbma.drop(); });
+    return multiplex(productName, productItem, tbma.tempBaseModuleItem(),
+        [&] { tbma.drop(); }, loaderState);
 }
 
-void ProductsCollector::Private::prepareProduct(ProjectContext &projectContext, Item *productItem)
+void ProductsCollector::Private::prepareProduct(ProjectContext &projectContext, Item *productItem,
+                                                ProductContext *mainProduct)
 {
     const SetupProjectParameters &parameters = loaderState.parameters();
     Evaluator &evaluator = loaderState.evaluator();
     TopLevelProjectContext &topLevelProject = loaderState.topLevelProject();
 
-    AccumulatingTimer timer(parameters.logElapsedTime() ? &elapsedTimePrepareProducts : nullptr);
-    topLevelProject.checkCancelation(parameters);
+    AccumulatingTimer timer(parameters.logElapsedTime()
+                            ? &topLevelProject.timingData().preparingProducts : nullptr);
+    topLevelProject.checkCancelation();
     qCDebug(lcModuleLoader) << "prepareProduct" << productItem->file()->filePath();
 
-    ProductContext productContext;
+    if (mainProduct)
+        mainProduct->shadowProduct = std::make_unique<ProductContext>();
+    else
+        projectContext.products.emplace_back();
+    ProductContext &productContext = mainProduct
+            ? *mainProduct->shadowProduct : projectContext.products.back();
     productContext.item = productItem;
     productContext.project = &projectContext;
 
     // Retrieve name, profile and multiplex id.
     productContext.name = evaluator.stringValue(productItem, StringConstants::nameProperty());
     QBS_CHECK(!productContext.name.isEmpty());
-    const ItemValueConstPtr qbsItemValue = productItem->itemProperty(StringConstants::qbsModule());
+    const ItemValueConstPtr qbsItemValue = productItem->itemProperty(StringConstants::qbsModule(),
+                                                                     loaderState.itemPool());
     if (qbsItemValue && qbsItemValue->item()->hasProperty(StringConstants::profileProperty())) {
         TempBaseModuleAttacher tbma(this, productContext);
         productContext.profileName = evaluator.stringValue(
@@ -312,11 +316,11 @@ void ProductsCollector::Private::prepareProduct(ProjectContext &projectContext, 
     QBS_CHECK(!productContext.profileName.isEmpty());
 
     // Set up full module property map based on the profile.
-    const auto it = topLevelProject.profileConfigs.constFind(productContext.profileName);
-    QVariantMap flatConfig;
-    if (it == topLevelProject.profileConfigs.constEnd()) {
+    std::optional<QVariantMap> flatConfig
+            = topLevelProject.profileConfig(productContext.profileName);
+    if (!flatConfig) {
         const Profile profile(productContext.profileName, &settings,
-                              loaderState.localProfiles().profiles());
+                              loaderState.topLevelProject().localProfiles());
         if (!profile.exists()) {
             ErrorInfo error(Tr::tr("Profile '%1' does not exist.").arg(profile.name()),
                             productItem->location());
@@ -325,37 +329,50 @@ void ProductsCollector::Private::prepareProduct(ProjectContext &projectContext, 
         }
         flatConfig = SetupProjectParameters::expandedBuildConfiguration(
             profile, parameters.configurationName());
-        topLevelProject.profileConfigs.insert(productContext.profileName, flatConfig);
-    } else {
-        flatConfig = it.value().toMap();
+        topLevelProject.addProfileConfig(productContext.profileName, *flatConfig);
     }
     productContext.profileModuleProperties = SetupProjectParameters::finalBuildConfigurationTree(
-        flatConfig, {});
+        *flatConfig, {});
     productContext.moduleProperties = SetupProjectParameters::finalBuildConfigurationTree(
-        flatConfig, parameters.overriddenValues());
+        *flatConfig, parameters.overriddenValues());
     initProductProperties(productContext);
 
     // Set up product scope. This is mainly for using the "product" and "project"
     // variables in some contexts.
     ItemValuePtr itemValue = ItemValue::create(productItem);
-    productContext.scope = Item::create(productItem->pool(), ItemType::Scope);
+    productContext.scope = Item::create(&loaderState.itemPool(), ItemType::Scope);
     productContext.scope->setProperty(StringConstants::productVar(), itemValue);
     productContext.scope->setFile(productItem->file());
     productContext.scope->setScope(productContext.project->scope);
+
+    // If there are any child items with an id, set up a scope for them. This is mostly
+    // relevant for Probe items. While we might get away with using the file's id scope
+    // in the absence of multiplexing, having a proper per-product scope seems cleaner.
+    QBS_CHECK(productItem->scope());
+    QBS_CHECK(productItem->scope() == productContext.project->scope);
+    for (Item * const child : productItem->children()) {
+        if (child->id().isEmpty())
+            continue;
+        if (productItem->scope() == productContext.project->scope) {
+            productItem->setScope(Item::create(&loaderState.itemPool(), ItemType::Scope));
+            productItem->scope()->setScope(productContext.project->scope);
+        }
+        const ItemValuePtr childValue = ItemValue::create(child);
+        productItem->scope()->setProperty(child->id(), childValue);
+        productContext.scope->setProperty(child->id(), childValue);
+    }
 
     const bool hasExportItems = mergeExportItems(productContext);
 
     setScopeForDescendants(productItem, productContext.scope);
 
-    projectContext.products.push_back(productContext);
-
-    if (!hasExportItems || getShadowProductInfo(productContext).first)
+    if (!hasExportItems)
         return;
 
     // This "shadow product" exists only to pull in a dependency on the actual product
     // and nothing else, thus providing us with the pure environment that we need to
     // evaluate the product's exported properties in isolation in the project resolver.
-    Item * const importer = Item::create(productItem->pool(), ItemType::Product);
+    Item * const importer = Item::create(&loaderState.itemPool(), ItemType::Product);
     importer->setProperty(QStringLiteral("name"),
                           VariantValue::create(StringConstants::shadowProductPrefix()
                                                + productContext.name));
@@ -363,15 +380,16 @@ void ProductsCollector::Private::prepareProduct(ProjectContext &projectContext, 
     importer->setLocation(productItem->location());
     importer->setScope(projectContext.scope);
     importer->setupForBuiltinType(parameters.deprecationWarningMode(), loaderState.logger());
-    Item * const dependsItem = Item::create(productItem->pool(), ItemType::Depends);
+    Item * const dependsItem = Item::create(&loaderState.itemPool(), ItemType::Depends);
     dependsItem->setProperty(QStringLiteral("name"), VariantValue::create(productContext.name));
     dependsItem->setProperty(QStringLiteral("required"), VariantValue::create(false));
     dependsItem->setFile(importer->file());
     dependsItem->setLocation(importer->location());
     dependsItem->setupForBuiltinType(parameters.deprecationWarningMode(), loaderState.logger());
+    dependsItem->setProperty(StringConstants::multiplexConfigurationIdsProperty(),
+                             VariantValue::create(productContext.multiplexConfigurationId));
     Item::addChild(importer, dependsItem);
-    Item::addChild(productItem, importer);
-    prepareProduct(projectContext, importer);
+    prepareProduct(projectContext, importer, &productContext);
 }
 
 void ProductsCollector::Private::handleSubProject(
@@ -426,7 +444,7 @@ void ProductsCollector::Private::handleSubProject(
 
     Item::addChild(projectItem, loadedItem);
     projectItem->setScope(projectContext.scope);
-    handleProject(loadedItem, Set<QString>(referencedFilePaths) << subProjectFilePath);
+    handleProject(loadedItem, &projectContext, Set<QString>(referencedFilePaths) << subProjectFilePath);
 }
 
 void ProductsCollector::Private::copyProperties(const Item *sourceProject, Item *targetProject)
@@ -507,18 +525,19 @@ QList<Item *> ProductsCollector::Private::loadReferencedFile(
     QList<Item *> loadedItems;
     loadedItems << subItem;
     if (subItem->type() == ItemType::Product) {
-        loaderState.localProfiles().collectProfilesFromItems(subItem, dummyContext.project->scope);
+        collectProfilesFromItems(subItem, dummyContext.project->scope, loaderState);
         loadedItems << multiplexProductItem(dummyContext, subItem);
     }
     return loadedItems;
 }
 
-static void mergeProperty(Item *dst, const QString &name, const ValuePtr &value)
+void ProductsCollector::Private::mergeProperty(Item *dst, const QString &name,
+                                               const ValuePtr &value)
 {
     if (value->type() == Value::ItemValueType) {
         const ItemValueConstPtr itemValue = std::static_pointer_cast<ItemValue>(value);
         const Item * const valueItem = itemValue->item();
-        Item * const subItem = dst->itemProperty(name, itemValue)->item();
+        Item * const subItem = dst->itemProperty(name, itemValue, loaderState.itemPool())->item();
         for (auto it = valueItem->properties().begin(); it != valueItem->properties().end(); ++it)
             mergeProperty(subItem, it.key(), it.value());
         return;
@@ -533,7 +552,7 @@ static void mergeProperty(Item *dst, const QString &name, const ValuePtr &value)
         if (baseValue) {
             QBS_CHECK(baseValue->type() == Value::JSSourceValueType);
             const JSSourceValuePtr jsBaseValue = std::static_pointer_cast<JSSourceValue>(
-                baseValue->clone());
+                baseValue->clone(loaderState.itemPool()));
             jsValue->setBaseValue(jsBaseValue);
             std::vector<JSSourceValue::Alternative> alternatives = jsValue->alternatives();
             jsValue->clearAlternatives();
@@ -566,14 +585,14 @@ bool ProductsCollector::Private::mergeExportItems(ProductContext &productContext
     if (!exportItems.empty())
         productContext.item->setChildren(children);
 
-    Item *merged = Item::create(productContext.item->pool(), ItemType::Export);
+    Item *merged = Item::create(&loaderState.itemPool(), ItemType::Export);
     const QString &nameKey = StringConstants::nameProperty();
     const ValuePtr nameValue = VariantValue::create(productContext.name);
     merged->setProperty(nameKey, nameValue);
     Set<FileContextConstPtr> filesWithExportItem;
     QVariantMap defaultParameters;
     for (Item * const exportItem : exportItems) {
-        topLevelProject.checkCancelation(parameters);
+        topLevelProject.checkCancelation();
         if (Q_UNLIKELY(filesWithExportItem.contains(exportItem->file())))
             throw ErrorInfo(Tr::tr("Multiple Export items in one product are prohibited."),
                             exportItem->location());
@@ -584,9 +603,9 @@ bool ProductsCollector::Private::mergeExportItems(ProductContext &productContext
         for (Item * const child : exportItem->children()) {
             if (child->type() == ItemType::Parameters) {
                 adjustParametersScopes(child, child);
-                mergeParameters(defaultParameters,
-                                getJsVariant(evaluator.engine()->context(),
-                                             evaluator.scriptValue(child)).toMap());
+                defaultParameters = mergeDependencyParameters(defaultParameters,
+                                          getJsVariant(evaluator.engine()->context(),
+                                                       evaluator.scriptValue(child)).toMap());
             } else {
                 Item::addChild(merged, child);
             }
@@ -626,11 +645,11 @@ bool ProductsCollector::Private::checkExportItemCondition(Item *exportItem,
 {
     class ScopeHandler {
     public:
-        ScopeHandler(Item *exportItem, const ProductContext &productContext, Item **cachedScopeItem)
-            : m_exportItem(exportItem)
+        ScopeHandler(Item *exportItem, const ProductContext &productContext, Item **cachedScopeItem,
+                     ItemPool &itemPool) : m_exportItem(exportItem), m_itemPool(itemPool)
         {
             if (!*cachedScopeItem)
-                *cachedScopeItem = Item::create(exportItem->pool(), ItemType::Scope);
+                *cachedScopeItem = Item::create(&m_itemPool, ItemType::Scope);
             Item * const scope = *cachedScopeItem;
             QBS_CHECK(productContext.item->file());
             scope->setFile(productContext.item->file());
@@ -644,7 +663,8 @@ bool ProductsCollector::Private::checkExportItemCondition(Item *exportItem,
 
     private:
         Item * const m_exportItem;
-    } scopeHandler(exportItem, product, &tempScopeItem);
+        ItemPool &m_itemPool;
+    } scopeHandler(exportItem, product, &tempScopeItem, loaderState.itemPool());
     return loaderState.topLevelProject().checkItemCondition(exportItem, loaderState.evaluator());
 }
 
@@ -652,7 +672,7 @@ void ProductsCollector::Private::initProductProperties(const ProductContext &pro
 {
     QString buildDir = ResolvedProduct::deriveBuildDirectoryName(product.name,
                                                                  product.multiplexConfigurationId);
-    buildDir = FileInfo::resolvePath(product.project->topLevelProject->buildDirectory, buildDir);
+    buildDir = FileInfo::resolvePath(product.project->topLevelProject->buildDirectory(), buildDir);
     product.item->setProperty(StringConstants::buildDirectoryProperty(),
                               VariantValue::create(buildDir));
     const QString sourceDir = QFileInfo(product.item->file()->filePath()).absolutePath();
@@ -663,10 +683,10 @@ void ProductsCollector::Private::initProductProperties(const ProductContext &pro
 void ProductsCollector::Private::checkProjectNamesInOverrides()
 {
     for (const QString &projectNameInOverride
-         : loaderState.topLevelProject().projectNamesUsedInOverrides) {
+         : loaderState.topLevelProject().projectNamesUsedInOverrides()) {
         if (disabledProjects.contains(projectNameInOverride))
             continue;
-        if (!any_of(loaderState.topLevelProject().projects,
+        if (!any_of(loaderState.topLevelProject().projects(),
                     [&projectNameInOverride](const ProjectContext *p) {
                 return p->name == projectNameInOverride; })) {
             handlePropertyError(Tr::tr("Unknown project '%1' in property override.")
@@ -676,28 +696,26 @@ void ProductsCollector::Private::checkProjectNamesInOverrides()
     }
 }
 
-void ProductsCollector::Private::collectProductsByName()
+void ProductsCollector::Private::collectProductsByNameAndItem()
 {
     TopLevelProjectContext &topLevelProject = loaderState.topLevelProject();
-    for (ProjectContext * const project : topLevelProject.projects) {
+    for (ProjectContext * const project : topLevelProject.projects()) {
         for (ProductContext &product : project->products)
-            topLevelProject.productsByName.insert({product.name, &product});
+            topLevelProject.addProduct(product);
     }
 }
 
 void ProductsCollector::Private::checkProductNamesInOverrides()
 {
     TopLevelProjectContext &topLevelProject = loaderState.topLevelProject();
-    for (const QString &productNameInOverride : topLevelProject.productNamesUsedInOverrides) {
-        if (topLevelProject.erroneousProducts.contains(productNameInOverride))
-            continue;
-        if (!any_of(topLevelProject.productsByName, [&productNameInOverride](
-                                        const std::pair<QString, ProductContext *> &elem) {
+    for (const QString &productNameInOverride : topLevelProject.productNamesUsedInOverrides()) {
+        if (!topLevelProject.productWithNameAndConstraint(
+                    productNameInOverride, [&productNameInOverride](const ProductContext &product) {
                 // In an override string such as "a.b.c:d, we cannot tell whether we have a product
                 // "a" and a module "b.c" or a product "a.b" and a module "c", so we need to take
                 // care not to emit false positives here.
-                return elem.first == productNameInOverride
-                       || elem.first.startsWith(productNameInOverride + StringConstants::dot());
+                return product.name == productNameInOverride
+                       || product.name.startsWith(productNameInOverride + StringConstants::dot());
             })) {
             handlePropertyError(Tr::tr("Unknown product '%1' in property override.")
                                 .arg(productNameInOverride),
@@ -714,9 +732,9 @@ ProductsCollector::Private::TempBaseModuleAttacher::TempBaseModuleAttacher(
 
     // Cloning is necessary because the original value will get "instantiated" now.
     if (qbsValue)
-        m_origQbsValue = qbsValue->clone();
+        m_origQbsValue = qbsValue->clone(d->loaderState.itemPool());
 
-    m_tempBaseModule = d->loaderState.dependenciesResolver().loadBaseModule(product, m_productItem);
+    m_tempBaseModule = loadBaseModule(product, m_productItem, d->loaderState);
 }
 
 void ProductsCollector::Private::TempBaseModuleAttacher::drop()

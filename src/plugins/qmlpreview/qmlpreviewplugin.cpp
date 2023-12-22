@@ -21,7 +21,7 @@
 #include <extensionsystem/pluginmanager.h>
 
 #include <projectexplorer/kit.h>
-#include <projectexplorer/kitinformation.h>
+#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -37,13 +37,15 @@
 
 #include <qmlprojectmanager/qmlmultilanguageaspect.h>
 
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtversionmanager.h>
 #include <qtsupport/baseqtversion.h>
 
 #include <android/androidconstants.h>
 
 #include <QAction>
+#include <QMessageBox>
+#include <QPointer>
 #include <QTimer>
 
 using namespace ProjectExplorer;
@@ -95,6 +97,9 @@ static std::unique_ptr<QmlDebugTranslationClient> defaultCreateDebugTranslationC
     return client;
 }
 
+static void defaultRefreshTranslationFunction()
+{}
+
 class QmlPreviewPluginPrivate : public QObject
 {
 public:
@@ -127,7 +132,7 @@ public:
     QmlPreviewPlugin *q = nullptr;
     QThread m_parseThread;
     QString m_previewedFile;
-    Core::IEditor *m_lastEditor = nullptr;
+    QPointer<Core::IEditor> m_lastEditor;
     QmlPreviewRunControlList m_runningPreviews;
     bool m_dirty = false;
     QString m_localeIsoCode;
@@ -145,6 +150,7 @@ QmlPreviewPluginPrivate::QmlPreviewPluginPrivate(QmlPreviewPlugin *parent)
     m_settings.fileClassifier = &defaultFileClassifier;
     m_settings.fpsHandler = &defaultFpsHandler;
     m_settings.createDebugTranslationClientMethod = &defaultCreateDebugTranslationClientMethod;
+    m_settings.refreshTranslationsFunction = &defaultRefreshTranslationFunction;
 
     Core::ActionContainer *menu = Core::ActionManager::actionContainer(
                 Constants::M_BUILDPROJECT);
@@ -169,11 +175,6 @@ QmlPreviewPluginPrivate::QmlPreviewPluginPrivate(QmlPreviewPlugin *parent)
 
     menu = Core::ActionManager::actionContainer(Constants::M_FILECONTEXT);
     action = new QAction(Tr::tr("Preview File"), this);
-    action->setEnabled(false);
-    connect(q, &QmlPreviewPlugin::runningPreviewsChanged,
-            action, [action](const QmlPreviewRunControlList &previews) {
-        action->setEnabled(!previews.isEmpty());
-    });
     connect(action, &QAction::triggered, q, &QmlPreviewPlugin::previewCurrentFile);
     menu->addAction(
         Core::ActionManager::registerAction(action, "QmlPreview.PreviewFile",  Core::Context(Constants::C_PROJECT_TREE)),
@@ -234,6 +235,12 @@ void QmlPreviewPlugin::setPreviewedFile(const QString &previewedFile)
 QmlPreviewRunControlList QmlPreviewPlugin::runningPreviews() const
 {
     return d->m_runningPreviews;
+}
+
+void QmlPreviewPlugin::stopAllPreviews()
+{
+    for (auto &runningPreview : d->m_runningPreviews)
+        runningPreview->initiateStop();
 }
 
 QmlPreviewFileLoader QmlPreviewPlugin::fileLoader() const
@@ -299,9 +306,14 @@ void QmlPreviewPlugin::setLocaleIsoCode(const QString &localeIsoCode)
     emit localeIsoCodeChanged(d->m_localeIsoCode);
 }
 
-void QmlPreviewPlugin::setQmlDebugTranslationClientCreator(QmlDebugTranslationClientCreator creator)
+void QmlPreviewPlugin::setQmlDebugTranslationClientCreator(QmlDebugTranslationClientFactoryFunction creator)
 {
     d->m_settings.createDebugTranslationClientMethod = creator;
+}
+
+void QmlPreviewPlugin::setRefreshTranslationsFunction(QmlPreviewRefreshTranslationFunction refreshTranslationsFunction)
+{
+    d->m_settings.refreshTranslationsFunction = refreshTranslationsFunction;
 }
 
 void QmlPreviewPlugin::setFileLoader(QmlPreviewFileLoader fileLoader)
@@ -320,6 +332,11 @@ void QmlPreviewPlugin::previewCurrentFile()
             || currentNode->asFileNode()->fileType() != FileType::QML)
         return;
 
+    if (runningPreviews().isEmpty())
+        QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("QML Preview Not Running"),
+                             Tr::tr("Start the QML Preview for the project before selecting "
+                                    "a specific file for preview."));
+
     const QString file = currentNode->filePath().toString();
     if (file != d->m_previewedFile)
         setPreviewedFile(file);
@@ -329,9 +346,9 @@ void QmlPreviewPlugin::previewCurrentFile()
 
 void QmlPreviewPluginPrivate::onEditorChanged(Core::IEditor *editor)
 {
-    if (m_lastEditor) {
-        Core::IDocument *doc = m_lastEditor->document();
-        disconnect(doc, &Core::IDocument::contentsChanged, this, &QmlPreviewPluginPrivate::setDirty);
+    if (m_lastEditor && m_lastEditor->document()) {
+        disconnect(m_lastEditor->document(), &Core::IDocument::contentsChanged,
+                   this, &QmlPreviewPluginPrivate::setDirty);
         if (m_dirty) {
             m_dirty = false;
             checkEditor();
@@ -396,6 +413,8 @@ void QmlPreviewPluginPrivate::attachToEditor()
 
 void QmlPreviewPluginPrivate::checkEditor()
 {
+    if (m_runningPreviews.isEmpty())
+        return;
     QmlJS::Dialect::Enum dialect = QmlJS::Dialect::AnyLanguage;
     Core::IDocument *doc = m_lastEditor->document();
     const QString mimeType = doc->mimeType();
