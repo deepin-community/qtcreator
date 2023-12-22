@@ -49,6 +49,18 @@ TestBlackboxProviders::TestBlackboxProviders()
 {
 }
 
+void TestBlackboxProviders::brokenProvider()
+{
+    QDir::setCurrent(testDataDir + "/broken-provider");
+    QbsRunParameters params;
+    params.expectFailure = true;
+    QVERIFY(runQbs(params) != 0);
+
+    QVERIFY(m_qbsStderr.contains("Error executing provider for module 'qbsothermodule'"));
+    QVERIFY(m_qbsStderr.contains("Error executing provider for module 'qbsmetatestmodule'"));
+    QCOMPARE(m_qbsStderr.count("This provider is broken"), 2);
+}
+
 void TestBlackboxProviders::fallbackModuleProvider_data()
 {
     QTest::addColumn<bool>("fallbacksEnabledGlobally");
@@ -177,6 +189,22 @@ void TestBlackboxProviders::moduleProvidersCache()
     QCOMPARE(m_qbsStderr.count(qbsmetatestmoduleMessage), 1);
     QCOMPARE(m_qbsStderr.count(qbsothermoduleMessage), 1);
     QCOMPARE(m_qbsStderr.count("Re-using provider \"provider_a\" from cache"), 2);
+}
+
+void TestBlackboxProviders::nonEagerModuleProvider()
+{
+    QDir::setCurrent(testDataDir + "/non-eager-provider");
+
+    QbsRunParameters params("resolve");
+    QCOMPARE(runQbs(params), 0);
+    QVERIFY2(m_qbsStdout.contains(("Running setup script for qbsmetatestmodule")), m_qbsStdout);
+    QVERIFY2(m_qbsStdout.contains(("Running setup script for qbsothermodule")), m_qbsStdout);
+    QVERIFY2(!m_qbsStdout.contains(("Running setup script for nonexistentmodule")), m_qbsStdout);
+
+    QVERIFY2(m_qbsStdout.contains(("p1.qbsmetatestmodule.prop: from_provider_a")),
+             m_qbsStdout);
+    QVERIFY2(m_qbsStdout.contains(("p1.qbsothermodule.prop: from_provider_a")),
+             m_qbsStdout);
 }
 
 void TestBlackboxProviders::probeInModuleProvider()
@@ -364,6 +392,14 @@ void TestBlackboxProviders::qbspkgconfigModuleProvider()
     QbsRunParameters params;
     params.arguments << "moduleProviders.qbspkgconfig.sysroot:" + sysroot;
     QCOMPARE(runQbs(params), 0);
+}
+
+void TestBlackboxProviders::removalVersion()
+{
+    QDir::setCurrent(testDataDir + "/removal-version");
+    QCOMPARE(runQbs(), 0);
+    QVERIFY(m_qbsStderr.contains(
+        "Property 'deprecated' was scheduled for removal in version 2.2.0, but is still present"));
 }
 
 QTEST_MAIN(TestBlackboxProviders)

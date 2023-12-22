@@ -1,2 +1,2 @@
-# qtcreator's changelog is not the usual one. It's splited in several files.
-qtcreator-data: wrong-name-for-upstream-changelog
+# shipped by upstream, can be viewed via the Help menu
+qtcreator-data: package-contains-documentation-outside-usr-share-doc [usr/share/qtcreator/changelog/changes-*.md]

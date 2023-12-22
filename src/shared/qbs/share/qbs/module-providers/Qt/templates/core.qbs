@@ -76,6 +76,8 @@ Module {
     property string qtBuildVariant: {
         if (availableBuildVariants.contains(qbs.buildVariant))
             return qbs.buildVariant;
+        if (qbs.buildVariant === "profiling" && availableBuildVariants.contains("release"))
+            return "release";
         return availableBuildVariants.length > 0 ? availableBuildVariants[0] : "";
     }
 
@@ -107,6 +109,7 @@ Module {
     property string libFilePathRelease: @libFilePathRelease@
     property string libFilePath: qtBuildVariant === "debug"
                                       ? libFilePathDebug : libFilePathRelease
+    property bool useRPaths: qbs.targetOS.contains("linux") && !qbs.targetOS.contains("android")
 
     property stringList coreLibPaths: @libraryPaths@
     property bool hasLibrary: true
@@ -196,8 +199,7 @@ Module {
             return undefined;
         return frameworks;
     }
-    cpp.rpaths: qbs.targetOS.contains('linux') && !qbs.targetOS.contains("android") ? [libPath] :
-                                                                                      undefined
+    cpp.rpaths: useRPaths ? libPath : undefined
     cpp.runtimeLibrary: qbs.toolchain.contains("msvc")
         ? config.contains("static_runtime") ? "static" : "dynamic"
         : original
@@ -220,12 +222,12 @@ Module {
             return "libc++";
         return original;
     }
-    cpp.minimumWindowsVersion: @minWinVersion@
-    cpp.minimumMacosVersion: @minMacVersion@
-    cpp.minimumIosVersion: @minIosVersion@
-    cpp.minimumTvosVersion: @minTvosVersion@
-    cpp.minimumWatchosVersion: @minWatchosVersion@
-    cpp.minimumAndroidVersion: @minAndroidVersion@
+    cpp.minimumWindowsVersion: @minWinVersion_optional@
+    cpp.minimumMacosVersion: @minMacVersion_optional@
+    cpp.minimumIosVersion: @minIosVersion_optional@
+    cpp.minimumTvosVersion: @minTvosVersion_optional@
+    cpp.minimumWatchosVersion: @minWatchosVersion_optional@
+    cpp.minimumAndroidVersion: @minAndroidVersion_optional@
 
     // Universal Windows Platform support
     cpp.windowsApiFamily: mkspecName.startsWith("winrt-") ? "pc" : undefined

@@ -7,6 +7,8 @@
 
 #if defined(NANOTRACE_LIBRARY)
 #  define NANOTRACESHARED_EXPORT Q_DECL_EXPORT
+#elif defined(NANOTRACE_STATIC_LIBRARY)
+#  define NANOTRACESHARED_EXPORT
 #else
 #  define NANOTRACESHARED_EXPORT Q_DECL_IMPORT
 #endif
@@ -50,7 +52,7 @@
 namespace Nanotrace
 {
 
-using Units = std::chrono::nanoseconds;
+using Units = std::chrono::microseconds;
 using Clock = std::chrono::high_resolution_clock;
 using TimePoint = std::chrono::time_point< Clock >;
 

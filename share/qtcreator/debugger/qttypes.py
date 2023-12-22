@@ -328,10 +328,16 @@ def qdump__QDateTime(d, value):
                 isValid = status & 0x08
             else:
                 dptr = d.extractPointer(value)
-                (msecs, status, offsetFromUtc, ref, timeZone) = d.split('qIIIp', dptr)
+                (_, status, msecs, offsetFromUtc, _, timeZone) = d.split('iIqII{QTimeZone}', dptr)
                 spec = (status & 0x30) >> 4
                 isValid = True
-
+                tzD = d.extractPointer(timeZone)
+                if tzD == 0:
+                    timeZone = 'UTC'
+                else:
+                    idAddr = tzD + 2 * d.ptrSize()
+                    tzBa = d.encodeByteArray(idAddr, limit=100)
+                    timeZone = tzBa
             d.putValue(
                 '%s/%s/%s/%s/%s/%s' %
                 (msecs,
@@ -365,7 +371,7 @@ def qdump__QDateTime(d, value):
                     tz = ''
                 else:
                     idBase = tzp + 2 * d.ptrSize()  # [QSharedData] + [vptr]
-                    elided, tz = d.encodeByteArray(idBase, limit=100)
+                    tz = d.encodeByteArray(idBase, limit=100)
                 d.putValue('%s/%s/%s/%s/%s/%s' % (msecs, spec, offset, tz, status, 0),
                            'datetimeinternal')
     else:
@@ -1157,8 +1163,12 @@ def qdump__QImage(d, value):
 
     d.putExpandable()
     if d.isExpanded():
-        (ref, width, height, depth, nbytes, pad, devicePixelRatio, colorTable,
-            bits, iformat) = d.split('iiiii@dppi', image_data)
+        if d.qtVersion() < 0x060000:
+            (ref, width, height, depth, nbytes, pad, devicePixelRatio, colorTable,
+                bits, iformat) = d.split('iiiii@dppi', image_data)
+        else:
+            (ref, width, height, depth, nbytes, pad, devicePixelRatio, _, _, _,
+                bits, iformat) = d.split('iiiii@dppppi', image_data)
         with Children(d):
             d.putIntItem('width', width)
             d.putIntItem('height', height)

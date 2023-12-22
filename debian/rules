@@ -16,10 +16,10 @@ upstream_version_of_pkg = $(shell dpkg-query -f '$${Version}' -W $(1) | sed -e '
 # dwz failing with "Could not allocate memory: Cannot allocate memory" errors;
 # hence, on architectures where we see this result, try to use a more memory
 # friendly processing for a lower number of DIEs (dwz default is 10M)
-archs_with_dwz_low_mem = armel armhf mipsel
+archs_with_dwz_low_mem = armel armhf
 dwz_low_mem = 3000000
 
-archs_using_clang = mips64el mipsel
+archs_using_clang = mips64el
 ifeq ($(DEB_HOST_ARCH),$(findstring $(DEB_HOST_ARCH), $(archs_using_clang)))
 export CC=clang
 export CXX=clang++

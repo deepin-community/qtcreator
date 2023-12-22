@@ -59,7 +59,8 @@ highlightHover=ff74CBFC
 [Colors]
 ;DS controls theme
 
-;NEW FOR QtDS 4.0
+;NEW FOR QtDS 4
+;4.0
 DScontrolBackground_toolbarIdle=midnightGrey
 DScontrolBackground_toolbarHover=midnightGrey
 DScontrolBackground_topToolbarHover=ashGrey
@@ -79,7 +80,44 @@ DSstateBackgroundColor_hover=ashGrey
 DSstateControlBackgroundColor_globalHover=ashGrey
 DSstateControlBackgroundColor_hover=raincloudGrey
 DSpanelBackground=dawnGrey
-;END NEW FOR QtDS 4.0
+
+;4.3
+DSpopoutBackground=offBlack
+DSpopoutControlBackground_idle=offBlack
+DSpopoutControlBackground_hover=dawnGrey
+DSpopoutControlBackground_globalHover=dawnGrey
+DSpopoutControlBackground_interaction=highlightBlue
+DSpopoutControlBackground_disabled=offBlack
+DSpopoutPopupBackground=nearBlack
+
+DSpopoutControlBorder_idle=midnightGrey
+DSpopoutControlBorder_hover=raincloudGrey
+DSpopoutControlBorder_interaction=highlightBlue
+DSpopoutControlBorder_disabled=offBlack
+
+DSpopoutButtonBackground_idle=offBlack
+DSpopoutButtonBackground_hover=dawnGrey
+DSpopoutButtonBackground_interaction=highlightBlue
+DSpopoutButtonBackground_disabled=offBlack
+
+DSpopoutButtonBorder_idle=slateGrey
+DSpopoutButtonBorder_hover=lightWhite
+DSpopoutButtonBorder_interaction=highlightBlue
+DSpopoutButtonBorder_disabled=offBlack
+
+;4.4
+DSconnectionCodeEditor=midnightGrey
+DSpillText=fullWhite
+DSpillTextSelected=fullBlack
+DspillTextEdit=fullWhite
+DSpillDefaultBackgroundIdle=graniteGrey
+DSpillDefaultBackgroundHover=raincloudGrey
+DSpillOperatorBackgroundIdle=ff6b2a7b
+DSpillOperatorBackgroundHover=ff7e478b
+DSpillLiteralBackgroundIdle=ff447953
+DSpillLiteralBackgroundHover=ff61866B
+
+;END NEW FOR QtDS 4
 
 ;REMAPPED
 DSinteraction=highlightBlue
@@ -109,8 +147,9 @@ DSnavigatorTextSelected=highlightBlue
 QmlDesigner_BackgroundColorDarkAlternate=dawnGrey
 
 ;TODO
-DSscrollBarTrack=dawnGrey
-DSscrollBarHandle=offBlack
+DSscrollBarTrack=smokeGrey
+DSscrollBarHandle=concreteGrey
+DSscrollBarHandle_idle=slateGrey
 
 DSdockWidgetTitleBar=dawnGrey
 DSdockWidgetSplitter=fullBlack
@@ -498,26 +537,26 @@ PaletteTextDisabled=textDisabled
 PaletteMid=ffafafaf
 PalettePlaceholderText=ff808081
 
-TerminalForeground=ffffffff
+TerminalForeground=ffffff
 TerminalBackground=normalBackground
-TerminalSelection=7fffffff
+TerminalSelection=3fd1d1d1
 TerminalFindMatch=7fffff00
-TerminalAnsi0=000000
-TerminalAnsi1=8b1b10
-TerminalAnsi2=4aa32e
-TerminalAnsi3=9a9a2f
-TerminalAnsi4=0058D1
+TerminalAnsi0=151515
+TerminalAnsi1=ac4142
+TerminalAnsi2=7e8e50
+TerminalAnsi3=e5b567
+TerminalAnsi4=6c99bb
 TerminalAnsi5=a320ac
-TerminalAnsi6=49a3b0
-TerminalAnsi7=bfbfbf
-TerminalAnsi8=666666
-TerminalAnsi9=d22d1f
-TerminalAnsi10=62d63f
-TerminalAnsi11=e5e54b
-TerminalAnsi12=003EFF
-TerminalAnsi13=d22dde
-TerminalAnsi14=69e2e4
-TerminalAnsi15=e5e5e6
+TerminalAnsi6=7dd6cf
+TerminalAnsi7=d0d0d0
+TerminalAnsi8=505050
+TerminalAnsi9=d05e5b
+TerminalAnsi10=a7b773
+TerminalAnsi11=ffd184
+TerminalAnsi12=94c8ea
+TerminalAnsi13=f257fb
+TerminalAnsi14=a1fcf7
+TerminalAnsi15=ffffff
 
 [Flags]
 ComboBoxDrawTextShadow=false

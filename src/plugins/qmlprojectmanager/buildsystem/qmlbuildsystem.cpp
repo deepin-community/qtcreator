@@ -5,6 +5,7 @@
 
 #include "../qmlprojectconstants.h"
 #include "../qmlprojectmanagertr.h"
+#include "../qmlproject.h"
 
 #include <QtCore5Compat/qtextcodec.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
@@ -26,7 +27,7 @@
 
 #include <projectexplorer/deploymentdata.h>
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/kitinformation.h>
+#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
@@ -80,13 +81,13 @@ QmlBuildSystem::QmlBuildSystem(Target *target)
     refresh(RefreshOptions::Project);
 
     updateDeploymentData();
-    registerMenuButtons();
+//    registerMenuButtons(); //is wip
 
-    connect(target->project(), &Project::activeTargetChanged, [this](Target *target) {
+    connect(target->project(), &Project::activeTargetChanged, this, [this](Target *target) {
         refresh(RefreshOptions::NoFileRefresh);
         updateMcuBuildStep(target, qtForMCUs());
     });
-    connect(target->project(), &Project::projectFileIsDirty, [this]() {
+    connect(target->project(), &Project::projectFileIsDirty, this, [this]() {
         refresh(RefreshOptions::Project);
         updateMcuBuildStep(project()->activeTarget(), qtForMCUs());
     });
@@ -116,24 +117,29 @@ void QmlBuildSystem::updateDeploymentData()
     setDeploymentData(deploymentData);
 }
 
+//probably this method needs to be moved into QmlProjectPlugin::initialize to be called only once
 void QmlBuildSystem::registerMenuButtons()
 {
     Core::ActionContainer *menu = Core::ActionManager::actionContainer(Core::Constants::M_FILE);
 
     // QML Project file update button
     // This button saves the current configuration into the .qmlproject file
-    auto action = new QAction("Update QmlProject File", this);
+    auto action = new QAction(Tr::tr("Update QmlProject File"), this);
+    //this registerAction registers a new action for each opened project,
+    //causes the "action is already registered" warning if you have multiple opened projects,
+    //is not a big thing for qds, but is annoying for qtc and should be fixed.
     Core::Command *cmd = Core::ActionManager::registerAction(action, "QmlProject.ProjectManager");
     menu->addAction(cmd, Core::Constants::G_FILE_SAVE);
     QObject::connect(action, &QAction::triggered, this, &QmlBuildSystem::updateProjectFile);
 }
 
+//wip:
 bool QmlBuildSystem::updateProjectFile()
 {
     qDebug() << "debug#1-mainfilepath" << mainFilePath();
 
     QFile file(mainFilePath().fileName().append("project-test"));
-    if (file.open(QIODevice::ReadWrite | QIODevice::Truncate)) {
+    if (!file.open(QIODevice::ReadWrite | QIODevice::Truncate)) {
         qCritical() << "Cannot open Qml Project file for editing!";
         return false;
     }
@@ -153,6 +159,11 @@ bool QmlBuildSystem::updateProjectFile()
     ts << "import QmlProject 1.1" << Qt::endl << Qt::endl;
 
     return true;
+}
+
+QmlProject *QmlBuildSystem::qmlProject() const
+{
+    return qobject_cast<QmlProject *>(project());
 }
 
 void QmlBuildSystem::triggerParsing()
@@ -189,8 +200,8 @@ void QmlBuildSystem::refresh(RefreshOptions options)
             = modelManager->defaultProjectInfoForProject(project(),
                                                          project()->files(Project::HiddenRccFolders));
 
-    for (const QString &searchPath : customImportPaths()) {
-        projectInfo.importPaths.maybeInsert(projectDirectory().pathAppended(searchPath),
+    for (const QString &importPath : absoluteImportPaths()) {
+        projectInfo.importPaths.maybeInsert(Utils::FilePath::fromString(importPath),
                                             QmlJS::Dialect::Qml);
     }
 
@@ -284,14 +295,14 @@ bool QmlBuildSystem::setFileSettingInProjectFile(const QString &setting,
     const QString relativePath = mainFilePath.relativeChildPath(projectDir).path();
 
     if (fileContent.indexOf(settingQmlCode) < 0) {
-        QString addedText = QString("\n    %1 \"%2\"\n").arg(settingQmlCode).arg(relativePath);
+        QString addedText = QString("\n    %1 \"%2\"\n").arg(settingQmlCode, relativePath);
         auto index = fileContent.lastIndexOf("}");
         fileContent.insert(index, addedText);
     } else {
         QString originalFileName = oldFile;
         originalFileName.replace(".", "\\.");
         const QRegularExpression expression(
-                    QString("%1\\s*\"(%2)\"").arg(settingQmlCode).arg(originalFileName));
+            QString("%1\\s*\"(%2)\"").arg(settingQmlCode, originalFileName));
 
         const QRegularExpressionMatch match = expression.match(fileContent);
 
@@ -315,14 +326,85 @@ void QmlBuildSystem::setBlockFilesUpdate(bool newBlockFilesUpdate)
     m_blockFilesUpdate = newBlockFilesUpdate;
 }
 
+Utils::FilePath QmlBuildSystem::getStartupQmlFileWithFallback() const
+{
+    const auto currentProject = project();
+
+    if (!currentProject)
+        return {};
+
+    if (!target())
+        return {};
+
+    const auto getFirstFittingFile = [](const Utils::FilePaths &files) -> Utils::FilePath {
+        for (const auto &file : files) {
+            if (file.exists())
+                return file;
+        }
+        return {};
+    };
+
+    const QStringView uiqmlstr = u"ui.qml";
+    const QStringView qmlstr = u"qml";
+
+    //we will check mainUiFile and mainFile twice:
+    //first priority if it's ui.qml file, second if it's just a qml file
+    const Utils::FilePath mainUiFile = mainUiFilePath();
+    if (mainUiFile.exists() && mainUiFile.completeSuffix() == uiqmlstr)
+        return mainUiFile;
+
+    const Utils::FilePath mainQmlFile = mainFilePath();
+    if (mainQmlFile.exists() && mainQmlFile.completeSuffix() == uiqmlstr)
+        return mainQmlFile;
+
+    const Utils::FilePaths uiFiles = currentProject->files([&](const ProjectExplorer::Node *node) {
+        return node->filePath().completeSuffix() == uiqmlstr;
+    });
+    if (!uiFiles.isEmpty()) {
+        if (const auto file = getFirstFittingFile(uiFiles); !file.isEmpty())
+            return file;
+    }
+
+    //check the suffix of mainUiFiles again, since there are no ui.qml files:
+    if (mainUiFile.exists() && mainUiFile.completeSuffix() == qmlstr)
+        return mainUiFile;
+
+    if (mainQmlFile.exists() && mainQmlFile.completeSuffix() == qmlstr)
+        return mainQmlFile;
+
+    //maybe it's also worth priotizing qml files containing common words like "Screen"?
+    const Utils::FilePaths qmlFiles = currentProject->files([&](const ProjectExplorer::Node *node) {
+        return node->filePath().completeSuffix() == qmlstr;
+    });
+    if (!qmlFiles.isEmpty()) {
+        if (const auto file = getFirstFittingFile(qmlFiles); !file.isEmpty())
+            return file;
+    }
+
+    //if no source files exist in the project, lets try to open the .qmlproject file itself
+    const Utils::FilePath projectFile = projectFilePath();
+    if (projectFile.exists())
+        return projectFile;
+
+    return {};
+}
+
 Utils::FilePath QmlBuildSystem::mainFilePath() const
 {
-    return projectDirectory().pathAppended(mainFile());
+    const QString fileName = mainFile();
+    if (fileName.isEmpty() || fileName.isNull()) {
+        return {};
+    }
+    return projectDirectory().pathAppended(fileName);
 }
 
 Utils::FilePath QmlBuildSystem::mainUiFilePath() const
 {
-    return projectDirectory().pathAppended(mainUiFile());
+    const QString fileName = mainUiFile();
+    if (fileName.isEmpty() || fileName.isNull()) {
+        return {};
+    }
+    return projectDirectory().pathAppended(fileName);
 }
 
 bool QmlBuildSystem::setMainFileInProjectFile(const Utils::FilePath &newMainFilePath)
@@ -565,6 +647,16 @@ QStringList QmlBuildSystem::shaderToolFiles() const
 QStringList QmlBuildSystem::importPaths() const
 {
     return m_projectItem->importPaths();
+}
+
+QStringList QmlBuildSystem::absoluteImportPaths()
+{
+    return Utils::transform<QStringList>(m_projectItem->importPaths(), [&](const QString &importPath) {
+        Utils::FilePath filePath = Utils::FilePath::fromString(importPath);
+        if (!filePath.isAbsolutePath())
+            return (projectDirectory() / importPath).toString();
+        return projectDirectory().resolvePath(importPath).toString();
+    });
 }
 
 Utils::FilePaths QmlBuildSystem::files() const

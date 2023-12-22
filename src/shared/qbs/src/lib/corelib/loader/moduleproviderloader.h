@@ -46,87 +46,65 @@
 #include <language/forward_decls.h>
 #include <language/moduleproviderinfo.h>
 
-#include <QtCore/qmap.h>
 #include <QtCore/qvariant.h>
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace qbs::Internal {
 class Item;
 class LoaderState;
+class ProductContext;
 
 class ModuleProviderLoader
 {
 public:
     explicit ModuleProviderLoader(LoaderState &loaderState);
 
-    enum class ModuleProviderLookup { Scoped, Named, Fallback };
-
-    struct Provider
-    {
-        QualifiedId name;
-        ModuleProviderLookup lookup;
-    };
-
-    struct ModuleProviderResult
-    {
-        std::vector<ProbeConstPtr> probes;
-        QVariantMap providerConfig;
+    struct ModuleProviderResult {
         bool providerFound = false;
         std::optional<QStringList> searchPaths;
     };
-
-    const StoredModuleProviderInfo &storedModuleProviderInfo() const
-    {
-        return m_storedModuleProviderInfo;
-    }
-
-    void setStoredModuleProviderInfo(StoredModuleProviderInfo moduleProviderInfo)
-    {
-        m_storedModuleProviderInfo = std::move(moduleProviderInfo);
-    }
-
-    const Set<QString> &tempQbsFiles() const { return m_tempQbsFiles; }
-
-    struct ProductContext {
-        Item * const productItem;
-        const Item * const projectItem;
-        const QString &name;
-        const QString &uniqueName;
-        const QVariantMap &moduleProperties;
-        const std::optional<QVariantMap> providerConfig;
-    };
     ModuleProviderResult executeModuleProviders(
-            const ProductContext &productContext,
+            ProductContext &productContext,
             const CodeLocation &dependsItemLocation,
             const QualifiedId &moduleName,
             FallbackMode fallbackMode);
 
 private:
+    enum class ModuleProviderLookup { Scoped, Named, Fallback };
+    struct Provider {
+        QualifiedId name;
+        ModuleProviderLookup lookup;
+    };
     ModuleProviderResult executeModuleProvidersHelper(
-            const ProductContext &product,
+            ProductContext &product,
             const CodeLocation &dependsItemLocation,
+            const QualifiedId &moduleName,
             const std::vector<Provider> &providers);
-    QVariantMap getModuleProviderConfig(const ProductContext &product);
+    std::pair<const ModuleProviderInfo &, bool>
+    findOrCreateProviderInfo(ProductContext &product, const CodeLocation &dependsItemLocation,
+                             const QualifiedId &moduleName, const QualifiedId &name,
+                             ModuleProviderLookup lookupType, const QVariantMap &qbsModule);
+    void setupModuleProviderConfig(ProductContext &product);
 
     std::optional<std::vector<QualifiedId>> getModuleProviders(Item *item);
 
     QString findModuleProviderFile(const QualifiedId &name, ModuleProviderLookup lookupType);
-    QVariantMap evaluateQbsModule(const ProductContext &product) const;
+    QVariantMap evaluateQbsModule(ProductContext &product) const;
     Item *createProviderScope(const ProductContext &product, const QVariantMap &qbsModule);
-    std::pair<QStringList, std::vector<ProbeConstPtr>> evaluateModuleProvider(
-            const ProductContext &product,
-            const CodeLocation &location,
+    using EvaluationResult = std::pair<QStringList, bool /*isEager*/>;
+    EvaluationResult evaluateModuleProvider(
+            ProductContext &product,
+            const CodeLocation &dependsItemLocation,
+            const QualifiedId &moduleName,
             const QualifiedId &name,
             const QString &providerFile,
             const QVariantMap &moduleConfig,
             const QVariantMap &qbsModule);
 
-private:
     LoaderState &m_loaderState;
-    StoredModuleProviderInfo m_storedModuleProviderInfo;
-    Set<QString> m_tempQbsFiles;
 };
 
 } // namespace qbs::Internal

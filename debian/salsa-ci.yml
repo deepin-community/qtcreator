@@ -4,3 +4,11 @@ include:
 variables:
   SALSA_CI_DISABLE_MISSING_BREAKS: 'no'
   SALSA_CI_DISABLE_RC_BUGS: 'no'
+  # not working with terse output
+  SALSA_CI_DISABLE_BLHC: 1
+  # takes too long in CI
+  SALSA_CI_DISABLE_REPROTEST: 1
+  # cross-build never working: clang-N is not M-A safe
+  SALSA_CI_DISABLE_CROSSBUILD_ARM64: 1
+  # disable the verbose output so that the whole build log is available
+  DEB_BUILD_OPTIONS: 'terse'

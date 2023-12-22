@@ -45,12 +45,12 @@ static QString msgUnexpectedOutput(const QByteArray &what)
 
 static QString msgCannotChangeToWorkDir(const FilePath &dir, const QString &why)
 {
-    return Tr::tr("Cannot change to working directory \"%1\": %2").arg(dir.toString(), why);
+    return Tr::tr("Cannot change to working directory \"%1\": %2").arg(dir.toUserOutput(), why);
 }
 
-static QString msgCannotExecute(const QString &p, const QString &why)
+static QString msgCannotExecute(const FilePath &p, const QString &why)
 {
-    return Tr::tr("Cannot execute \"%1\": %2").arg(p, why);
+    return Tr::tr("Cannot execute \"%1\": %2").arg(p.toUserOutput(), why);
 }
 
 static QString msgPromptToClose()
@@ -92,6 +92,7 @@ public:
     StubCreator *stubCreator{nullptr};
 
     const bool waitOnExit;
+    bool didInferiorRun{false};
 };
 
 TerminalInterface::TerminalInterface(bool waitOnExit)
@@ -156,6 +157,11 @@ void TerminalInterface::onStubExited()
 
     if (d->inferiorProcessId)
         emitFinished(-1, QProcess::CrashExit);
+    else if (!d->didInferiorRun) {
+        emitError(QProcess::FailedToStart,
+                  Tr::tr("Failed to start terminal process. The stub exited before the inferior "
+                         "was started."));
+    }
 }
 
 void TerminalInterface::onStubReadyRead()
@@ -169,13 +175,14 @@ void TerminalInterface::onStubReadyRead()
                                                errnoToString(out.mid(10).toInt())));
         } else if (out.startsWith("err:exec ")) {
             emitError(QProcess::FailedToStart,
-                      msgCannotExecute(m_setup.m_commandLine.executable().toString(),
+                      msgCannotExecute(m_setup.m_commandLine.executable(),
                                        errnoToString(out.mid(9).toInt())));
         } else if (out.startsWith("spid ")) {
             d->envListFile.reset();
             d->envListFile = nullptr;
         } else if (out.startsWith("pid ")) {
             d->inferiorProcessId = out.mid(4).toInt();
+            d->didInferiorRun = true;
             emit started(d->inferiorProcessId, d->inferiorThreadId);
         } else if (out.startsWith("thread ")) { // Windows only
             d->inferiorThreadId = out.mid(7).toLongLong();
@@ -349,8 +356,9 @@ void TerminalInterface::start()
             return;
         }
         QTextStream stream(d->envListFile.get());
-        finalEnv.forEachEntry([&stream](const QString &key, const QString &value, bool) {
-            stream << key << '=' << value << '\0';
+        finalEnv.forEachEntry([&stream](const QString &key, const QString &value, bool enabled) {
+            if (enabled)
+                stream << key << '=' << value << '\0';
         });
 
         if (d->envListFile->error() != QFile::NoError) {

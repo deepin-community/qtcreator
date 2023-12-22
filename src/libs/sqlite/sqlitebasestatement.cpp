@@ -274,6 +274,9 @@ void BaseStatement::bind(int index, ValueView value)
 
 void BaseStatement::prepare(Utils::SmallStringView sqlStatement)
 {
+    if (!m_database.isLocked())
+        throw DatabaseIsNotLocked{};
+
     int resultCode;
 
     do {
@@ -320,11 +323,6 @@ bool BaseStatement::isReadOnlyStatement() const
 QString BaseStatement::columnName(int column) const
 {
     return QString::fromUtf8(sqlite3_column_name(m_compiledStatement.get(), column));
-}
-
-Database &BaseStatement::database() const
-{
-    return m_database;
 }
 
 namespace {

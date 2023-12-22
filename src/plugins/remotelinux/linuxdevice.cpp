@@ -4,13 +4,13 @@
 #include "linuxdevice.h"
 
 #include "genericlinuxdeviceconfigurationwidget.h"
-#include "genericlinuxdeviceconfigurationwizard.h"
 #include "linuxdevicetester.h"
 #include "linuxprocessinterface.h"
 #include "publickeydeploymentdialog.h"
 #include "remotelinux_constants.h"
 #include "remotelinuxsignaloperation.h"
 #include "remotelinuxtr.h"
+#include "sshdevicewizard.h"
 
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
@@ -37,6 +37,7 @@
 
 #include <QDateTime>
 #include <QLoggingCategory>
+#include <QMessageBox>
 #include <QMutex>
 #include <QReadWriteLock>
 #include <QRegularExpression>
@@ -293,6 +294,12 @@ public:
     LinuxDevicePrivate *m_dev;
 };
 
+class LinuxDeviceSettings : public DeviceSettings
+{
+public:
+    LinuxDeviceSettings() { displayName.setDefaultValue(Tr::tr("Remote Linux Device")); }
+};
+
 class LinuxDevicePrivate
 {
 public:
@@ -420,7 +427,7 @@ void SshProcessInterface::emitStarted(qint64 processId)
 
 void SshProcessInterface::killIfRunning()
 {
-    if (d->m_killed || d->m_process.state() != QProcess::Running)
+    if (d->m_killed || d->m_process.state() != QProcess::Running || d->m_processId == 0)
         return;
     sendControlSignal(ControlSignal::Kill);
     d->m_killed = true;
@@ -442,9 +449,12 @@ bool SshProcessInterface::runInShell(const CommandLine &command, const QByteArra
     process.setCommand(cmd);
     process.setWriteData(data);
     process.start();
-    bool isFinished = process.waitForFinished(2000); // TODO: it may freeze on some devices
-    // otherwise we may start producing killers for killers
-    QTC_CHECK(isFinished);
+    bool isFinished = process.waitForFinished(2000); // It may freeze on some devices
+    if (!isFinished) {
+        Core::MessageManager::writeFlashing(tr("Can't send control signal to the %1 device. "
+                                               "The device might have been disconnected.")
+                                                .arg(d->m_device->displayName()));
+    }
     return isFinished;
 }
 
@@ -758,8 +768,9 @@ CommandLine SshProcessInterfacePrivate::fullLocalCommandLine() const
         inner.addArgs(QString("echo ") + s_pidMarker + "$$" + s_pidMarker + " && ", CommandLine::Raw);
 
     const Environment &env = q->m_setup.m_environment;
-    env.forEachEntry([&](const QString &key, const QString &value, bool) {
-        inner.addArgs(key + "='" + env.expandVariables(value) + '\'', CommandLine::Raw);
+    env.forEachEntry([&](const QString &key, const QString &value, bool enabled) {
+        if (enabled)
+            inner.addArgs(key + "='" + env.expandVariables(value) + '\'', CommandLine::Raw);
     });
 
     if (!useTerminal && !commandLine.isEmpty())
@@ -837,11 +848,17 @@ public:
                     << m_displaylessSshParameters.host());
         cmd.addArg("/bin/sh");
 
-        m_shell.reset(new LinuxDeviceShell(cmd, FilePath::fromString(QString("ssh://%1/").arg(parameters.userAtHost()))));
+        m_shell.reset(new LinuxDeviceShell(cmd,
+            FilePath::fromString(QString("ssh://%1/").arg(parameters.userAtHostAndPort()))));
         connect(m_shell.get(), &DeviceShell::done, this, [this] {
             m_shell.release()->deleteLater();
         });
-        return m_shell->start();
+        auto result = m_shell->start();
+        if (!result) {
+            qCWarning(linuxDeviceLog) << "Failed to start shell for:" << parameters.userAtHostAndPort()
+                                      << ", " << result.error();
+        }
+        return result.has_value();
     }
 
     // Call me with shell mutex locked
@@ -937,7 +954,8 @@ private:
 // LinuxDevice
 
 LinuxDevice::LinuxDevice()
-    : d(new LinuxDevicePrivate(this))
+    : IDevice(std::make_unique<LinuxDeviceSettings>())
+    , d(new LinuxDevicePrivate(this))
 {
     setFileAccess(&d->m_fileAccess);
     setDisplayType(Tr::tr("Remote Linux"));
@@ -952,13 +970,14 @@ LinuxDevice::LinuxDevice()
     setSshParameters(sshParams);
 
     addDeviceAction({Tr::tr("Deploy Public Key..."), [](const IDevice::Ptr &device, QWidget *parent) {
-        if (auto d = PublicKeyDeploymentDialog::createDialog(device, parent)) {
+        if (auto d = Internal::PublicKeyDeploymentDialog::createDialog(device, parent)) {
             d->exec();
             delete d;
         }
     }});
 
-    setOpenTerminal([this](const Environment &env, const FilePath &workingDir) {
+    setOpenTerminal([this](const Environment &env,
+                           const FilePath &workingDir) -> expected_str<void> {
         Process proc;
 
         // If we will not set any environment variables, we can leave out the shell executable
@@ -972,10 +991,15 @@ LinuxDevice::LinuxDevice()
         proc.setEnvironment(env);
         proc.setWorkingDirectory(workingDir);
         proc.start();
+
+        return {};
     });
 
     addDeviceAction({Tr::tr("Open Remote Shell"), [](const IDevice::Ptr &device, QWidget *) {
-                         device->openTerminal(Environment(), FilePath());
+                         expected_str<void> result = device->openTerminal(Environment(), FilePath());
+
+                         if (!result)
+                             QMessageBox::warning(nullptr, Tr::tr("Error"), result.error());
                      }});
 }
 
@@ -993,11 +1017,6 @@ LinuxDevice::~LinuxDevice()
 IDeviceWidget *LinuxDevice::createWidget()
 {
     return new Internal::GenericLinuxDeviceConfigurationWidget(sharedFromThis());
-}
-
-DeviceProcessList *LinuxDevice::createProcessListModel(QObject *parent) const
-{
-    return new ProcessList(sharedFromThis(), parent);
 }
 
 DeviceTester *LinuxDevice::createDeviceTester() const
@@ -1020,16 +1039,21 @@ QString LinuxDevice::userAtHost() const
     return sshParameters().userAtHost();
 }
 
+QString LinuxDevice::userAtHostAndPort() const
+{
+    return sshParameters().userAtHostAndPort();
+}
+
 FilePath LinuxDevice::rootPath() const
 {
-    return FilePath::fromParts(u"ssh", userAtHost(), u"/");
+    return FilePath::fromParts(u"ssh", userAtHostAndPort(), u"/");
 }
 
 bool LinuxDevice::handlesFile(const FilePath &filePath) const
 {
     if (filePath.scheme() == u"device" && filePath.host() == id().toString())
         return true;
-    if (filePath.scheme() == u"ssh" && filePath.host() == userAtHost())
+    if (filePath.scheme() == u"ssh" && filePath.host() == userAtHostAndPort())
         return true;
     return false;
 }
@@ -1284,8 +1308,10 @@ private:
         QByteArray batchData;
 
         const FilePaths dirs = dirsToCreate(m_setup.m_files);
-        for (const FilePath &dir : dirs)
-            batchData += "-mkdir " + ProcessArgs::quoteArgUnix(dir.path()).toLocal8Bit() + '\n';
+        for (const FilePath &dir : dirs) {
+            if (!dir.exists())
+                batchData += "-mkdir " + ProcessArgs::quoteArgUnix(dir.path()).toLocal8Bit() + '\n';
+        }
 
         for (const FileToTransfer &file : m_setup.m_files) {
             FilePath sourceFileOrLinkTarget = file.m_source;
@@ -1459,6 +1485,11 @@ private:
 FileTransferInterface *LinuxDevice::createFileTransferInterface(
         const FileTransferSetupData &setup) const
 {
+    if (Utils::anyOf(setup.m_files,
+                     [](const FileToTransfer &f) { return f.m_source.needsDevice(); })) {
+        return new GenericTransferImpl(setup);
+    }
+
     switch (setup.m_method) {
     case FileTransferMethod::Sftp:  return new SftpTransferImpl(setup, sharedFromThis());
     case FileTransferMethod::Rsync: return new RsyncTransferImpl(setup, sharedFromThis());
@@ -1480,8 +1511,6 @@ void LinuxDevice::checkOsType()
 
 namespace Internal {
 
-// Factory
-
 LinuxDeviceFactory::LinuxDeviceFactory()
     : IDeviceFactory(Constants::GenericLinuxOsType)
 {
@@ -1489,11 +1518,12 @@ LinuxDeviceFactory::LinuxDeviceFactory()
     setIcon(QIcon());
     setConstructionFunction(&LinuxDevice::create);
     setQuickCreationAllowed(true);
-    setCreator([] {
-        GenericLinuxDeviceConfigurationWizard wizard(Core::ICore::dialogParent());
+    setCreator([]() -> IDevice::Ptr {
+        const IDevice::Ptr device = LinuxDevice::create();
+        SshDeviceWizard wizard(Tr::tr("New Remote Linux Device Configuration Setup"), device);
         if (wizard.exec() != QDialog::Accepted)
-            return IDevice::Ptr();
-        return wizard.device();
+            return {};
+        return device;
     });
 }
 

@@ -75,9 +75,9 @@ QBS_AUTOTEST_EXPORT QVariant getJsVariant(JSContext *ctx, JSValueConst val);
 JSValue makeJsArrayBuffer(JSContext *ctx, const QByteArray &s);
 JSValue makeJsString(JSContext *ctx, const QString &s);
 JSValue makeJsStringList(JSContext *ctx, const QStringList &l);
-JSValue makeJsVariant(JSContext *ctx, const QVariant &v);
-JSValue makeJsVariantList(JSContext *ctx, const QVariantList &l);
-JSValue makeJsVariantMap(JSContext *ctx, const QVariantMap &m);
+JSValue makeJsVariant(JSContext *ctx, const QVariant &v, quintptr id = 0);
+JSValue makeJsVariantList(JSContext *ctx, const QVariantList &l, quintptr id = 0);
+JSValue makeJsVariantMap(JSContext *ctx, const QVariantMap &m, quintptr id = 0);
 QStringList getJsStringList(JSContext *ctx, JSValueConst val);
 JSValue throwError(JSContext *ctx, const QString &message);
 using PropertyHandler = std::function<void(const JSAtom &, const JSPropertyDescriptor &)>;
@@ -201,9 +201,11 @@ QVariant QBS_AUTOTEST_EXPORT getConfigProperty(const QVariantMap &cfg, const QSt
 } // namespace qbs
 
 // Only to be used for objects!
+#ifndef JS_NAN_BOXING
 inline bool operator==(JSValue v1, JSValue v2) { return v1.u.ptr == v2.u.ptr; }
 inline bool operator!=(JSValue v1, JSValue v2) { return !(v1 == v2); }
 inline bool operator<(JSValue v1, JSValue v2) { return v1.u.ptr < v2.u.ptr; }
 inline qbs::QHashValueType qHash(const JSValue &v) { return QT_PREPEND_NAMESPACE(qHash)(v.u.ptr); }
+#endif
 
 #endif // QBS_SCRIPTTOOLS_H

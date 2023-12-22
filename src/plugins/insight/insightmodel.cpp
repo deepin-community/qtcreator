@@ -16,7 +16,7 @@
 #include <projectexplorer/projecttree.h>
 #include <projectexplorer/target.h>
 
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 
 #include <utils/filepath.h>
 #include <utils/qtcassert.h>
@@ -227,7 +227,7 @@ InsightModel::InsightModel(InsightView *view, ExternalDependenciesInterface &ext
 
 int InsightModel::rowCount(const QModelIndex &) const
 {
-    return m_qtdsConfig.empty() ? 0 : m_qtdsConfig.size();
+    return m_qtdsConfig.empty() ? 0 : static_cast<int>(m_qtdsConfig.size());
 }
 
 QVariant InsightModel::data(const QModelIndex &index, int role) const
@@ -605,8 +605,11 @@ void InsightModel::parseDefaultConfig()
     const ProjectExplorer::Target *target = ProjectExplorer::ProjectTree::currentTarget();
     if (target) {
         const QtSupport::QtVersion *qtVersion = QtSupport::QtKitAspect::qtVersion(target->kit());
-        m_defaultConfig = readJSON(qtVersion->dataPath().toString() + "/" + dataFolder + "/"
-                                   + insightConfFile);
+
+        if (qtVersion) {
+            m_defaultConfig = readJSON(qtVersion->dataPath().toString() + "/" + dataFolder + "/"
+                                       + insightConfFile);
+        }
     }
 }
 

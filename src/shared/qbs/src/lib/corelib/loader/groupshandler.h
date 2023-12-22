@@ -39,16 +39,9 @@
 
 #pragma once
 
-#include <language/qualifiedid.h>
-#include <tools/set.h>
-#include <tools/pimpl.h>
-
-#include <unordered_map>
-#include <utility>
-
 namespace qbs::Internal {
-class Item;
 class LoaderState;
+class ProductContext;
 
 // Sets up Group items for the actual resolving stage. Responsibilities:
 //   - Moving Group items located in modules over to the product.
@@ -58,21 +51,6 @@ class LoaderState;
 //   - As a side effect of the above point, collecting all properties set on the Group level
 //     to help the ProjectResolver decide which properties need to be re-evaluated at all,
 //     which is an important optimization (see commit 9cd8653eef).
-class GroupsHandler
-{
-public:
-    GroupsHandler(LoaderState &loaderState);
-    ~GroupsHandler();
-
-    void setupGroups(Item *product, Item *productScope);
-    std::unordered_map<const Item *, QualifiedIdSet> modulePropertiesSetInGroups() const;
-    Set<Item *> disabledGroups() const;
-
-    void printProfilingInfo(int indent);
-
-private:
-    class Private;
-    Pimpl<Private> d;
-};
+void setupGroups(ProductContext &product, LoaderState &loaderState);
 
 } // namespace qbs::Internal

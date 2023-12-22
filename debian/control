@@ -10,29 +10,32 @@ Build-Depends: clang (>= 1:10~),
                debhelper-compat (= 13),
                libclang-dev (>= 1:10~),
                libdw-dev,
-               libqt6core5compat6-dev (>= 6.2~),
                libqt6opengl6-dev (>= 6.2~),
-               libqt6quicktimeline6-dev (>= 6.2~),
-               libqt6serialport6-dev (>= 6.2~),
-               libqt6shadertools6-dev (>= 6.2.4-2~),
-               libqt6svg6-dev (>= 6.2~),
                libyaml-cpp-dev (>= 0.5~),
                libzstd-dev,
                llvm-dev (>= 1:10~),
                pkg-config,
                python3:any,
+               qt6-5compat-dev (>= 6.2~),
                qt6-base-dev (>= 6.2.4+dfsg-3~),
                qt6-base-private-dev (>= 6.2.4+dfsg-3~),
                qt6-declarative-dev (>= 6.2~),
                qt6-declarative-private-dev (>= 6.2~),
                qt6-quick3d-dev (>= 6.2.4-2~),
+               qt6-quicktimeline-dev (>= 6.2~),
+               qt6-serialport-dev (>= 6.2~),
+               qt6-shadertools-dev (>= 6.2.4-2~),
+               qt6-svg-dev (>= 6.2~),
                qt6-tools-dev (>= 6.2.4-2~),
                qt6-tools-private-dev (>= 6.2.4-2~),
+               xxd,
+# workaround missing dependency in qt6-declarative-dev
+               qt6-qmllint-plugins,
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
 Homepage: https://doc.qt.io/qt-5/topics-app-development.html
-Vcs-Git: https://salsa.debian.org/qt-kde-team/qt/qtcreator.git
-Vcs-Browser: https://salsa.debian.org/qt-kde-team/qt/qtcreator
+Vcs-Git: https://salsa.debian.org/qt-kde-team/qt/qtcreator.git -b experimental
+Vcs-Browser: https://salsa.debian.org/qt-kde-team/qt/qtcreator/-/tree/experimental
 
 Package: qtcreator
 Architecture: any

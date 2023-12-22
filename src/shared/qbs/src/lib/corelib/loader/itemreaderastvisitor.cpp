@@ -75,6 +75,8 @@ ItemReaderASTVisitor::ItemReaderASTVisitor(ItemReaderVisitorState &visitorState,
 {
 }
 
+ItemReaderASTVisitor::~ItemReaderASTVisitor() = default;
+
 bool ItemReaderASTVisitor::visit(AST::UiProgram *uiProgram)
 {
     ASTImportsHandler importsHandler(m_visitorState, m_logger, m_file);
@@ -135,10 +137,15 @@ bool ItemReaderASTVisitor::visit(AST::UiObjectDefinition *ast)
 
     item->m_type = itemType;
 
-    if (m_item)
+    if (m_item) {
         Item::addChild(m_item, item); // Add this item to the children of the parent item.
-    else
+    } else {
         m_item = item; // This is the root item.
+        if (itemType == ItemType::Module) {
+            QBS_CHECK(!m_moduleItemLocker);
+            m_moduleItemLocker = std::make_unique<ModuleItemLocker>(*m_item);
+        }
+    }
 
     if (ast->initializer) {
         Item *mdi = m_visitorState.mostDerivingItem();
@@ -153,7 +160,7 @@ bool ItemReaderASTVisitor::visit(AST::UiObjectDefinition *ast)
         m_visitorState.setMostDerivingItem(mdi);
     }
 
-    ASTPropertiesItemHandler(item).handlePropertiesItems();
+    ASTPropertiesItemHandler(item, *m_itemPool).handlePropertiesItems();
 
     // Inheritance resolving, part 2 (depends on alternatives having been set up).
     if (baseItem) {
@@ -241,7 +248,7 @@ bool ItemReaderASTVisitor::visit(AST::UiScriptBinding *ast)
             throw ErrorInfo(Tr::tr("id: must be followed by identifier"));
         m_item->m_id = idExp->name.toString();
         m_file->ensureIdScope(m_itemPool);
-        ItemValueConstPtr existingId = m_file->idScope()->itemProperty(m_item->id());
+        ItemValueConstPtr existingId = m_file->idScope()->itemProperty(m_item->id(), *m_itemPool);
         if (existingId) {
             ErrorInfo e(Tr::tr("The id '%1' is not unique.").arg(m_item->id()));
             e.append(Tr::tr("First occurrence is here."), existingId->item()->location());
@@ -335,6 +342,9 @@ void ItemReaderASTVisitor::inheritItem(Item *dst, const Item *src)
         dst->setPropertyDeclaration(pd.name(), pd);
     }
 
+    std::unique_ptr<ModuleItemLocker> locker;
+    if (src->type() == ItemType::Module)
+        locker = std::make_unique<ModuleItemLocker>(*src);
     for (auto it = src->properties().constBegin(); it != src->properties().constEnd(); ++it) {
         ValuePtr &v = dst->m_properties[it.key()];
         if (!v) {

@@ -15,95 +15,6 @@
 
 namespace QmlDesigner::Storage {
 
-class VersionNumber
-{
-public:
-    explicit VersionNumber() = default;
-    explicit VersionNumber(int value)
-        : value{value}
-    {}
-
-    explicit operator bool() const { return value >= 0; }
-
-    friend bool operator==(VersionNumber first, VersionNumber second) noexcept
-    {
-        return first.value == second.value;
-    }
-
-    friend bool operator!=(VersionNumber first, VersionNumber second) noexcept
-    {
-        return !(first == second);
-    }
-
-    friend bool operator<(VersionNumber first, VersionNumber second) noexcept
-    {
-        return first.value < second.value;
-    }
-
-public:
-    int value = -1;
-};
-
-class Version
-{
-public:
-    explicit Version() = default;
-    explicit Version(VersionNumber major, VersionNumber minor = VersionNumber{})
-        : major{major}
-        , minor{minor}
-    {}
-
-    explicit Version(int major, int minor)
-        : major{major}
-        , minor{minor}
-    {}
-
-    explicit Version(int major)
-        : major{major}
-    {}
-
-    friend bool operator==(Version first, Version second) noexcept
-    {
-        return first.major == second.major && first.minor == second.minor;
-    }
-
-    friend bool operator<(Version first, Version second) noexcept
-    {
-        return std::tie(first.major, first.minor) < std::tie(second.major, second.minor);
-    }
-
-    explicit operator bool() const { return major && minor; }
-
-public:
-    VersionNumber major;
-    VersionNumber minor;
-};
-
-namespace Synchronization {
-
-enum class TypeNameKind { Exported = 1, QualifiedExported = 2 };
-
-enum class FileType : char { QmlTypes, QmlDocument };
-
-enum class IsQualified : int { No, Yes };
-
-inline int operator-(IsQualified first, IsQualified second)
-{
-    return static_cast<int>(first) - static_cast<int>(second);
-}
-
-inline int operator<(IsQualified first, IsQualified second)
-{
-    return static_cast<int>(first) < static_cast<int>(second);
-}
-
-enum class ImportKind : char {
-    Import,
-    ModuleDependency,
-    ModuleExportedImport,
-    ModuleExportedModuleDependency
-};
-
 class Import
 {
 public:
@@ -140,6 +51,31 @@ public:
 };
 
 using Imports = std::vector<Import>;
+
+namespace Synchronization {
+
+enum class TypeNameKind { Exported = 1, QualifiedExported = 2 };
+
+enum class FileType : char { QmlTypes, QmlDocument };
+
+enum class IsQualified : int { No, Yes };
+
+inline int operator-(IsQualified first, IsQualified second)
+{
+    return static_cast<int>(first) - static_cast<int>(second);
+}
+
+inline int operator<(IsQualified first, IsQualified second)
+{
+    return static_cast<int>(first) < static_cast<int>(second);
+}
+
+enum class ImportKind : char {
+    Import,
+    ModuleDependency,
+    ModuleExportedImport,
+    ModuleExportedModuleDependency
+};
 
 class ImportView
 {
@@ -786,6 +722,26 @@ public:
 
 using Types = std::vector<Type>;
 
+class PropertyEditorQmlPath
+{
+public:
+    PropertyEditorQmlPath(ModuleId moduleId, TypeNameString typeName, SourceId pathId, SourceId directoryId)
+        : typeName{typeName}
+        , pathId{pathId}
+        , directoryId{directoryId}
+        , moduleId{moduleId}
+    {}
+
+public:
+    TypeNameString typeName;
+    TypeId typeId;
+    SourceId pathId;
+    SourceId directoryId;
+    ModuleId moduleId;
+};
+
+using PropertyEditorQmlPaths = std::vector<class PropertyEditorQmlPath>;
+
 class ProjectData
 {
 public:
@@ -799,7 +755,8 @@ public:
     friend bool operator==(const ProjectData &first, const ProjectData &second)
     {
         return first.projectSourceId == second.projectSourceId && first.sourceId == second.sourceId
-               && first.moduleId == second.moduleId && first.fileType == second.fileType;
+               && first.moduleId.internalId() == second.moduleId.internalId()
+               && first.fileType == second.fileType;
     }
 
 public:
@@ -863,6 +820,8 @@ public:
     SourceIds updatedModuleDependencySourceIds;
     ModuleExportedImports moduleExportedImports;
     ModuleIds updatedModuleIds;
+    PropertyEditorQmlPaths propertyEditorQmlPaths;
+    SourceIds updatedPropertyEditorQmlPathSourceIds;
 };
 
 } // namespace Synchronization

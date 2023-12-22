@@ -54,11 +54,11 @@ Value::Value(Type t, bool createdByPropertiesBlock) : m_type(t)
         m_flags |= OriginPropertiesBlock;
 }
 
-Value::Value(const Value &other)
+Value::Value(const Value &other, ItemPool &pool)
     : m_type(other.m_type),
       m_scope(other.m_scope),
       m_scopeName(other.m_scopeName),
-      m_next(other.m_next ? other.m_next->clone() : ValuePtr()),
+      m_next(other.m_next ? other.m_next->clone(pool) : ValuePtr()),
       m_candidates(other.m_candidates),
       m_flags(other.m_flags)
 {
@@ -134,18 +134,18 @@ JSSourceValue::JSSourceValue(bool createdByPropertiesBlock)
 {
 }
 
-JSSourceValue::JSSourceValue(const JSSourceValue &other) : Value(other)
+JSSourceValue::JSSourceValue(const JSSourceValue &other, ItemPool &pool) : Value(other, pool)
 {
     m_sourceCode = other.m_sourceCode;
     m_line = other.m_line;
     m_column = other.m_column;
     m_file = other.m_file;
     m_baseValue = other.m_baseValue
-            ? std::static_pointer_cast<JSSourceValue>(other.m_baseValue->clone())
+            ? std::static_pointer_cast<JSSourceValue>(other.m_baseValue->clone(pool))
             : JSSourceValuePtr();
     m_alternatives = transformed<std::vector<Alternative>>(
-        other.m_alternatives, [](const auto &alternative) {
-        return alternative.clone(); });
+        other.m_alternatives, [&pool](const auto &alternative) {
+        return alternative.clone(pool); });
 }
 
 JSSourceValuePtr JSSourceValue::create(bool createdByPropertiesBlock)
@@ -155,9 +155,9 @@ JSSourceValuePtr JSSourceValue::create(bool createdByPropertiesBlock)
 
 JSSourceValue::~JSSourceValue() = default;
 
-ValuePtr JSSourceValue::clone() const
+ValuePtr JSSourceValue::clone(ItemPool &pool) const
 {
-    return std::make_shared<JSSourceValue>(*this);
+    return std::make_shared<JSSourceValue>(*this, pool);
 }
 
 QString JSSourceValue::sourceCodeForEvaluation() const
@@ -235,10 +235,18 @@ ItemValuePtr ItemValue::create(Item *item, bool createdByPropertiesBlock)
     return std::make_shared<ItemValue>(item, createdByPropertiesBlock);
 }
 
-ValuePtr ItemValue::clone() const
+ValuePtr ItemValue::clone(ItemPool &pool) const
 {
-    return create(m_item->clone(), createdByPropertiesBlock());
+    return create(m_item->clone(pool), createdByPropertiesBlock());
 }
+
+class StoredVariantValue : public VariantValue
+{
+public:
+    explicit StoredVariantValue(QVariant v) : VariantValue(std::move(v)) {}
+
+    quintptr id() const override { return quintptr(this); }
+};
 
 VariantValue::VariantValue(QVariant v)
     : Value(VariantValueType, false)
@@ -246,18 +254,32 @@ VariantValue::VariantValue(QVariant v)
 {
 }
 
-VariantValuePtr VariantValue::create(const QVariant &v)
+VariantValue::VariantValue(const VariantValue &other, ItemPool &pool)
+    : Value(other, pool), m_value(other.m_value) {}
+
+template<typename T>
+VariantValuePtr createImpl(const QVariant &v)
 {
     if (!v.isValid())
-        return invalidValue();
+        return VariantValue::invalidValue();
     if (static_cast<QMetaType::Type>(v.userType()) == QMetaType::Bool)
         return v.toBool() ? VariantValue::trueValue() : VariantValue::falseValue();
-    return std::make_shared<VariantValue>(v);
+    return std::make_shared<T>(v);
 }
 
-ValuePtr VariantValue::clone() const
+VariantValuePtr VariantValue::create(const QVariant &v)
 {
-    return std::make_shared<VariantValue>(*this);
+    return createImpl<VariantValue>(v);
+}
+
+VariantValuePtr VariantValue::createStored(const QVariant &v)
+{
+    return createImpl<StoredVariantValue>(v);
+}
+
+ValuePtr VariantValue::clone(ItemPool &pool) const
+{
+    return std::make_shared<VariantValue>(*this, pool);
 }
 
 const VariantValuePtr &VariantValue::falseValue()

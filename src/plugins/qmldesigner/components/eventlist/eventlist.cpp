@@ -26,7 +26,7 @@ Utils::FilePath projectFilePath()
         if (auto *proj = ProjectExplorer::ProjectManager::projectForFile(doc->fileName()))
             return proj->projectDirectory();
     }
-    return Utils::FilePath();
+    return {};
 }
 
 static Utils::FilePath findFile(const Utils::FilePath &path, const QString &fileName)
@@ -186,12 +186,15 @@ void EventList::initialize(EventListPluginView *parent)
     if (!m_model) {
         QByteArray unqualifiedTypeName = "ListModel";
         auto metaInfo = parent->model()->metaInfo(unqualifiedTypeName);
-
+#ifdef QDS_USE_PROJECTSTORAGE
+        m_model = Model::create(unqualifiedTypeName, -1, -1);
+#else
         QByteArray fullTypeName = metaInfo.typeName();
         int minorVersion = metaInfo.minorVersion();
         int majorVersion = metaInfo.majorVersion();
 
         m_model = Model::create(fullTypeName, majorVersion, minorVersion);
+#endif
         m_model->setParent(parent);
     }
 

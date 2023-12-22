@@ -25,10 +25,8 @@ Edit3DActionTemplate::Edit3DActionTemplate(const QString &description,
 
 void Edit3DActionTemplate::actionTriggered(bool b)
 {
-    if (m_type != View3DActionType::Empty && m_type != View3DActionType::SelectBackgroundColor
-        && m_type != View3DActionType::SelectGridColor) {
+    if (m_type != View3DActionType::Empty)
         m_view->emitView3DAction(m_type, b);
-    }
 
     if (m_action)
         m_action(m_selectionContext);
@@ -96,25 +94,6 @@ bool Edit3DAction::isVisible([[maybe_unused]] const SelectionContext &selectionC
 bool Edit3DAction::isEnabled(const SelectionContext &selectionContext) const
 {
     return isVisible(selectionContext);
-}
-
-Edit3DCameraAction::Edit3DCameraAction(const QByteArray &menuId,
-                                       View3DActionType type,
-                                       const QString &description,
-                                       const QKeySequence &key,
-                                       bool checkable,
-                                       bool checked,
-                                       const QIcon &icon,
-                                       Edit3DView *view,
-                                       SelectionContextOperation selectionAction)
-    : Edit3DAction(menuId, type, description, key, checkable, checked, icon, view, selectionAction)
-{
-}
-
-bool Edit3DCameraAction::isEnabled(const SelectionContext &selectionContext) const
-{
-    return Utils::anyOf(selectionContext.selectedModelNodes(),
-                        [](const ModelNode &node) { return node.metaInfo().isQtQuick3DCamera(); });
 }
 
 Edit3DParticleSeekerAction::Edit3DParticleSeekerAction(const QByteArray &menuId,

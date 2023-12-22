@@ -71,6 +71,7 @@ private slots:
     void chainedProbes();
     void canonicalArchitecture();
     void conditionalDepends();
+    void convertStringList();
     void delayedError();
     void delayedError_data();
     void dependencyOnAllProfiles();
@@ -114,7 +115,10 @@ private slots:
     void jsExtensions();
     void jsImportUsedInMultipleScopes_data();
     void jsImportUsedInMultipleScopes();
+    void localProfileAsTopLevelProfile();
     void moduleMergingVariantValues();
+    void moduleParameters_data();
+    void moduleParameters();
     void modulePrioritizationBySearchPath_data();
     void modulePrioritizationBySearchPath();
     void moduleProperties_data();
@@ -138,6 +142,7 @@ private slots:
     void overriddenVariantProperty();
     void parameterTypes();
     void pathProperties();
+    void probesAndMultiplexing();
     void productConditions();
     void productDirectories();
     void profileValuesAndOverriddenValues();

@@ -3,13 +3,6 @@
 
 #include "tst_testcore.h"
 
-#include <QScopedPointer>
-#include <QLatin1String>
-#include <QGraphicsObject>
-#include <QQueue>
-#include <QTest>
-#include <QVariant>
-
 #include <designersettings.h>
 #include <externaldependenciesinterface.h>
 #include <invalididexception.h>
@@ -23,7 +16,6 @@
 #include <rewritingexception.h>
 #include <stylesheetmerger.h>
 #include <subcomponentmanager.h>
-#include <QDebug>
 #include <qmlanchors.h>
 #include <qmlmodelnodefacade.h>
 
@@ -40,13 +32,21 @@
 
 #include <bytearraymodifier.h>
 #include "testrewriterview.h"
-#include <utils/fileutils.h>
 
 #include <qmljs/qmljsinterpreter.h>
 #include <qmljs/qmljssimplereader.h>
 #include <extensionsystem/pluginmanager.h>
 
+#include <utils/fileutils.h>
+#include <utils/qtcsettings.h>
+
+#include <QDebug>
+#include <QGraphicsObject>
 #include <QPlainTextEdit>
+#include <QQueue>
+#include <QScopedPointer>
+#include <QTest>
+#include <QVariant>
 
 //TESTED_COMPONENT=src/plugins/qmldesigner/designercore
 
@@ -146,8 +146,6 @@ public:
     QString defaultPuppetToplevelBuildDirectory() const override { return {}; }
     QString qmlPuppetFallbackDirectory() const override { return {}; }
     QUrl projectUrl() const override { return {}; }
-    QList<QColor> designerSettingsEdit3DViewBackgroundColor() const override { return {}; }
-    QColor designerSettingsEdit3DViewGridColor() const override { return {}; }
     void parseItemLibraryDescriptions() override {}
     const QmlDesigner::DesignerSettings &designerSettings() const override { return settings; }
     void undoOnCurrentDesignDocument() override {}
@@ -166,7 +164,7 @@ public:
     Utils::FilePath resourcePath(const QString &) const override { return {}; }
 
 public:
-    QSettings qsettings;
+    Utils::QtcSettings qsettings;
     QmlDesigner::DesignerSettings settings{&qsettings};
     Model *model;
 };
@@ -263,7 +261,8 @@ void tst_TestCore::initTestCase()
 
     QFileInfo builtins(IDE_DATA_PATH "/qml-type-descriptions/builtins.qmltypes");
     QStringList errors, warnings;
-    QmlJS::CppQmlTypesLoader::defaultQtObjects = QmlJS::CppQmlTypesLoader::loadQmlTypes(QFileInfoList{builtins}, &errors, &warnings);
+    QmlJS::CppQmlTypesLoader::defaultQtObjects()
+        = QmlJS::CppQmlTypesLoader::loadQmlTypes(QFileInfoList{builtins}, &errors, &warnings);
 }
 
 void tst_TestCore::cleanupTestCase()
@@ -4829,11 +4828,11 @@ void tst_TestCore::testMetaInfoSimpleType()
     QCOMPARE(itemMetaInfo.minorVersion(), 1);
 
     // super classes
-    NodeMetaInfo qobject = itemMetaInfo.superClasses()[1];
+    NodeMetaInfo qobject = itemMetaInfo.prototypes()[1];
     QVERIFY(qobject.isValid());
     QVERIFY(qobject.isQtObject());
 
-    QCOMPARE(itemMetaInfo.superClasses().size(), 2); // Item, QtQuick.QtObject
+    QCOMPARE(itemMetaInfo.prototypes().size(), 2); // Item, QtQuick.QtObject
     QVERIFY(itemMetaInfo.isQtQuickItem());
     QVERIFY(itemMetaInfo.isQtObject());
 }
@@ -4852,11 +4851,11 @@ void tst_TestCore::testMetaInfoUncreatableType()
     QCOMPARE(animationTypeInfo.majorVersion(), 2);
     QCOMPARE(animationTypeInfo.minorVersion(), 1);
 
-    NodeMetaInfo qObjectTypeInfo = animationTypeInfo.superClasses()[1];
+    NodeMetaInfo qObjectTypeInfo = animationTypeInfo.prototypes()[1];
     QVERIFY(qObjectTypeInfo.isValid());
     QCOMPARE(qObjectTypeInfo.simplifiedTypeName(), QmlDesigner::TypeName("QtObject"));
 
-    QCOMPARE(animationTypeInfo.superClasses().size(), 2);
+    QCOMPARE(animationTypeInfo.prototypes().size(), 2);
 }
 
 void tst_TestCore::testMetaInfoExtendedType()
@@ -4870,7 +4869,7 @@ void tst_TestCore::testMetaInfoExtendedType()
     QVERIFY(typeInfo.hasProperty("font")); // from QGraphicsWidget
     QVERIFY(typeInfo.hasProperty("enabled")); // from QGraphicsItem
 
-    NodeMetaInfo graphicsObjectTypeInfo = typeInfo.superClasses()[1];
+    NodeMetaInfo graphicsObjectTypeInfo = typeInfo.prototypes()[1];
     QVERIFY(graphicsObjectTypeInfo.isValid());
 }
 
@@ -4892,12 +4891,12 @@ void tst_TestCore::testMetaInfoCustomType()
     QVERIFY(propertyChangesInfo.hasProperty("restoreEntryValues"));
     QVERIFY(propertyChangesInfo.hasProperty("explicit"));
 
-    NodeMetaInfo stateOperationInfo = propertyChangesInfo.superClasses()[1];
+    NodeMetaInfo stateOperationInfo = propertyChangesInfo.prototypes()[1];
     QVERIFY(stateOperationInfo.isValid());
     QCOMPARE(stateOperationInfo.typeName(), QmlDesigner::TypeName("QtQuick.QQuickStateOperation"));
     QCOMPARE(stateOperationInfo.majorVersion(), -1);
     QCOMPARE(stateOperationInfo.minorVersion(), -1);
-    QCOMPARE(propertyChangesInfo.superClasses().size(), 3);
+    QCOMPARE(propertyChangesInfo.prototypes().size(), 3);
 
     // DeclarativePropertyChanges just has 3 properties
     QCOMPARE(propertyChangesInfo.properties().size() - stateOperationInfo.properties().size(), 3);

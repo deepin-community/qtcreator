@@ -83,40 +83,29 @@ static QString probeGlobalId(Item *probe)
 
 ProbesResolver::ProbesResolver(LoaderState &loaderState) : m_loaderState(loaderState) {}
 
-void ProbesResolver::setOldProjectProbes(const std::vector<ProbeConstPtr> &oldProbes)
-{
-    m_oldProjectProbes.clear();
-    for (const ProbeConstPtr& probe : oldProbes)
-        m_oldProjectProbes[probe->globalId()] << probe;
-}
-
-void ProbesResolver::setOldProductProbes(
-        const QHash<QString, std::vector<ProbeConstPtr>> &oldProbes)
-{
-    m_oldProductProbes = oldProbes;
-}
-
-std::vector<ProbeConstPtr> ProbesResolver::resolveProbes(const ProductContext &productContext, Item *item)
+void ProbesResolver::resolveProbes(ProductContext &productContext, Item *item)
 {
     AccumulatingTimer probesTimer(m_loaderState.parameters().logElapsedTime()
-                                  ? &m_elapsedTimeProbes : nullptr);
+                                  ? &productContext.timingData.probes : nullptr);
+
     EvalContextSwitcher evalContextSwitcher(m_loaderState.evaluator().engine(),
                                             EvalContext::ProbeExecution);
-    std::vector<ProbeConstPtr> probes;
-    for (Item * const child : item->children())
+    for (Item * const child : item->children()) {
         if (child->type() == ItemType::Probe)
-            probes.push_back(resolveProbe(productContext, item, child));
-    return probes;
+            resolveProbe(productContext, item, child);
+    }
 }
 
-ProbeConstPtr ProbesResolver::resolveProbe(const ProductContext &productContext, Item *parent,
+void ProbesResolver::resolveProbe(ProductContext &productContext, Item *parent,
                                            Item *probe)
 {
     qCDebug(lcModuleLoader) << "Resolving Probe at " << probe->location().toString();
-    ++m_probesEncountered;
     const QString &probeId = probeGlobalId(probe);
     if (Q_UNLIKELY(probeId.isEmpty()))
         throw ErrorInfo(Tr::tr("Probe.id must be set."), probe->location());
+    const bool isProjectLevelProbe
+        = parent->type() == ItemType::Project
+          || productContext.name.startsWith(StringConstants::shadowProductPrefix());
     const JSSourceValueConstPtr configureScript
             = probe->sourceProperty(StringConstants::configureProperty());
     QBS_CHECK(configureScript);
@@ -143,29 +132,30 @@ ProbeConstPtr ProbesResolver::resolveProbe(const ProductContext &productContext,
     const bool condition = evaluator.boolValue(probe, StringConstants::conditionProperty());
     const QString &sourceCode = configureScript->sourceCode().toString();
     ProbeConstPtr resolvedProbe;
-    if (parent->type() == ItemType::Project
-        || productContext.name.startsWith(StringConstants::shadowProductPrefix())) {
+    std::lock_guard lock(m_loaderState.topLevelProject().probesCacheLock());
+    m_loaderState.topLevelProject().incrementProbesCount();
+    if (isProjectLevelProbe) {
         resolvedProbe = findOldProjectProbe(probeId, condition, initialProperties, sourceCode);
     } else {
-        resolvedProbe = findOldProductProbe(productContext.uniqueName, condition,
+        resolvedProbe = findOldProductProbe(productContext.uniqueName(), condition,
                                             initialProperties, sourceCode);
     }
     if (!resolvedProbe) {
         resolvedProbe = findCurrentProbe(probe->location(), condition, initialProperties);
         if (resolvedProbe) {
             qCDebug(lcModuleLoader) << "probe results cached from current run";
-            ++m_probesCachedCurrent;
+            m_loaderState.topLevelProject().incrementReusedCurrentProbesCount();
         }
     } else {
         qCDebug(lcModuleLoader) << "probe results cached from earlier run";
-        ++m_probesCachedOld;
+        m_loaderState.topLevelProject().incrementReusedOldProbesCount();
     }
     ScopedJsValue configureScope(ctx, JS_UNDEFINED);
     std::vector<QString> importedFilesUsedInConfigure;
     if (!condition) {
         qCDebug(lcModuleLoader) << "Probe disabled; skipping";
     } else if (!resolvedProbe) {
-        ++m_probesRun;
+        m_loaderState.topLevelProject().incrementRunProbesCount();
         qCDebug(lcModuleLoader) << "configure script needs to run";
         const Evaluator::FileContextScopes fileCtxScopes
                 = evaluator.fileContextScopes(configureScript->file());
@@ -183,6 +173,8 @@ ProbeConstPtr ProbesResolver::resolveProbe(const ProductContext &productContext,
         importedFilesUsedInConfigure = resolvedProbe->importedFilesUsed();
     }
     QVariantMap properties;
+    VariantValuePtr storedValue;
+    QMap<QString, VariantValuePtr> storedValues;
     for (const ProbeProperty &b : probeBindings) {
         QVariant newValue;
         if (resolvedProbe) {
@@ -206,22 +198,43 @@ ProbeConstPtr ProbesResolver::resolveProbe(const ProductContext &productContext,
                 if (JsException ex = engine->checkAndClearException({}))
                     throw ex.toErrorInfo();
                 newValue = getJsVariant(ctx, v);
+                // special case, string lists are represented as js arrays and and we don't type
+                // info when converting
+                if (decl.type() == PropertyDeclaration::StringList
+                    && newValue.userType() == QMetaType::QVariantList) {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+                    newValue.convert(QMetaType(QMetaType::QStringList));
+#else
+                    newValue.convert(QMetaType::QStringList);
+#endif
+                }
             } else {
                 newValue = initialProperties.value(b.first);
             }
         }
-        if (newValue != getJsVariant(ctx, b.second))
-            probe->setProperty(b.first, VariantValue::create(newValue));
-        if (!resolvedProbe)
+        if (newValue != getJsVariant(ctx, b.second)) {
+            if (!resolvedProbe)
+                storedValue = VariantValue::createStored(newValue);
+            else
+                storedValue = resolvedProbe->values().value(b.first);
+
+            probe->setProperty(b.first, storedValue);
+        }
+        if (!resolvedProbe) {
             properties.insert(b.first, newValue);
+            storedValues[b.first] = storedValue;
+        }
     }
     if (!resolvedProbe) {
         resolvedProbe = Probe::create(probeId, probe->location(), condition,
-                                      sourceCode, properties, initialProperties,
+                                      sourceCode, properties, initialProperties, storedValues,
                                       importedFilesUsedInConfigure);
-        m_currentProbes[probe->location()] << resolvedProbe;
+        m_loaderState.topLevelProject().addNewlyResolvedProbe(resolvedProbe);
     }
-    return resolvedProbe;
+    if (isProjectLevelProbe)
+        m_loaderState.topLevelProject().addProjectLevelProbe(resolvedProbe);
+    else
+        productContext.probes << resolvedProbe;
 }
 
 ProbeConstPtr ProbesResolver::findOldProjectProbe(
@@ -232,13 +245,10 @@ ProbeConstPtr ProbesResolver::findOldProjectProbe(
 {
     if (m_loaderState.parameters().forceProbeExecution())
         return {};
-
-    for (const ProbeConstPtr &oldProbe : m_oldProjectProbes.value(globalId)) {
-        if (probeMatches(oldProbe, condition, initialProperties, sourceCode, CompareScript::Yes))
-            return oldProbe;
-    }
-
-    return {};
+    return m_loaderState.topLevelProject().findOldProjectProbe(globalId,
+                                                               [&](const ProbeConstPtr &oldProbe) {
+        return probeMatches(oldProbe, condition, initialProperties, sourceCode, CompareScript::Yes);
+    });
 }
 
 ProbeConstPtr ProbesResolver::findOldProductProbe(
@@ -249,13 +259,10 @@ ProbeConstPtr ProbesResolver::findOldProductProbe(
 {
     if (m_loaderState.parameters().forceProbeExecution())
         return {};
-
-    for (const ProbeConstPtr &oldProbe : m_oldProductProbes.value(productName)) {
-        if (probeMatches(oldProbe, condition, initialProperties, sourceCode, CompareScript::Yes))
-            return oldProbe;
-    }
-
-    return {};
+    return m_loaderState.topLevelProject().findOldProductProbe(productName,
+                                                               [&](const ProbeConstPtr &oldProbe) {
+        return probeMatches(oldProbe, condition, initialProperties, sourceCode, CompareScript::Yes);
+    });
 }
 
 ProbeConstPtr ProbesResolver::findCurrentProbe(
@@ -263,12 +270,10 @@ ProbeConstPtr ProbesResolver::findCurrentProbe(
         bool condition,
         const QVariantMap &initialProperties) const
 {
-    const std::vector<ProbeConstPtr> &cachedProbes = m_currentProbes.value(location);
-    for (const ProbeConstPtr &probe : cachedProbes) {
-        if (probeMatches(probe, condition, initialProperties, QString(), CompareScript::No))
-            return probe;
-    }
-    return {};
+    return m_loaderState.topLevelProject().findCurrentProbe(location,
+                                                            [&](const ProbeConstPtr &probe) {
+        return probeMatches(probe, condition, initialProperties, QString(), CompareScript::No);
+    });
 }
 
 bool ProbesResolver::probeMatches(const ProbeConstPtr &probe, bool condition,
@@ -279,23 +284,7 @@ bool ProbesResolver::probeMatches(const ProbeConstPtr &probe, bool condition,
             && probe->initialProperties() == initialProperties
             && (compareScript == CompareScript::No
                 || (probe->configureScript() == configureScript
-                    && !probe->needsReconfigure(m_lastResolveTime)));
-}
-
-void ProbesResolver::printProfilingInfo(int indent)
-{
-    if (!m_loaderState.parameters().logElapsedTime())
-        return;
-    const QByteArray prefix(indent, ' ');
-    m_loaderState.logger().qbsLog(LoggerInfo, true)
-        << prefix
-        << Tr::tr("Running Probes took %1.").arg(elapsedTimeString(m_elapsedTimeProbes));
-    m_loaderState.logger().qbsLog(LoggerInfo, true)
-        << prefix
-        << Tr::tr("%1 probes encountered, %2 configure scripts executed, "
-                  "%3 re-used from current run, %4 re-used from earlier run.")
-               .arg(m_probesEncountered).arg(m_probesRun).arg(m_probesCachedCurrent)
-               .arg(m_probesCachedOld);
+                    && !probe->needsReconfigure(m_loaderState.topLevelProject().lastResolveTime())));
 }
 
 } // namespace Internal

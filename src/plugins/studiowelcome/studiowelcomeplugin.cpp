@@ -6,8 +6,6 @@
 
 #include "qdsnewdialog.h"
 
-#include <app/app_version.h>
-
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/dialogs/restartdialog.h>
 #include <coreplugin/documentmanager.h>
@@ -20,7 +18,7 @@
 #include "projectexplorer/target.h"
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/jsonwizard/jsonwizardfactory.h>
-#include <projectexplorer/kitinformation.h>
+#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -30,7 +28,7 @@
 #include <qmlprojectmanager/qmlproject.h>
 
 #include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 
 #include <qmldesigner/components/componentcore/theme.h>
 #include <qmldesigner/dynamiclicensecheck.h>
@@ -39,12 +37,15 @@
 
 #include <qmljs/qmljsmodelmanagerinterface.h>
 
+#include <utils/appinfo.h>
 #include <utils/checkablemessagebox.h>
 #include <utils/hostosinfo.h>
 #include <utils/icon.h>
 #include <utils/infobar.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
+
+#include <nanotrace/nanotrace.h>
 
 #include <QAbstractListModel>
 #include <QApplication>
@@ -74,8 +75,8 @@ namespace Internal {
 
 static bool useNewWelcomePage()
 {
-    QSettings *settings = Core::ICore::settings();
-    const QString newWelcomePageEntry = "QML/Designer/NewWelcomePage"; //entry from qml settings
+    QtcSettings *settings = Core::ICore::settings();
+    const Key newWelcomePageEntry = "QML/Designer/NewWelcomePage"; //entry from qml settings
 
     return settings->value(newWelcomePageEntry, false).toBool();
 }
@@ -103,30 +104,20 @@ static StudioWelcomePlugin *s_pluginInstance = nullptr;
 
 static Utils::FilePath getMainUiFileWithFallback()
 {
-    auto project = ProjectExplorer::ProjectManager::startupProject();
+    const auto project = ProjectExplorer::ProjectManager::startupProject();
     if (!project)
         return {};
 
     if (!project->activeTarget())
         return {};
 
-    auto qmlBuildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
+    const auto qmlBuildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
         project->activeTarget()->buildSystem());
 
     if (!qmlBuildSystem)
         return {};
 
-    auto mainUiFile = qmlBuildSystem->mainUiFilePath();
-    if (mainUiFile.exists())
-        return mainUiFile;
-
-    const Utils::FilePaths uiFiles = project->files([&](const ProjectExplorer::Node *node) {
-        return node->filePath().completeSuffix() == "ui.qml";
-    });
-    if (!uiFiles.isEmpty())
-        return uiFiles.first();
-
-    return {};
+    return qmlBuildSystem->getStartupQmlFileWithFallback();
 }
 
 std::unique_ptr<QSettings> makeUserFeedbackSettings()
@@ -166,7 +157,7 @@ public:
     explicit UsageStatisticPluginModel(QObject *parent = nullptr)
         : QObject(parent)
     {
-        m_versionString = Core::Constants::IDE_VERSION_DISPLAY;
+        m_versionString = Utils::appInfo().displayVersion;
         setupModel();
     }
 
@@ -255,14 +246,16 @@ public:
             return;
 
         m_blockOpenRecent = true;
-        const FilePath projectFile = FilePath::fromVariant(data(index(row, 0), ProjectModel::FilePathRole));
+        const FilePath projectFile = FilePath::fromVariant(
+            data(index(row, 0), ProjectModel::FilePathRole));
         if (projectFile.exists()) {
             const ProjectExplorerPlugin::OpenProjectResult result
                 = ProjectExplorer::ProjectExplorerPlugin::openProject(projectFile);
             if (!result && !result.alreadyOpen().isEmpty()) {
-                const auto mainUiFile = getMainUiFileWithFallback();
-                if (mainUiFile.exists())
-                    Core::EditorManager::openEditor(mainUiFile, Utils::Id());
+                const auto fileToOpen = getMainUiFileWithFallback();
+                if (!fileToOpen.isEmpty() && fileToOpen.exists() && !fileToOpen.isDir()) {
+                    Core::EditorManager::openEditor(fileToOpen, Utils::Id());
+                }
             };
         }
 
@@ -273,7 +266,7 @@ public:
 
     Q_INVOKABLE void showHelp()
     {
-        QDesktopServices::openUrl(QUrl("qthelp://org.qt-project.qtcreator/doc/index.html"));
+        QDesktopServices::openUrl(QUrl("qthelp://org.qt-project.qtdesignstudio/doc/index.html"));
     }
 
     Q_INVOKABLE void openExample(const QString &examplePath,
@@ -414,20 +407,28 @@ static QString tags(const FilePath &projectFilePath)
 
     const QByteArray data = reader.data();
 
-    bool mcu = data.contains("qtForMCUs: true");
+    const bool isQt6 = data.contains("qt6Project: true");
+    const bool isMcu = data.contains("qtForMCUs: true");
 
-    if (data.contains("qt6Project: true"))
+    if (isQt6)
         ret.append("Qt 6");
-    else if (mcu)
-        ret.append("Qt For MCU");
     else
         ret.append("Qt 5");
+
+    if (isMcu)
+        ret.append("Qt For MCU");
 
     return ret.join(",");
 }
 
 QVariant ProjectModel::data(const QModelIndex &index, int role) const
 {
+    if (!index.isValid() ||
+        index.row() >= ProjectExplorer::ProjectExplorerPlugin::recentProjects().count()) {
+
+        return {};
+    }
+
     const ProjectExplorer::RecentProjectsEntry data =
             ProjectExplorer::ProjectExplorerPlugin::recentProjects().at(index.row());
     switch (role) {
@@ -520,20 +521,19 @@ void StudioWelcomePlugin::initialize()
 
 static bool forceDownLoad()
 {
-    const QString lastQDSVersionEntry = "QML/Designer/ForceWelcomePageDownload";
+    const Key lastQDSVersionEntry = "QML/Designer/ForceWelcomePageDownload";
     return Core::ICore::settings()->value(lastQDSVersionEntry, false).toBool();
 }
 
 static bool showSplashScreen()
 {
-    const QString lastQDSVersionEntry = "QML/Designer/lastQDSVersion";
+    const Key lastQDSVersionEntry = "QML/Designer/lastQDSVersion";
 
-    QSettings *settings = Core::ICore::settings();
+    QtcSettings *settings = Core::ICore::settings();
 
     const QString lastQDSVersion = settings->value(lastQDSVersionEntry).toString();
 
-
-    const QString currentVersion = Core::Constants::IDE_VERSION_DISPLAY;
+    const QString currentVersion = Utils::appInfo().displayVersion;
 
     if (currentVersion != lastQDSVersion) {
         settings->setValue(lastQDSVersionEntry, currentVersion);
@@ -548,7 +548,7 @@ void StudioWelcomePlugin::extensionsInitialized()
     Core::ModeManager::activateMode(m_welcomeMode->id());
 
     // Enable QDS new project dialog and QDS wizards
-    if (QmlProjectManager::QmlProject::isQtDesignStudio()) {
+    if (Core::ICore::isQtDesignStudio()) {
         ProjectExplorer::JsonWizardFactory::clearWizardPaths();
         ProjectExplorer::JsonWizardFactory::addWizardPath(
             Core::ICore::resourcePath("qmldesigner/studio_templates"));
@@ -564,6 +564,8 @@ void StudioWelcomePlugin::extensionsInitialized()
 
     if (showSplashScreen()) {
         connect(Core::ICore::instance(), &Core::ICore::coreOpened, this, [this] {
+            NANOTRACE_SCOPE("StudioWelcome",
+                            "StudioWelcomePlugin::extensionsInitialized::coreOpened");
             Core::ModeManager::setModeStyle(Core::ModeManager::Style::Hidden);
             if (Utils::HostOsInfo::isMacHost()) {
                 s_viewWindow = new QQuickView(Core::ICore::mainWindow()->windowHandle());

@@ -10,6 +10,7 @@
 #include <coreplugin/icore.h>
 #include <debugger/debuggeritem.h>
 #include <debugger/debuggeritemmanager.h>
+#include <projectexplorer/devicesupport/devicemanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/toolchain.h>
 #include <projectexplorer/toolchainmanager.h>
@@ -32,7 +33,7 @@ McuPackage::McuPackage(const SettingsHandler::Ptr &settingsHandler,
                        const QString &label,
                        const FilePath &defaultPath,
                        const FilePath &detectionPath,
-                       const QString &settingsKey,
+                       const Key &settingsKey,
                        const QString &cmakeVarName,
                        const QString &envVarName,
                        const QStringList &versions,
@@ -64,7 +65,7 @@ QString McuPackage::label() const
     return m_label;
 }
 
-QString McuPackage::settingsKey() const
+Key McuPackage::settingsKey() const
 {
     return m_settingsKey;
 }
@@ -333,7 +334,7 @@ McuToolChainPackage::McuToolChainPackage(const SettingsHandler::Ptr &settingsHan
                                          const QString &label,
                                          const FilePath &defaultPath,
                                          const FilePath &detectionPath,
-                                         const QString &settingsKey,
+                                         const Key &settingsKey,
                                          McuToolChainPackage::ToolChainType type,
                                          const QStringList &versions,
                                          const QString &cmakeVarName,
@@ -447,7 +448,8 @@ static ToolChain *iarToolChain(const FilePath &path, Id language)
                                               == BareMetal::Constants::IAREW_TOOLCHAIN_TYPEID;
                                    });
         if (iarFactory) {
-            Toolchains detected = iarFactory->autoDetect(ToolchainDetector({}, {}, {}));
+            Toolchains detected = iarFactory->autoDetect(
+                {{}, DeviceManager::defaultDesktopDevice(), {}});
             if (detected.isEmpty())
                 detected = iarFactory->detectForImport({path, language});
             for (auto tc : detected) {

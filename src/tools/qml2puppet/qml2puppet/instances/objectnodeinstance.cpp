@@ -282,11 +282,7 @@ static void removeObjectFromList(const QQmlProperty &property,
                                  QObject *objectToBeRemoved,
                                  [[maybe_unused]] QQmlEngine *engine)
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
     QQmlListReference listReference(property.object(), property.name().toUtf8());
-#else
-    QQmlListReference listReference(property.object(), property.name().toUtf8(), engine);
-#endif
 
     if (!QmlPrivateGate::hasFullImplementedListInterface(listReference)) {
         qWarning() << "Property list interface not fully implemented for Class " << property.property().typeName() << " in property " << property.name() << "!";
@@ -437,7 +433,7 @@ QVariant ObjectNodeInstance::convertEnumToValue(const QVariant &value, const Pro
     QVariant adjustedValue;
     Enumeration enumeration = value.value<Enumeration>();
     if (metaProperty.isValid() && metaProperty.isEnumType()) {
-        adjustedValue = metaProperty.enumerator().keyToValue(enumeration.name());
+        adjustedValue = metaProperty.enumerator().keyToValue(enumeration.toName());
     } else {
         QQmlExpression expression(context(), object(), enumeration.toString());
         adjustedValue =  expression.evaluate();
@@ -708,12 +704,12 @@ QString ObjectNodeInstance::instanceType(const PropertyName &name) const
 
 QList<ServerNodeInstance> ObjectNodeInstance::childItems() const
 {
-    return QList<ServerNodeInstance>();
+    return {};
 }
 
 QList<QQuickItem *> ObjectNodeInstance::allItemsRecursive() const
 {
-    return QList<QQuickItem *>();
+    return {};
 }
 
 QList<ServerNodeInstance> ObjectNodeInstance::stateInstances() const
@@ -728,7 +724,7 @@ QList<ServerNodeInstance> ObjectNodeInstance::stateInstances() const
         return instanceList;
     }
 
-    return QList<ServerNodeInstance>();
+    return {};
 }
 
 void ObjectNodeInstance::setNodeSource(const QString & /*source*/)
@@ -843,7 +839,7 @@ QObject *ObjectNodeInstance::createComponentWrap(const QString &nodeSource, cons
 
 //The component might also be shipped with Creator.
 //To avoid trouble with import "." we use the component shipped with Creator.
-static inline QString fixComponentPathForIncompatibleQt(const QString &componentPath)
+inline static QString fixComponentPathForIncompatibleQt(const QString &componentPath)
 {
     QString result = componentPath;
     const QLatin1String importString("/imports/");

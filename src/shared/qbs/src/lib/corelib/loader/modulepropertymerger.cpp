@@ -49,89 +49,101 @@
 #include <tools/set.h>
 #include <tools/setupprojectparameters.h>
 
+#include <unordered_set>
+
 namespace qbs::Internal {
-class ModulePropertyMerger::Private
+class ModulePropertyMerger
 {
 public:
-    Private(LoaderState &loaderState) : loaderState(loaderState) {}
+    ModulePropertyMerger(ProductContext &product, LoaderState &loaderState)
+        : m_product(product), m_loaderState(loaderState) {}
 
-    int compareValuePriorities(const Item *productItem, const ValueConstPtr &v1,
-                               const ValueConstPtr &v2);
-    ValuePtr mergeListValues(const Item *productItem, const ValuePtr &currentHead, const ValuePtr &newElem);
-    void mergePropertyFromLocalInstance(const Item *productItem, Item *loadingItem,
-                                const QString &loadingName, Item *globalInstance,
-                                const QString &name, const ValuePtr &value);
-    bool doFinalMerge(const Item *productItem, Item *moduleItem);
-    bool doFinalMerge(const Item *productItem, const PropertyDeclaration &propertyDecl,
-                      ValuePtr &propertyValue);
+    void mergeFromLocalInstance(Item *loadingItem, const QString &loadingName,
+                                const Item *localInstance, Item *globalInstance);
+    void doFinalMerge();
 
-    LoaderState &loaderState;
-    qint64 elapsedTime = 0;
+private:
+    int compareValuePriorities(const ValueConstPtr &v1, const ValueConstPtr &v2);
+    ValuePtr mergeListValues(const ValuePtr &currentHead, const ValuePtr &newElem);
+    void mergePropertyFromLocalInstance(Item *loadingItem, const QString &loadingName,
+                                        Item *globalInstance, const QString &name,
+                                        const ValuePtr &value);
+    bool doFinalMerge(Item *moduleItem);
+    bool doFinalMerge(const PropertyDeclaration &propertyDecl, ValuePtr &propertyValue);
+
+    ProductContext & m_product;
+    LoaderState &m_loaderState;
 };
 
-void ModulePropertyMerger::mergeFromLocalInstance(
-    const Item *productItem, Item *loadingItem, const QString &loadingName,
-    const Item *localInstance, Item *globalInstance)
+void mergeFromLocalInstance(ProductContext &product, Item *loadingItem, const QString &loadingName,
+                            const Item *localInstance, Item *globalInstance,
+                            LoaderState &loaderState)
 {
-    AccumulatingTimer t(d->loaderState.parameters().logElapsedTime() ? &d->elapsedTime : nullptr);
+    ModulePropertyMerger(product, loaderState).mergeFromLocalInstance(
+        loadingItem, loadingName, localInstance, globalInstance);
+}
+
+void doFinalMerge(ProductContext &product, LoaderState &loaderState)
+{
+    ModulePropertyMerger(product, loaderState).doFinalMerge();
+}
+
+void ModulePropertyMerger::mergeFromLocalInstance(Item *loadingItem, const QString &loadingName,
+                                                  const Item *localInstance, Item *globalInstance)
+{
+    AccumulatingTimer t(m_loaderState.parameters().logElapsedTime()
+                            ? &m_product.timingData.propertyMerging : nullptr);
 
     for (auto it = localInstance->properties().constBegin();
          it != localInstance->properties().constEnd(); ++it) {
-        d->mergePropertyFromLocalInstance(productItem, loadingItem, loadingName,
-                                  globalInstance, it.key(), it.value());
+        mergePropertyFromLocalInstance(loadingItem, loadingName, globalInstance, it.key(),
+                                       it.value());
     }
 }
 
-void ModulePropertyMerger::doFinalMerge(const Item *productItem)
+void ModulePropertyMerger::doFinalMerge()
 {
-    AccumulatingTimer t(d->loaderState.parameters().logElapsedTime() ? &d->elapsedTime : nullptr);
+    AccumulatingTimer t(m_loaderState.parameters().logElapsedTime()
+                            ? &m_product.timingData.propertyMerging : nullptr);
 
-    Set<const Item *> itemsToInvalidate;
-    for (const Item::Module &module : productItem->modules()) {
-        if (d->doFinalMerge(productItem, module.item))
-            itemsToInvalidate << module.item;
+    std::unordered_set<const Item *> itemsToInvalidate;
+    for (const Item::Module &module : m_product.item->modules()) {
+        if (doFinalMerge(module.item))
+            itemsToInvalidate.insert(module.item);
     }
-    const auto collectDependentItems = [&itemsToInvalidate](const Item *item,
-                                                            const auto &collect) -> bool {
-        const bool alreadyInSet = itemsToInvalidate.contains(item);
+
+    // For each module item, if it requires invalidation, we also add modules that depend on
+    // that module item, all the way up to the Product item.
+    std::unordered_set<const Item *> visitedItems;
+    const auto collectDependentItems =
+        [&itemsToInvalidate, &visitedItems](const Item *item, const auto &collect) -> bool
+    {
+        const bool alreadyInSet = itemsToInvalidate.count(item);
+        if (!visitedItems.insert(item).second) // item handled already
+            return alreadyInSet;
         bool addItem = false;
         for (const Item::Module &m : item->modules()) {
             if (collect(m.item, collect))
                 addItem = true;
         }
         if (addItem && !alreadyInSet)
-            itemsToInvalidate << item;
+            itemsToInvalidate.insert(item);
         return addItem || alreadyInSet;
     };
-    collectDependentItems(productItem, collectDependentItems);
+    collectDependentItems(m_product.item, collectDependentItems);
     for (const Item * const item : itemsToInvalidate)
-        d->loaderState.evaluator().clearCache(item);
+        m_loaderState.evaluator().clearCache(item);
 }
 
-void ModulePropertyMerger::printProfilingInfo(int indent)
-{
-    if (!d->loaderState.parameters().logElapsedTime())
-        return;
-    d->loaderState.logger().qbsLog(LoggerInfo, true)
-            << QByteArray(indent, ' ')
-            << Tr::tr("Merging module property values took %1.")
-               .arg(elapsedTimeString(d->elapsedTime));
-}
-
-ModulePropertyMerger::ModulePropertyMerger(LoaderState &loaderState)
-    : d(makePimpl<Private>(loaderState)) { }
-ModulePropertyMerger::~ModulePropertyMerger() = default;
-
-int ModulePropertyMerger::Private::compareValuePriorities(
-    const Item *productItem, const ValueConstPtr &v1, const ValueConstPtr &v2)
+int ModulePropertyMerger::compareValuePriorities(const ValueConstPtr &v1, const ValueConstPtr &v2)
 {
     QBS_CHECK(v1);
     QBS_CHECK(v2);
     QBS_CHECK(v1->scope() != v2->scope());
     QBS_CHECK(v1->type() == Value::JSSourceValueType || v2->type() == Value::JSSourceValueType);
 
-    const int prio1 = v1->priority(productItem);
-    const int prio2 = v2->priority(productItem);
+    const int prio1 = v1->priority(m_product.item);
+    const int prio2 = v2->priority(m_product.item);
     if (prio1 != prio2)
         return prio1 - prio2;
     const int prioDiff = v1->scopeName().compare(v2->scopeName()); // Sic! See 8ff1dd0044
@@ -139,32 +151,36 @@ int ModulePropertyMerger::Private::compareValuePriorities(
     return prioDiff;
 }
 
-ValuePtr ModulePropertyMerger::Private::mergeListValues(
-    const Item *productItem, const ValuePtr &currentHead, const ValuePtr &newElem)
+ValuePtr ModulePropertyMerger::mergeListValues(const ValuePtr &currentHead, const ValuePtr &newElem)
 {
     QBS_CHECK(newElem);
     QBS_CHECK(!newElem->next());
 
     if (!currentHead)
-        return !newElem->expired(productItem) ? newElem : newElem->next();
+        return !newElem->expired(m_product.item) ? newElem : newElem->next();
 
-    QBS_CHECK(!currentHead->expired(productItem));
+    QBS_CHECK(!currentHead->expired(m_product.item));
 
-    if (newElem->expired(productItem))
+    if (newElem->expired(m_product.item))
         return currentHead;
 
-    if (compareValuePriorities(productItem, currentHead, newElem) < 0) {
+    if (compareValuePriorities(currentHead, newElem) < 0) {
         newElem->setNext(currentHead);
         return newElem;
     }
-    currentHead->setNext(mergeListValues(productItem, currentHead->next(), newElem));
+    currentHead->setNext(mergeListValues(currentHead->next(), newElem));
     return currentHead;
 }
 
-void ModulePropertyMerger::Private::mergePropertyFromLocalInstance(
-    const Item *productItem, Item *loadingItem, const QString &loadingName, Item *globalInstance,
+void ModulePropertyMerger::mergePropertyFromLocalInstance(
+    Item *loadingItem, const QString &loadingName, Item *globalInstance,
     const QString &name, const ValuePtr &value)
 {
+    if (loadingItem->type() == ItemType::Project) {
+        throw ErrorInfo(Tr::tr("Module properties cannot be set in Project items."),
+                        value->location());
+    }
+
     const PropertyDeclaration decl = globalInstance->propertyDeclaration(name);
     if (!decl.isValid()) {
         if (value->type() == Value::ItemValueType || value->createdByPropertiesBlock())
@@ -173,9 +189,9 @@ void ModulePropertyMerger::Private::mergePropertyFromLocalInstance(
                             .arg(name), value->location());
     }
     if (const ErrorInfo error = decl.checkForDeprecation(
-                loaderState.parameters().deprecationWarningMode(), value->location(),
-                loaderState.logger()); error.hasError()) {
-        handlePropertyError(error, loaderState.parameters(), loaderState.logger());
+                m_loaderState.parameters().deprecationWarningMode(), value->location(),
+                m_loaderState.logger()); error.hasError()) {
+        handlePropertyError(error, m_loaderState.parameters(), m_loaderState.logger());
         return;
     }
     if (value->setInternally()) { // E.g. qbs.architecture after multiplexing.
@@ -196,9 +212,9 @@ void ModulePropertyMerger::Private::mergePropertyFromLocalInstance(
     QBS_CHECK(value->type() == Value::JSSourceValueType);
 
     if (decl.isScalar()) {
-        QBS_CHECK(!globalVal->expired(productItem));
-        QBS_CHECK(!value->expired(productItem));
-        if (compareValuePriorities(productItem, globalVal, value) < 0) {
+        QBS_CHECK(!globalVal->expired(m_product.item));
+        QBS_CHECK(!value->expired(m_product.item));
+        if (compareValuePriorities(globalVal, value) < 0) {
             value->setCandidates(globalVal->candidates());
             globalVal->setCandidates({});
             value->addCandidate(globalVal);
@@ -207,27 +223,27 @@ void ModulePropertyMerger::Private::mergePropertyFromLocalInstance(
             globalVal->addCandidate(value);
         }
     } else {
-        if (const ValuePtr &newChainStart = mergeListValues(productItem, globalVal, value);
+        if (const ValuePtr &newChainStart = mergeListValues(globalVal, value);
             newChainStart != globalVal) {
             globalInstance->setProperty(decl.name(), newChainStart);
         }
     }
 }
 
-bool ModulePropertyMerger::Private::doFinalMerge(const Item *productItem, Item *moduleItem)
+bool ModulePropertyMerger::doFinalMerge(Item *moduleItem)
 {
     if (!moduleItem->isPresentModule())
         return false;
     bool mustInvalidateCache = false;
     for (auto it = moduleItem->properties().begin(); it != moduleItem->properties().end(); ++it) {
-        if (doFinalMerge(productItem, moduleItem->propertyDeclaration(it.key()), it.value()))
+        if (doFinalMerge(moduleItem->propertyDeclaration(it.key()), it.value()))
             mustInvalidateCache = true;
     }
     return mustInvalidateCache;
 }
 
-bool ModulePropertyMerger::Private::doFinalMerge(
-    const Item *productItem, const PropertyDeclaration &propertyDecl, ValuePtr &propertyValue)
+bool ModulePropertyMerger::doFinalMerge(const PropertyDeclaration &propertyDecl,
+                                        ValuePtr &propertyValue)
 {
     if (propertyValue->type() == Value::VariantValueType) {
         QBS_CHECK(!propertyValue->next());
@@ -240,10 +256,10 @@ bool ModulePropertyMerger::Private::doFinalMerge(
         if (propertyValue->candidates().empty())
             return false;
         std::pair<int, std::vector<ValuePtr>> candidatesWithHighestPrio;
-        candidatesWithHighestPrio.first = propertyValue->priority(productItem);
+        candidatesWithHighestPrio.first = propertyValue->priority(m_product.item);
         candidatesWithHighestPrio.second.push_back(propertyValue);
         for (const ValuePtr &v : propertyValue->candidates()) {
-            const int prio = v->priority(productItem);
+            const int prio = v->priority(m_product.item);
             if (prio < candidatesWithHighestPrio.first)
                 continue;
             if (prio > candidatesWithHighestPrio.first) {
@@ -271,11 +287,16 @@ bool ModulePropertyMerger::Private::doFinalMerge(
                     error.append({}, v->location());
             }
             if (error.items().size() > 2)
-                loaderState.logger().printWarning(error);
+                m_loaderState.logger().printWarning(error);
         }
 
         if (propertyValue == chosenValue)
             return false;
+        std::vector<ValuePtr> candidates = propertyValue->candidates();
+        candidates.erase(std::find(candidates.begin(), candidates.end(), chosenValue));
+        chosenValue->setCandidates(candidates);
+        chosenValue->addCandidate(propertyValue);
+        propertyValue->setCandidates({});
         propertyValue = chosenValue;
         return true;
     }
@@ -291,7 +312,7 @@ bool ModulePropertyMerger::Private::doFinalMerge(
     }
     ValuePtr newValue;
     for (const ValuePtr &v : singleValuesBefore)
-        newValue = mergeListValues(productItem, newValue, v);
+        newValue = mergeListValues(newValue, v);
     std::vector<ValuePtr> singleValuesAfter;
     for (ValuePtr current = propertyValue; current; current = current->next())
         singleValuesAfter.push_back(current);

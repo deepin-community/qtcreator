@@ -5,7 +5,6 @@
 
 #include "qmldesignerplugin.h"
 
-#include <app/app_version.h>
 #include <edit3d/edit3dviewconfig.h>
 #include <itemlibraryimport.h>
 #include <projectexplorer/kit.h>
@@ -14,7 +13,7 @@
 #include <puppetenvironmentbuilder.h>
 #include <qmlpuppetpaths.h>
 #include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 #include <qmlprojectmanager/buildsystem/qmlbuildsystem.h>
 
 #include <coreplugin/icore.h>
@@ -60,20 +59,6 @@ QUrl ExternalDependencies::projectUrl() const
 QString ExternalDependencies::currentProjectDirPath() const
 {
     return QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toString();
-}
-
-QList<QColor> ExternalDependencies::designerSettingsEdit3DViewBackgroundColor() const
-{
-    return Edit3DViewConfig::loadColor(DesignerSettingsKey::EDIT3DVIEW_BACKGROUND_COLOR);
-}
-
-QColor ExternalDependencies::designerSettingsEdit3DViewGridColor() const
-{
-    QList<QColor> gridColorList = Edit3DViewConfig::loadColor(DesignerSettingsKey::EDIT3DVIEW_GRID_COLOR);
-    if (!gridColorList.isEmpty())
-        return gridColorList.front();
-
-    return {};
 }
 
 QUrl ExternalDependencies::currentResourcePath() const
@@ -236,9 +221,7 @@ QStringList ExternalDependencies::modulePaths() const
         if (auto path = qmlPath(target); !path.isEmpty())
             modulePaths.push_back(path);
 
-        for (const QString &modulePath : qmlBuildSystem->customImportPaths())
-            modulePaths.append(project->projectDirectory().pathAppended(modulePath).toString());
-
+        modulePaths.append(qmlBuildSystem->absoluteImportPaths());
         return modulePaths;
     }
 
@@ -250,10 +233,7 @@ QStringList ExternalDependencies::projectModulePaths() const
     auto [project, target, qmlBuildSystem] = activeProjectEntries();
 
     if (project && target && qmlBuildSystem) {
-        QStringList modulePaths;
-
-        for (const QString &modulePath : qmlBuildSystem->customImportPaths())
-            modulePaths.append(project->projectDirectory().pathAppended(modulePath).toString());
+        return qmlBuildSystem->absoluteImportPaths();
     }
 
     return {};

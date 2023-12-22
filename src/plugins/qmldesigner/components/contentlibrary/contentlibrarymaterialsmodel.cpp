@@ -53,7 +53,7 @@ int ContentLibraryMaterialsModel::rowCount(const QModelIndex &) const
 
 QVariant ContentLibraryMaterialsModel::data(const QModelIndex &index, int role) const
 {
-    QTC_ASSERT(index.isValid() && index.row() < m_bundleCategories.count(), return {});
+    QTC_ASSERT(index.isValid() && index.row() < m_bundleCategories.size(), return {});
     QTC_ASSERT(roleNames().contains(role), return {});
 
     return m_bundleCategories.at(index.row())->property(roleNames().value(role));
@@ -206,13 +206,27 @@ void ContentLibraryMaterialsModel::createImporter(const QString &bundlePath, con
                                                   const QStringList &sharedFiles)
 {
     m_importer = new Internal::ContentLibraryBundleImporter(bundlePath, bundleId, sharedFiles);
-    connect(m_importer, &Internal::ContentLibraryBundleImporter::importFinished, this,
+#ifdef QDS_USE_PROJECTSTORAGE
+    connect(m_importer,
+            &Internal::ContentLibraryBundleImporter::importFinished,
+            this,
+            [&](const QmlDesigner::TypeName &typeName) {
+                m_importerRunning = false;
+                emit importerRunningChanged();
+                if (typeName.size())
+                    emit bundleMaterialImported(typeName);
+            });
+#else
+    connect(m_importer,
+            &Internal::ContentLibraryBundleImporter::importFinished,
+            this,
             [&](const QmlDesigner::NodeMetaInfo &metaInfo) {
                 m_importerRunning = false;
                 emit importerRunningChanged();
                 if (metaInfo.isValid())
                     emit bundleMaterialImported(metaInfo);
             });
+#endif
 
     connect(m_importer, &Internal::ContentLibraryBundleImporter::unimportFinished, this,
             [&](const QmlDesigner::NodeMetaInfo &metaInfo) {
@@ -291,7 +305,7 @@ void ContentLibraryMaterialsModel::loadMaterialBundle(const QDir &matBundleDir)
     for (const QString &s : std::as_const(sharedFiles)) {
         const QString fullSharedFilePath = matBundleDir.filePath(s);
 
-        if (!QFile::exists(fullSharedFilePath))
+        if (!QFileInfo::exists(fullSharedFilePath))
             missingSharedFiles.push_back(s);
     }
 
@@ -332,14 +346,14 @@ void ContentLibraryMaterialsModel::setSearchText(const QString &searchText)
 
     m_searchText = lowerSearchText;
 
-    bool catVisibilityChanged = false;
-    for (ContentLibraryMaterialsCategory *cat : std::as_const(m_bundleCategories))
-        catVisibilityChanged |= cat->filter(m_searchText);
+    for (int i = 0; i < m_bundleCategories.size(); ++i) {
+        ContentLibraryMaterialsCategory *cat = m_bundleCategories.at(i);
+        bool catVisibilityChanged = cat->filter(m_searchText);
+        if (catVisibilityChanged)
+            emit dataChanged(index(i), index(i), {roleNames().keys("bundleCategoryVisible")});
+    }
 
     updateIsEmpty();
-
-    if (catVisibilityChanged)
-        resetModel();
 }
 
 void ContentLibraryMaterialsModel::updateImportedState(const QStringList &importedMats)

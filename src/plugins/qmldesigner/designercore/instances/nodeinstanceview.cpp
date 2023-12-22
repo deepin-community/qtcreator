@@ -3,66 +3,67 @@
 
 #include "nodeinstanceview.h"
 
-#include "abstractproperty.h"
-#include "bindingproperty.h"
-#include "captureddatacommand.h"
-#include "changeauxiliarycommand.h"
-#include "changebindingscommand.h"
-#include "changefileurlcommand.h"
-#include "changeidscommand.h"
-#include "changelanguagecommand.h"
-#include "changenodesourcecommand.h"
-#include "changepreviewimagesizecommand.h"
-#include "changeselectioncommand.h"
-#include "changestatecommand.h"
-#include "changevaluescommand.h"
-#include "childrenchangedcommand.h"
-#include "clearscenecommand.h"
-#include "completecomponentcommand.h"
-#include "componentcompletedcommand.h"
-#include "connectionmanagerinterface.h"
-#include "createinstancescommand.h"
-#include "createscenecommand.h"
-#include "debugoutputcommand.h"
-#include "informationchangedcommand.h"
-#include "imageutils.h"
-#include "inputeventcommand.h"
-#include "nodeabstractproperty.h"
-#include "nodeinstanceserverproxy.h"
-#include "nodelistproperty.h"
-#include "pixmapchangedcommand.h"
-#include "puppettocreatorcommand.h"
-#include "qml3dnode.h"
-#include "qmlchangeset.h"
-#include "qmldesignerconstants.h"
-#include "qmlstate.h"
-#include "qmltimeline.h"
-#include "qmltimelinekeyframegroup.h"
-#include "qmlvisualnode.h"
-#include "removeinstancescommand.h"
-#include "removepropertiescommand.h"
-#include "removesharedmemorycommand.h"
-#include "reparentinstancescommand.h"
-#include "scenecreatedcommand.h"
-#include "statepreviewimagechangedcommand.h"
-#include "tokencommand.h"
-#include "update3dviewstatecommand.h"
-#include "valueschangedcommand.h"
-#include "variantproperty.h"
-#include "view3dactioncommand.h"
-#include "requestmodelnodepreviewimagecommand.h"
-#include "nanotracecommand.h"
-#include "nanotrace/nanotrace.h"
+#include <abstractproperty.h>
+#include <bindingproperty.h>
+#include <captureddatacommand.h>
+#include <changeauxiliarycommand.h>
+#include <changebindingscommand.h>
+#include <changefileurlcommand.h>
+#include <changeidscommand.h>
+#include <changelanguagecommand.h>
+#include <changenodesourcecommand.h>
+#include <changepreviewimagesizecommand.h>
+#include <changeselectioncommand.h>
+#include <changestatecommand.h>
+#include <changevaluescommand.h>
+#include <childrenchangedcommand.h>
+#include <clearscenecommand.h>
+#include <completecomponentcommand.h>
+#include <componentcompletedcommand.h>
+#include <connectionmanagerinterface.h>
+#include <createinstancescommand.h>
+#include <createscenecommand.h>
+#include <debugoutputcommand.h>
+#include <imageutils.h>
+#include <informationchangedcommand.h>
+#include <inputeventcommand.h>
+#include <nanotrace/nanotrace.h>
+#include <nanotracecommand.h>
+#include <nodeabstractproperty.h>
+#include <nodeinstanceserverproxy.h>
+#include <nodelistproperty.h>
+#include <pixmapchangedcommand.h>
+#include <puppettocreatorcommand.h>
+#include <qml3dnode.h>
+#include <qmlchangeset.h>
+#include <qmldesignerconstants.h>
+#include <qmlstate.h>
+#include <qmltimeline.h>
+#include <qmltimelinekeyframegroup.h>
+#include <qmlvisualnode.h>
+#include <removeinstancescommand.h>
+#include <removepropertiescommand.h>
+#include <removesharedmemorycommand.h>
+#include <reparentinstancescommand.h>
+#include <requestmodelnodepreviewimagecommand.h>
+#include <scenecreatedcommand.h>
+#include <statepreviewimagechangedcommand.h>
+#include <tokencommand.h>
+#include <update3dviewstatecommand.h>
+#include <valueschangedcommand.h>
+#include <variantproperty.h>
+#include <view3dactioncommand.h>
 
 #include <auxiliarydataproperties.h>
 #include <designersettings.h>
 #include <externaldependenciesinterface.h>
 #include <metainfo.h>
 #include <model.h>
+#include <model/modelutils.h>
 #include <modelnode.h>
 #include <nodehints.h>
-#include <rewriterview.h>
 #include <qmlitemnode.h>
+#include <rewriterview.h>
 
 #include <utils/hdrimage.h>
 
@@ -80,7 +81,7 @@
 #include <utils/theme/theme.h>
 #include <utils/threadutils.h>
 
-#include <qtsupport/qtkitinformation.h>
+#include <qtsupport/qtkitaspect.h>
 
 #include <QDirIterator>
 #include <QFileSystemWatcher>
@@ -124,13 +125,15 @@ namespace QmlDesigner {
     \sa ~NodeInstanceView, setRenderOffScreen()
 */
 NodeInstanceView::NodeInstanceView(ConnectionManagerInterface &connectionManager,
-                                   ExternalDependenciesInterface &externalDependencies)
+                                   ExternalDependenciesInterface &externalDependencies,
+                                   bool qsbEnabled)
     : AbstractView{externalDependencies}
     , m_connectionManager(connectionManager)
     , m_externalDependencies(externalDependencies)
     , m_baseStatePreviewImage(QSize(100, 100), QImage::Format_ARGB32)
     , m_restartProcessTimerId(0)
     , m_fileSystemWatcher(new QFileSystemWatcher(this))
+    , m_qsbEnabled(qsbEnabled)
 {
     m_baseStatePreviewImage.fill(0xFFFFFF);
 
@@ -201,7 +204,7 @@ NodeInstanceView::~NodeInstanceView()
 
 //\{
 
-bool static isSkippedRootNode(const ModelNode &node)
+static bool isSkippedRootNode(const ModelNode &node)
 {
     static const PropertyNameList skipList({"Qt.ListModel", "QtQuick.ListModel", "Qt.ListModel", "QtQuick.ListModel"});
 
@@ -211,8 +214,7 @@ bool static isSkippedRootNode(const ModelNode &node)
     return false;
 }
 
-
-bool static isSkippedNode(const ModelNode &node)
+static bool isSkippedNode(const ModelNode &node)
 {
     static const PropertyNameList skipList({"QtQuick.XmlRole", "Qt.XmlRole", "QtQuick.ListElement", "Qt.ListElement"});
 
@@ -222,7 +224,7 @@ bool static isSkippedNode(const ModelNode &node)
     return false;
 }
 
-bool static parentTakesOverRendering(const ModelNode &modelNode)
+static bool parentTakesOverRendering(const ModelNode &modelNode)
 {
     ModelNode currentNode = modelNode;
 
@@ -257,10 +259,7 @@ void NodeInstanceView::modelAttached(Model *model)
         activateState(newStateInstance);
     }
 
-    // If model gets attached on non-main thread of the application, do not attempt to monitor
-    // file changes. Such models are typically short lived for specific purpose, and timers
-    // will not work at all, if the thread is not based on QThread.
-    if (Utils::isMainThread()) {
+    if (m_qsbEnabled) {
         m_generateQsbFilesTimer.stop();
         m_qsbTargets.clear();
         updateQsbPathToFilterMap();
@@ -1079,18 +1078,20 @@ CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
         if (parentTakesOverRendering(instance.modelNode()))
             nodeFlags |= InstanceContainer::ParentTakesOverRendering;
 
+        const auto modelNode = instance.modelNode();
         InstanceContainer container(instance.instanceId(),
-                                    instance.modelNode().type(),
-                                    instance.modelNode().majorVersion(),
-                                    instance.modelNode().minorVersion(),
-                                    instance.modelNode().metaInfo().componentFileName(),
-                                    instance.modelNode().nodeSource(),
+                                    modelNode.type(),
+                                    modelNode.majorVersion(),
+                                    modelNode.minorVersion(),
+                                    ModelUtils::componentFilePath(modelNode),
+                                    modelNode.nodeSource(),
                                     nodeSourceType,
                                     nodeMetaType,
                                     nodeFlags);
 
-        if (!parentIsBehavior(instance.modelNode()))
+        if (!parentIsBehavior(modelNode)) {
             instanceContainerList.append(container);
+        }
     }
 
     QVector<ReparentContainer> reparentContainerList;
@@ -1181,9 +1182,6 @@ CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
     if (stateNode.isValid() && stateNode.metaInfo().isQtQuickState())
         stateInstanceId = stateNode.internalId();
 
-    QColor gridColor = m_externalDependencies.designerSettingsEdit3DViewGridColor();
-    QList<QColor> backgroundColor = m_externalDependencies.designerSettingsEdit3DViewBackgroundColor();
-
     return CreateSceneCommand(instanceContainerList,
                               reparentContainerList,
                               idContainerList,
@@ -1198,9 +1196,7 @@ CreateSceneCommand NodeInstanceView::createCreateSceneCommand()
                               lastUsedLanguage,
                               m_captureImageMinimumSize,
                               m_captureImageMaximumSize,
-                              stateInstanceId,
-                              backgroundColor,
-                              gridColor);
+                              stateInstanceId);
 }
 
 ClearSceneCommand NodeInstanceView::createClearSceneCommand() const
@@ -1245,12 +1241,13 @@ CreateInstancesCommand NodeInstanceView::createCreateInstancesCommand(const QLis
         if (parentTakesOverRendering(instance.modelNode()))
             nodeFlags |= InstanceContainer::ParentTakesOverRendering;
 
+        const auto modelNode = instance.modelNode();
         InstanceContainer container(instance.instanceId(),
-                                    instance.modelNode().type(),
-                                    instance.modelNode().majorVersion(),
-                                    instance.modelNode().minorVersion(),
-                                    instance.modelNode().metaInfo().componentFileName(),
-                                    instance.modelNode().nodeSource(),
+                                    modelNode.type(),
+                                    modelNode.majorVersion(),
+                                    modelNode.minorVersion(),
+                                    ModelUtils::componentFilePath(modelNode),
+                                    modelNode.nodeSource(),
                                     nodeSourceType,
                                     nodeMetaType,
                                     nodeFlags);
@@ -1305,17 +1302,20 @@ ChangeValuesCommand NodeInstanceView::createChangeValueCommand(const QList<Varia
 {
     QVector<PropertyValueContainer> containerList;
 
-    const bool reflectionFlag = m_puppetTransaction.isValid() && (!currentTimeline().isValid() || !currentTimeline().isRecording());
+    bool reflectionFlag = m_puppetTransaction.isValid()
+                          && (!currentTimeline().isValid() || !currentTimeline().isRecording());
 
     for (const VariantProperty &property : propertyList) {
         ModelNode node = property.parentModelNode();
+        if (QmlPropertyChanges::isValidQmlPropertyChanges(node))
+            reflectionFlag = false;
+
         if (node.isValid() && hasInstanceForModelNode(node)) {
             NodeInstance instance = instanceForModelNode(node);
             PropertyValueContainer container(instance.instanceId(), property.name(), property.value(), property.dynamicTypeName());
             container.setReflectionFlag(reflectionFlag);
             containerList.append(container);
         }
-
     }
 
     return ChangeValuesCommand(containerList);
@@ -1463,10 +1463,10 @@ void NodeInstanceView::valuesModified(const ValuesModifiedCommand &command)
         if (hasInstanceForId(container.instanceId())) {
             NodeInstance instance = instanceForId(container.instanceId());
             if (instance.isValid()) {
-                QScopedPointer<QmlObjectNode> node {
-                    QmlObjectNode::getQmlObjectNodeOfCorrectType(instance.modelNode())};
-                if (node->modelValue(container.name()) != container.value())
-                    node->setVariantProperty(container.name(), container.value());
+                if (auto qmlObjectNode = QmlObjectNode(instance.modelNode())) {
+                    if (qmlObjectNode.modelValue(container.name()) != container.value())
+                        qmlObjectNode.setVariantProperty(container.name(), container.value());
+                }
             }
         }
     }
@@ -1503,7 +1503,7 @@ void NodeInstanceView::pixmapChanged(const PixmapChangedCommand &command)
         }
     }
 
-    m_nodeInstanceServer->benchmark(Q_FUNC_INFO + QString::number(renderImageChangeSet.count()));
+    m_nodeInstanceServer->benchmark(Q_FUNC_INFO + QString::number(renderImageChangeSet.size()));
 
     if (!renderImageChangeSet.isEmpty())
         emitInstancesRenderImageChanged(Utils::toList(renderImageChangeSet));
@@ -1542,7 +1542,7 @@ void NodeInstanceView::informationChanged(const InformationChangedCommand &comma
 
     QMultiHash<ModelNode, InformationName> informationChangeHash = informationChanged(command.informations());
 
-    m_nodeInstanceServer->benchmark(Q_FUNC_INFO + QString::number(informationChangeHash.count()));
+    m_nodeInstanceServer->benchmark(Q_FUNC_INFO + QString::number(informationChangeHash.size()));
 
     if (!informationChangeHash.isEmpty())
         emitInstanceInformationsChange(informationChangeHash);
@@ -1615,7 +1615,7 @@ void NodeInstanceView::componentCompleted(const ComponentCompletedCommand &comma
             nodeVector.append(modelNodeForInternalId(instanceId));
     }
 
-    m_nodeInstanceServer->benchmark(Q_FUNC_INFO + QString::number(nodeVector.count()));
+    m_nodeInstanceServer->benchmark(Q_FUNC_INFO + QString::number(nodeVector.size()));
 
     if (!nodeVector.isEmpty())
         emitInstancesCompleted(nodeVector);
@@ -1735,7 +1735,9 @@ void NodeInstanceView::handlePuppetToCreatorCommand(const PuppetToCreatorCommand
             }
         }
     } else if (command.type() == PuppetToCreatorCommand::Import3DSupport) {
-        const QVariantMap supportMap = qvariant_cast<QVariantMap>(command.data());
+        QVariantMap supportMap;
+        if (externalDependencies().isQt6Project())
+            supportMap = qvariant_cast<QVariantMap>(command.data());
         emitImport3DSupportChanged(supportMap);
     } else if (command.type() == PuppetToCreatorCommand::NodeAtPos) {
         auto data = qvariant_cast<QVariantList>(command.data());
@@ -1785,9 +1787,9 @@ void NodeInstanceView::requestModelNodePreviewImage(const ModelNode &node,
                 if (renderInstance.isValid())
                     renderItemId = renderInstance.instanceId();
                 if (renderNode.isComponent())
-                    componentPath = renderNode.metaInfo().componentFileName();
+                    componentPath = ModelUtils::componentFilePath(renderNode);
             } else if (node.isComponent()) {
-                componentPath = node.metaInfo().componentFileName();
+                componentPath = ModelUtils::componentFilePath(node);
             }
             const double ratio = m_externalDependencies.formEditorDevicePixelRatio();
             const int dim = Constants::MODELNODE_PREVIEW_IMAGE_DIMENSIONS * ratio;
@@ -2170,6 +2172,7 @@ void NodeInstanceView::handleShaderChanges()
         }
 
         QStringList args = baseArgs;
+        args.append("-o");
         args.append(outPath.toString());
         args.append(shader);
         auto qsbProcess = new Utils::Process(this);

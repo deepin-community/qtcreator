@@ -65,6 +65,7 @@
 #include <QtCore/qmap.h>
 #include <QtCore/qtextstream.h>
 
+#include <algorithm>
 #include <utility>
 
 #ifdef Q_OS_UNIX
@@ -155,17 +156,11 @@ QString CommandLineParser::projectBuildDirectory() const
 
 BuildOptions CommandLineParser::buildOptions(const QString &profile) const
 {
-    Settings settings(settingsDir());
-    Preferences preferences(&settings, profile);
-
-    if (d->buildOptions.maxJobCount() <= 0) {
-        d->buildOptions.setMaxJobCount(preferences.jobs());
-    }
-
+    d->buildOptions.setMaxJobCount(jobCount(profile));
     if (d->buildOptions.echoMode() < 0) {
-        d->buildOptions.setEchoMode(preferences.defaultEchoMode());
+        Settings settings(settingsDir());
+        d->buildOptions.setEchoMode(Preferences(&settings, profile).defaultEchoMode());
     }
-
     return d->buildOptions;
 }
 
@@ -200,6 +195,15 @@ InstallOptions CommandLineParser::installOptions(const QString &profile) const
     options.setKeepGoing(buildOptions(profile).keepGoing());
     options.setLogElapsedTime(logTime());
     return options;
+}
+
+int CommandLineParser::jobCount(const QString &profile) const
+{
+    if (const int explicitJobCount = d->optionPool.jobsOption()->jobCount(); explicitJobCount > 0)
+        return explicitJobCount;
+
+    Settings settings(settingsDir());
+    return Preferences(&settings, profile).jobs();
 }
 
 bool CommandLineParser::forceTimestampCheck() const
@@ -334,7 +338,19 @@ void CommandLineParser::CommandLineParserPrivate::doParse()
     } else {
         command = commandFromString(commandLine.front());
         if (command) {
-            commandLine.removeFirst();
+            const QString commandName = commandLine.takeFirst();
+
+            // if the command line contains a `<command>` with
+            // either `-h` or `--help` switch, we transform
+            // it to corresponding `help <command>` instead
+            const QStringList helpSwitches = {QStringLiteral("-h"), QStringLiteral("--help")};
+            if (auto it = std::find_first_of(
+                    commandLine.begin(), commandLine.end(),
+                    helpSwitches.begin(), helpSwitches.end());
+                    it != commandLine.end()) {
+                command = commandPool.getCommand(HelpCommandType);
+                commandLine = QList{commandName}; // keep only command's name
+            }
         } else { // No command given.
             if (commandLine.front() == QLatin1String("-h")
                     || commandLine.front() == QLatin1String("--help")) {

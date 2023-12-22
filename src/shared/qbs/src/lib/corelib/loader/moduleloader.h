@@ -39,62 +39,18 @@
 
 #pragma once
 
-
-#include <language/forward_decls.h>
-#include <language/item.h>
-#include <tools/pimpl.h>
-#include <tools/set.h>
-
-#include <QString>
-#include <QVariantMap>
-
-#include <vector>
-
 namespace qbs {
 class CodeLocation;
 namespace Internal {
 enum class FallbackMode;
+class Item;
 class LoaderState;
-class StoredModuleProviderInfo;
+class ProductContext;
+class QualifiedId;
 
-class ModuleLoader
-{
-public:
-    ModuleLoader(LoaderState &loaderState);
-    ~ModuleLoader();
-
-    struct ProductContext {
-        Item * const productItem;
-        const Item * const projectItem;
-        const QString &name;
-        const QString &uniqueName;
-        const QString &profile;
-        const QString &multiplexId;
-        const QVariantMap &moduleProperties;
-        const QVariantMap &profileModuleProperties;
-    };
-    struct Result {
-        Item *moduleItem = nullptr;
-        std::vector<ProbeConstPtr> providerProbes;
-    };
-    Result searchAndLoadModuleFile(const ProductContext &productContext,
-                                   const CodeLocation &dependsItemLocation,
-                                   const QualifiedId &moduleName,
-                                   FallbackMode fallbackMode, bool isRequired);
-
-    void setStoredModuleProviderInfo(const StoredModuleProviderInfo &moduleProviderInfo);
-    StoredModuleProviderInfo storedModuleProviderInfo() const;
-    const Set<QString> &tempQbsFiles() const;
-
-    void checkDependencyParameterDeclarations(const Item *productItem,
-                                              const QString &productName) const;
-    void forwardParameterDeclarations(const Item *dependsItem, const Item::Modules &modules);
-    void printProfilingInfo(int indent);
-
-private:
-    class Private;
-    Pimpl<Private> d;
-};
+Item *searchAndLoadModuleFile(LoaderState &loaderState, ProductContext &product,
+                              const CodeLocation &dependsItemLocation,
+                              const QualifiedId &moduleName, FallbackMode fallbackMode);
 
 } // namespace Internal
 } // namespace qbs
