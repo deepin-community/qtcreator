@@ -32,19 +32,11 @@ class TerminalPlugin final : public ExtensionSystem::IPlugin
 public:
     TerminalPlugin() = default;
 
-    ~TerminalPlugin() final
-    {
-        ExtensionSystem::PluginManager::removeObject(m_terminalPane);
-        delete m_terminalPane;
-        m_terminalPane = nullptr;
-    }
-
     void extensionsInitialized() final
     {
-        m_terminalPane = new TerminalPane;
-        ExtensionSystem::PluginManager::addObject(m_terminalPane);
+        m_terminalPane = new TerminalPane(this);
 
-        TerminalWidget::initActions();
+        TerminalWidget::initActions(this);
 
         auto enable = [this] {
             Utils::Terminal::Hooks::instance()

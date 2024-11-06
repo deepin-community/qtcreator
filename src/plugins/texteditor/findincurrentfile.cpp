@@ -3,6 +3,7 @@
 
 #include "findincurrentfile.h"
 
+#include "basefilefind.h"
 #include "textdocument.h"
 #include "texteditortr.h"
 
@@ -11,9 +12,40 @@
 
 #include <utils/qtcsettings.h>
 
+#include <QPointer>
+
 using namespace Utils;
 
 namespace TextEditor::Internal {
+
+class FindInCurrentFile final : public BaseFileFind
+{
+public:
+    FindInCurrentFile();
+
+private:
+    QString id() const final;
+    QString displayName() const final;
+    bool isEnabled() const final;
+    Utils::Store save() const final;
+    void restore(const Utils::Store &s) final;
+
+    QString label() const final;
+    QString toolTip() const final;
+
+    FileContainerProvider fileContainerProvider() const final;
+    void handleFileChange(Core::IEditor *editor);
+
+    QPointer<Core::IDocument> m_currentDocument;
+
+    Utils::FindFlags supportedFindFlags() const override
+    {
+        return FindCaseSensitively | FindRegularExpression | FindWholeWords;
+    }
+
+    // deprecated
+    QByteArray settingsKey() const final;
+};
 
 FindInCurrentFile::FindInCurrentFile()
 {
@@ -73,18 +105,29 @@ void FindInCurrentFile::handleFileChange(Core::IEditor *editor)
     }
 }
 
-void FindInCurrentFile::writeSettings(QtcSettings *settings)
+const char kDefaultInclusion[] = "*";
+const char kDefaultExclusion[] = "";
+
+Store FindInCurrentFile::save() const
 {
-    settings->beginGroup("FindInCurrentFile");
-    writeCommonSettings(settings);
-    settings->endGroup();
+    Store s;
+    writeCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
+    return s;
 }
 
-void FindInCurrentFile::readSettings(QtcSettings *settings)
+void FindInCurrentFile::restore(const Store &s)
 {
-    settings->beginGroup("FindInCurrentFile");
-    readCommonSettings(settings, "*", "");
-    settings->endGroup();
+    readCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
+}
+
+QByteArray FindInCurrentFile::settingsKey() const
+{
+    return "FindInCurrentFile";
+}
+
+void setupFindInCurrentFile()
+{
+    static FindInCurrentFile theFindInCurrentFile;
 }
 
 } // TextEditor::Internal

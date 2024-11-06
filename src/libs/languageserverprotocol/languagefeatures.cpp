@@ -125,7 +125,7 @@ QHash<QString, DocumentFormattingProperty> FormattingOptions::properties() const
     for (const QString &key : keys()) {
         if (key == tabSizeKey || key == insertSpaceKey)
             continue;
-        QJsonValue property = value(key.toStdString());
+        QJsonValue property = value(key);
         if (property.isBool())
             ret[key] = property.toBool();
         if (property.isDouble())
@@ -136,7 +136,7 @@ QHash<QString, DocumentFormattingProperty> FormattingOptions::properties() const
     return ret;
 }
 
-void FormattingOptions::setProperty(const std::string_view key, const DocumentFormattingProperty &property)
+void FormattingOptions::setProperty(const Key key, const DocumentFormattingProperty &property)
 {
     using namespace std;
     if (auto val = get_if<double>(&property))
@@ -261,6 +261,12 @@ DocumentHighlightsResult::DocumentHighlightsResult(const QJsonValue &value)
     }
 }
 
+template<>
+MarkedString fromJsonValue<MarkedString>(const QJsonValue &value)
+{
+    return MarkedString(value);
+}
+
 MarkedString::MarkedString(const QJsonValue &value)
 {
     if (value.isObject())
@@ -303,8 +309,8 @@ HoverContent::HoverContent(const QJsonValue &value)
 
 bool HoverContent::isValid() const
 {
-    if (std::holds_alternative<MarkedString>(*this))
-        return std::get<MarkedString>(*this).isValid();
+    if (const auto s = std::get_if<MarkedString>(this))
+        return s->isValid();
     return true;
 }
 

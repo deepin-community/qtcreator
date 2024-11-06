@@ -32,8 +32,8 @@ struct SearchHit
     bool operator==(const SearchHit &other) const { return !operator!=(other); }
 };
 
-QString defaultFontFamily();
-int defaultFontSize();
+QString TERMINAL_EXPORT defaultFontFamily();
+int TERMINAL_EXPORT defaultFontSize();
 
 class TERMINAL_EXPORT TerminalView : public QAbstractScrollArea
 {
@@ -75,6 +75,7 @@ public:
 
     std::optional<Selection> selection() const;
     void clearSelection();
+    void selectAll();
 
     void zoomIn();
     void zoomOut();
@@ -219,6 +220,9 @@ protected:
     void configBlinkTimer();
 
     QColor toQColor(std::variant<int, QColor> color) const;
+
+private:
+    void scheduleViewportUpdate();
 
 private:
     std::unique_ptr<TerminalViewPrivate> d;

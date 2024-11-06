@@ -1,8 +1,174 @@
-qtcreator (12.0.1-1deepin1) UNRELEASED; urgency=medium
+qtcreator (15.0.0~beta2-2) experimental; urgency=medium
 
-  * Requires qt6-quick3d private headers on >= 6.6.1.
+  * Disable the build of the Go CmdBridge: more work is needed to actually
+    build it offline using the existing Debian packages of the used modules
+    - remove the golang, golang-github-fsnotify-fsnotify-dev,
+      golang-github-fxamacker-cbor-dev, and golang-golang-x-sys-dev build
+      dependencies
+  * Backport the upstream review
+    https://codereview.qt-project.org/c/qt-creator/qt-creator/+/598448 to fix
+    the build on 32bit architectures; patch
+    Utils-fix-conflict-of-withSuffix-int-and-withSuffix-.patch.
 
- -- Tianyu Chen <sweetyfish@deepin.org>  Wed, 27 Dec 2023 05:48:24 +0000
+ -- Pino Toscano <pino@debian.org>  Fri, 01 Nov 2024 06:46:25 +0100
+
+qtcreator (15.0.0~beta2-1) experimental; urgency=medium
+
+  * New upstream development release.
+  * Enable the build of the Go CmdBridge:
+    - add the golang, golang-github-fsnotify-fsnotify-dev,
+      golang-github-fxamacker-cbor-dev, and golang-golang-x-sys-dev build
+      dependencies
+    - exclude the stripping of the cmdbridge executables, as they are already
+      stripped (and they would require cross-tools to strip them anyway)
+
+ -- Pino Toscano <pino@debian.org>  Fri, 01 Nov 2024 06:05:38 +0100
+
+qtcreator (15.0.0~beta1-1) experimental; urgency=medium
+
+  * New upstream development release.
+  * Switch watch file to the unstable releases.
+  * Switch Vcs-* fields to the 'experimental' packaging branch.
+  * Update the patches:
+    - upstream_ClangFormat-Fix-build-with-current-LLVM-main-branch.patch:
+      drop, backported from upstream
+
+ -- Pino Toscano <pino@debian.org>  Fri, 18 Oct 2024 23:08:39 +0200
+
+qtcreator (14.0.2-4) unstable; urgency=medium
+
+  * Stop using clang to build on mips64el:
+    - the current new default clang in debian (19) fails to build what seems
+      to be valid code (or at least that gcc compiles just fine)
+    - the code of the clangformat plugin changed enough to not hit again into
+      https://gcc.gnu.org/bugzilla/show_bug.cgi?id=102602
+    - there are no other issues due to "big code/functions" anymore, and gcc
+      is able to build everything again
+  * Remove old lintian override.
+
+ -- Pino Toscano <pino@debian.org>  Tue, 08 Oct 2024 18:19:29 +0200
+
+qtcreator (14.0.2-3) unstable; urgency=medium
+
+  * Backport upstream commit f175ec933f1c5c5d7a345edbaacc8ff90202aee2 to fix
+    the build with LLVM >= 19; patch
+    upstream_ClangFormat-Fix-build-with-current-LLVM-main-branch.patch.
+
+ -- Pino Toscano <pino@debian.org>  Sat, 05 Oct 2024 13:16:44 +0200
+
+qtcreator (14.0.2-2) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Switch Vcs-* fields back to the 'master' packaging branch.
+  * Add myself to Uploaders.
+
+ -- Pino Toscano <pino@debian.org>  Sat, 05 Oct 2024 10:22:05 +0200
+
+qtcreator (14.0.2-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pino Toscano <pino@debian.org>  Tue, 01 Oct 2024 19:15:49 +0200
+
+qtcreator (14.0.1-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pino Toscano <pino@debian.org>  Wed, 07 Aug 2024 21:17:44 +0200
+
+qtcreator (14.0.0-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+  * Switch watch file back to stable releases.
+  * Drop the permission fixing of qmldir files, as they are now shipped or
+    installed upstream without executable permissions set.
+
+ -- Pino Toscano <pino@debian.org>  Fri, 26 Jul 2024 05:42:06 +0200
+
+qtcreator (14.0.0~rc1-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pino Toscano <pino@debian.org>  Fri, 12 Jul 2024 05:26:11 +0200
+
+qtcreator (14.0.0~beta2-2) experimental; urgency=medium
+
+  * Team upload.
+  * Bump the minimum clangd required version (both as build and runtime
+    dependency) to 17: this is already a requirement since beta1, and this
+    version bump was missed in previous uploads of qtcreator 14.
+  * Stop building the developer documentation: it refers to the internal APIs
+    of qtcreator to build new plugins for it, which is not possible as no
+    development bits are shipped
+    - stop passing -DBUILD_DEVELOPER_DOCS=ON to cmake
+
+ -- Pino Toscano <pino@debian.org>  Fri, 28 Jun 2024 21:23:57 +0200
+
+qtcreator (14.0.0~beta2-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream development release.
+
+ -- Pino Toscano <pino@debian.org>  Thu, 27 Jun 2024 17:31:07 +0200
+
+qtcreator (14.0.0~beta1-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream development release.
+  * Switch watch file to the unstable releases.
+  * Switch Vcs-* fields to the 'experimental' packaging branch.
+  * Update the build dependencies according to the upstream build system:
+    - bump the Qt packages to 6.5.4, to ensure that QmlDesigner is built
+    - add qt6-charts-dev
+
+ -- Pino Toscano <pino@debian.org>  Sun, 16 Jun 2024 09:02:51 +0200
+
+qtcreator (13.0.2-1) unstable; urgency=medium
+
+  * Team upload.
+  * Upload to unstable.
+  * New upstream release.
+  * Update the build dependencies:
+    - bump the Qt packages to 6.4.3, to ensure that QmlDesigner is built
+    - drop the manual qt6-qmllint-plugins build dependency, as now
+      qt6-declarative-dev depends on all the packages it needs
+    - drop libqt6opengl6-dev, which was merged into qt6-base-dev long ago
+    - switch the transitional pkg-config to pkgconf
+    - add qt6-quick3d-private-dev, actually needed and so far provided by
+      qt6-quick3d-dev
+    - add libsecret-1-dev, for the embedded copy of qtkeychain
+  * Bump Standards-Version to 4.7.0, no changes required.
+  * Switch Vcs-* fields back to the 'master' packaging branch.
+  * Refresh patch debian_paths.diff to avoid offsets.
+
+ -- Pino Toscano <pino@debian.org>  Fri, 07 Jun 2024 08:53:01 +0200
+
+qtcreator (13.0.1-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pino Toscano <pino@debian.org>  Tue, 07 May 2024 23:03:24 +0200
+
+qtcreator (13.0.0-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+  * Update the build dependencies according to the upstream build system:
+    - bump clang/llvm development to 14
+
+ -- Pino Toscano <pino@debian.org>  Fri, 05 Apr 2024 07:35:07 +0200
+
+qtcreator (12.0.2-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Pino Toscano <pino@debian.org>  Sat, 10 Feb 2024 08:37:07 +0100
 
 qtcreator (12.0.1-1) experimental; urgency=medium
 

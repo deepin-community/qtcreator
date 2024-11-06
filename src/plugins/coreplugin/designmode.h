@@ -5,15 +5,12 @@
 
 #include "imode.h"
 
+namespace Utils {
+class FancyMainWindow;
+}
+
 namespace Core {
 class IEditor;
-
-/**
-  * A global mode for Design pane - used by Bauhaus (QML Designer) and
-  * Qt Designer. Other plugins can register themselves by registerDesignWidget()
-  * and giving a list of mimetypes that the editor understands, as well as an instance
-  * to the main editor widget itself.
-  */
 
 class CORE_EXPORT DesignMode final : public IMode
 {
@@ -26,7 +23,8 @@ public:
 
     static void registerDesignWidget(QWidget *widget,
                                      const QStringList &mimeTypes,
-                                     const Context &context);
+                                     const Context &context,
+                                     Utils::FancyMainWindow *mainWindow = nullptr);
     static void unregisterDesignWidget(QWidget *widget);
 
     static void createModeIfRequired();

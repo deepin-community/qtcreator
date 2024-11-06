@@ -35,6 +35,7 @@ import "freedesktop.js" as Fdo
 Module {
     property string name: product.name
     property string appName: name
+    property string hicolorRoot: undefined
 
     property var desktopKeys
 
@@ -56,67 +57,42 @@ Module {
         fileTags: [ "freedesktop.desktopfile_source" ]
     }
 
-    Rule {
+
+    Group {
         condition: _fdoSupported
 
-        inputs: [ "freedesktop.desktopfile_source" ]
-        outputFileTags: [ "freedesktop.desktopfile" ]
+        qbs.install: true
 
-        Artifact {
-            fileTags: [ "freedesktop.desktopfile" ]
-            filePath: input.fileName
+        Group {
+            fileTagsFilter: [ "freedesktop.desktopfile" ]
+            qbs.installDir: "share/applications"
+        }
+        Group {
+            condition: product.freedesktop.hicolorRoot !== undefined
+            fileTagsFilter: [ "freedesktop.appIcon" ]
+            qbs.installDir: "share/icons/hicolor"
+            qbs.installSourceBase: product.freedesktop.hicolorRoot
+        }
+        Group {
+            fileTagsFilter: [ "freedesktop.appstream" ]
+            qbs.installDir: "share/metainfo"
         }
 
-        prepare: {
-            var cmd = new JavaScriptCommand();
-            cmd.description = "generating " + output.fileName + " from " + input.fileName;
-            cmd.highlight = "codegen";
-            cmd.sourceCode = function() {
-                var aggregateDesktopKeys = Fdo.parseDesktopFile(input.filePath);
-                var desktopKeys = ModUtils.moduleProperty(product, "desktopKeys") || {}
-                var mainSection = aggregateDesktopKeys['Desktop Entry'];
-                for (key in desktopKeys) {
-                    if (desktopKeys.hasOwnProperty(key)) {
-                        mainSection[key] = desktopKeys[key];
-                    }
-                }
+        Rule {
+            inputs: [ "freedesktop.desktopfile_source" ]
+            outputFileTags: [ "freedesktop.desktopfile" ]
 
-                var defaultValues = product.freedesktop.defaultDesktopKeys
-                for (key in defaultValues) {
-                    if (!(key in mainSection)) {
-                        mainSection[key] = defaultValues[key];
-                    }
-                }
-
-                Fdo.dumpDesktopFile(output.filePath, aggregateDesktopKeys);
+            Artifact {
+                fileTags: [ "freedesktop.desktopfile" ]
+                filePath: input.fileName
             }
-            return [cmd];
+
+            prepare: Fdo.generateDesktopFileCommands.apply(Fdo, arguments)
         }
-    }
-
-    Group {
-        condition: product.freedesktop._fdoSupported
-        fileTagsFilter: [ "freedesktop.desktopfile" ]
-        qbs.install: true
-        qbs.installDir: "share/applications"
-    }
-
-    Group {
-        condition: product.freedesktop._fdoSupported
-        fileTagsFilter: [ "freedesktop.appIcon" ]
-        qbs.install: true
-        qbs.installDir: "share/icons/hicolor/scalable/apps"
     }
 
     FileTagger {
         patterns: [ "*.metainfo.xml", "*.appdata.xml" ]
         fileTags: [ "freedesktop.appstream" ]
-    }
-
-    Group {
-        condition: product.freedesktop._fdoSupported
-        fileTagsFilter: [ "freedesktop.appstream" ]
-        qbs.install: true
-        qbs.installDir: "share/metainfo"
     }
 }

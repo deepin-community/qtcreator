@@ -20,7 +20,6 @@ QT_END_NAMESPACE
 namespace Utils { class InfoLabel; }
 
 namespace Android {
-class AndroidConfig;
 class SdkPlatform;
 
 namespace Internal {
@@ -30,12 +29,12 @@ class AndroidSdkManager;
 class AvdDialog : public QDialog
 {
 public:
-    explicit AvdDialog(const AndroidConfig &config, QWidget *parent = nullptr);
+    explicit AvdDialog(QWidget *parent = nullptr);
     int exec() override;
+    CreateAvdInfo avdInfo() const;
 
-    enum DeviceType { Phone, Tablet, Automotive, TV, Wear, PhoneOrTablet };
-
-    ProjectExplorer::IDevice::Ptr device() const;
+private:
+    enum DeviceType { Phone, Tablet, Automotive, TV, Wear, Desktop, PhoneOrTablet };
 
     const SystemImage *systemImage() const;
     QString name() const;
@@ -44,7 +43,6 @@ public:
     int sdcardSize() const;
     bool isValid() const;
 
-private:
     void parseDeviceDefinitionsList();
     void updateDeviceDefinitionComboBox();
     void updateApiLevelComboBox();
@@ -63,8 +61,6 @@ private:
     QTimer m_hideTipTimer;
     QRegularExpression m_allowedNameChars;
     QList<DeviceDefinitionStruct> m_deviceDefinitionsList;
-    const AndroidConfig &m_androidConfig;
-    AndroidSdkManager m_sdkManager;
     QMap<AvdDialog::DeviceType, QString> m_deviceTypeToStringMap;
 
     QComboBox *m_abiComboBox;

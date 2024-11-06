@@ -117,6 +117,13 @@ private slots:
 
     void isRootPath();
 
+    void lessThan();
+    void lessThan_data();
+
+    void asQMapKey();
+
+    void makeTemporaryFile();
+
 private:
     QTemporaryDir tempDir;
     QString rootPath;
@@ -868,7 +875,7 @@ void tst_filepath::fromUserInput_data()
     QTest::newRow("qrc-no-slash") << D(":test.txt", "", "", ":test.txt");
     QTest::newRow("tilde") << D("~/", "", "", QDir::homePath());
     QTest::newRow("tilde-with-path") << D("~/foo", "", "", QDir::homePath() + "/foo");
-    QTest::newRow("tilde-only") << D("~", "", "", "~");
+    QTest::newRow("tilde-only") << D("~", "", "", QDir::homePath());
 
     QTest::newRow("unc-incomplete") << D("//", "", "", "//");
     QTest::newRow("unc-incomplete-only-server") << D("//server", "", "", "//server");
@@ -1666,6 +1673,42 @@ void tst_filepath::sort()
     QCOMPARE(sortedPaths, sorted);
 }
 
+void tst_filepath::lessThan_data()
+{
+    QTest::addColumn<FilePath>("left");
+    QTest::addColumn<FilePath>("right");
+    QTest::addColumn<bool>("expected");
+
+    QTest::newRow("empty") << FilePath() << FilePath() << false;
+    QTest::newRow("simple") << FilePath("/a") << FilePath("/b") << true;
+    QTest::newRow("simple-2") << FilePath("/a") << FilePath("/a") << false;
+    QTest::newRow("simple-3") << FilePath("/b") << FilePath("/a") << false;
+
+    QTest::newRow("remote-vs-local") << FilePath("docker://1234/a") << FilePath("/a") << false;
+    QTest::newRow("local-vs-remote") << FilePath("/a") << FilePath("docker://1234/a") << true;
+
+    QTest::newRow("remote-vs-local-2") << FilePath("docker://1234/a") << FilePath("/b") << false;
+    QTest::newRow("local-vs-remote-2") << FilePath("/a") << FilePath("docker://1234/b") << true;
+}
+
+void tst_filepath::lessThan()
+{
+    QFETCH(FilePath, left);
+    QFETCH(FilePath, right);
+    QFETCH(bool, expected);
+
+    QCOMPARE(left < right, expected);
+}
+
+void tst_filepath::asQMapKey()
+{
+    QMap<FilePath, int> map;
+    map.insert(FilePath::fromString("/Users/mtillmanns/projects/qt/qtc-work/fsengine"), 1);
+
+    QCOMPARE(map.contains(FilePath::fromString("ssh://marcus@mad-ubuntu-23.local/tmp/untitled")),
+             false);
+}
+
 void tst_filepath::isRootPath()
 {
     FilePath localRoot = FilePath::fromString(QDir::rootPath());
@@ -1723,6 +1766,46 @@ void tst_filepath::sort_data()
                                            "b://b//b"};
     QTest::addRow("others-reversed")
         << QStringList{"b://b//b", "a://b//b", "a://a//b", "a://b//a", "a://a//a"};
+}
+
+void tst_filepath::makeTemporaryFile()
+{
+    FilePath tmpFilePath;
+    // Test auto remove
+    {
+        const FilePath tmplate = FilePath::fromUserInput(QDir::tempPath())
+                                 / "test-auto-remove-XXXXXX.txt";
+        auto tmpFile = TemporaryFilePath::create(tmplate);
+        QVERIFY(tmpFile);
+
+        QVERIFY(!(*tmpFile)->templatePath().exists());
+        QVERIFY((*tmpFile)->filePath().exists());
+        tmpFilePath = (*tmpFile)->filePath();
+    }
+    QVERIFY(!tmpFilePath.exists());
+
+    // Check !autoRemove
+    {
+        const FilePath tmplate = FilePath::fromUserInput(QDir::tempPath())
+                                 / "test-no-auto-remove-XXXXXX.txt";
+        auto tmpFile = TemporaryFilePath::create(tmplate);
+        QVERIFY(tmpFile);
+        (*tmpFile)->setAutoRemove(false);
+
+        QVERIFY(!(*tmpFile)->templatePath().exists());
+        QVERIFY((*tmpFile)->filePath().exists());
+        tmpFilePath = (*tmpFile)->filePath();
+    }
+    QVERIFY(tmpFilePath.exists());
+    QVERIFY(tmpFilePath.removeFile());
+
+    // Check invalid filename
+    {
+        const FilePath tmplate = FilePath::fromUserInput("/Some/non/existing/path")
+                                 / "test-invalid-filename-XXXXXX";
+        auto tmpFile = TemporaryFilePath::create(tmplate);
+        QVERIFY(!tmpFile);
+    }
 }
 
 } // Utils

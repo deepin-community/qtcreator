@@ -13,6 +13,7 @@
 #include <rewritertransaction.h>
 #include <variantproperty.h>
 #include <qmlitemnode.h>
+#include <dialogutils.h>
 
 #include <coreplugin/messagebox.h>
 
@@ -27,7 +28,7 @@ TransitionForm::TransitionForm(QWidget *parent)
 {
     ui->setupUi(this);
 
-    connect(ui->idLineEdit, &QLineEdit::editingFinished, [this]() {
+    connect(ui->idLineEdit, &QLineEdit::editingFinished, [this] {
         QTC_ASSERT(m_transition.isValid(), return );
 
         static QString lastString;
@@ -45,8 +46,7 @@ TransitionForm::TransitionForm(QWidget *parent)
         bool error = false;
 
         if (!ModelNode::isValidId(newId)) {
-            Core::AsynchronousMessageBox::warning(tr("Invalid ID"),
-                                                  tr("%1 is an invalid ID.").arg(newId));
+            DialogUtils::showWarningForInvalidId(newId);
             error = true;
         } else if (m_transition.view()->hasId(newId)) {
             Core::AsynchronousMessageBox::warning(tr("Invalid ID"),
@@ -62,7 +62,7 @@ TransitionForm::TransitionForm(QWidget *parent)
         }
     });
 
-    connect(ui->listWidgetTo, &QListWidget::itemChanged, this, [this]() {
+    connect(ui->listWidgetTo, &QListWidget::itemChanged, this, [this] {
         QTC_ASSERT(m_transition.isValid(), return );
         const QmlItemNode root(m_transition.view()->rootModelNode());
         QTC_ASSERT(root.isValid(), return );
@@ -86,7 +86,7 @@ TransitionForm::TransitionForm(QWidget *parent)
         });
     });
 
-    connect(ui->listWidgetFrom, &QListWidget::itemChanged, this, [this]() {
+    connect(ui->listWidgetFrom, &QListWidget::itemChanged, this, [this] {
         QTC_ASSERT(m_transition.isValid(), return );
         const QmlItemNode root(m_transition.view()->rootModelNode());
         QTC_ASSERT(root.isValid(), return );

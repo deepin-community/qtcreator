@@ -75,7 +75,11 @@ private slots:
     void delayedError();
     void delayedError_data();
     void dependencyOnAllProfiles();
+    void dependsItemInGroup_data();
+    void dependsItemInGroup();
     void derivedSubProject();
+    void disabledPropertiesItem_data();
+    void disabledPropertiesItem();
     void disabledSubProject();
     void dottedNames_data();
     void dottedNames();
@@ -110,13 +114,18 @@ private slots:
     void invalidBindingInDisabledItem();
     void invalidOverrides();
     void invalidOverrides_data();
+    void invalidPropOnNonRequiredModule_data();
+    void invalidPropOnNonRequiredModule();
     void itemPrototype();
     void itemScope();
     void jsExtensions();
     void jsImportUsedInMultipleScopes_data();
     void jsImportUsedInMultipleScopes();
+    void keepLoadingDependencies();
     void localProfileAsTopLevelProfile();
     void moduleMergingVariantValues();
+    void moduleNameCollisions_data();
+    void moduleNameCollisions();
     void moduleParameters_data();
     void moduleParameters();
     void modulePrioritizationBySearchPath_data();
@@ -150,6 +159,7 @@ private slots:
     void projectFileLookup_data();
     void propertiesBlocks_data();
     void propertiesBlocks();
+    void propertiesBlockInGroup_data();
     void propertiesBlockInGroup();
     void propertiesItemInModule();
     void propertyAssignmentInExportedGroup();

@@ -18,8 +18,8 @@
 
     \section1 Analyze
 
-    \QC integrates code analysis tools for detecting memory leaks, profiling
-    function execution, analyzing CPU use, and eliminating unnecessary
+    Use integrated code analysis tools to detect memory leaks, profile
+    function execution, analyze CPU use, and eliminate unnecessary
     complexity of code. Other integrated tools provide code coverage and
     visualize trace events.
 
@@ -27,79 +27,231 @@
 
     \section1 Build and Run
 
+    Use integrated cross-platform systems for build automation to compile your
+    source code for different target platforms or with different compilers,
+    debuggers, or Qt versions. Deploy applications to the target platforms
+    and run them there.
+
     \generatelist creator-how-to-build
 
     \section2 Build with CMake
+
+    CMake controls the software compilation process by using simple configuration
+    files, called \e CMakeLists.txt files.
 
     \generatelist creator-how-to-build-with-cmake
 
     \section2 Build with qmake
 
+    qmake automates the generation of Makefiles based on the information in a
+    project file that has the extension \e .pro.
+
     \generatelist creator-how-to-build-with-qmake
 
+    \section2 Run applications
+
+    Run applications on local and remote desktop systems, as well as on
+    embedded and mobile devices that you connect to the computer.
+
+    \generatelist creator-how-to-run
+
+    \section1 Create Models and Diagrams
+
+    Create Universal Modeling Language (UML) style models with structured and
+    behavioral diagrams that offer different views to your system. Or, use a
+    file wizard to create State Chart XML (SCXML) files with boilerplate code
+    and edit them with an SCXML editor.
+
+    \generatelist creator-how-to-models
+
     \section1 Debug
+
+    Use debuggers to inspect the state of your application while it is running.
 
     \generatelist creator-how-to-debug
 
     \section1 Design UIs
 
+    Design UIs with either \l{User Interfaces}{Qt Quick or Qt Widgets}.
+    \QC integrates a visual editor, \QD, for designing widget-based UIs
+    in the \uicontrol Design mode. For Qt Quick UIs, use a separate visual
+    editor, \l{\QDS Manual}{\QDS}, or the \uicontrol Edit mode.
+
     \generatelist creator-how-to-design
+
+    \section1 Develop for Devices
+
+    Install the toolchain for building applications for the targeted
+    embedded or mobile platform on the computer, and use \QOI to
+    install Qt libraries that are built for the platform. Then add a
+    kit with the toolchain and the Qt version for the device's architecture.
+    When possible, \QOI creates suitable kits for you. Connect the devices
+    to the computer to run, debug, and analyze applications on them.
+
+    \section2 Android
+
+    Install \l {Qt for Android} and Android tools, and connect Android devices to
+    the computer.
+
+    \generatelist creator-how-to-android
+
+    \section2 Bare Metal
+
+    Run and debug applications on small Linux devices that are not supported
+    by the remote Linux device plugin by using GDB or a hardware debugger.
+
+    \generatelist creator-how-to-bare-metal
+
+    \section2 \B2Q
+
+    Run, debug, and analyze applications on \l{\B2Q: Documentation}{\B2Q}
+    devices.
+
+    \generatelist creator-how-to-b2qt
+
+    \section2 Docker
+
+    Create \e {Docker devices} from \e {Docker images} and use them to build,
+    run, and debug applications.
+
+    \generatelist creator-how-to-docker
+
+    \section2 iOS
+
+    Install \l {Qt for iOS} and Xcode, and connect iOS devices to the computer.
+
+    \generatelist creator-how-to-ios
+
+    \section2 MCUs
+
+    Install \l {Qt for MCUs}, and connect microcontrollers to the computer.
+
+    \generatelist creator-how-to-mcu
+
+    \section2 QNX Neutrino
+
+    Install \l {Qt for QNX}, and connect QNX Neutrino devices to the computer.
+
+    \generatelist creator-how-to-qnx
+
+    \section2 Remote Linux
+
+    Add kits for toolchains for building applications for generic Linux
+    devices, and connect the devices to the computer.
+
+    \generatelist creator-how-to-remote-linux
+
+    \section2 VxWorks
+
+    Build \l {Qt for VxWorks}, and create VxWorks build and run kits.
+
+    \generatelist creator-how-to-vxworks
+
+    \section2 WebAssembly
+
+    Install \l{Qt for WebAssembly} to build applications for the web and run them
+    in a web browser.
+
+    \generatelist creator-how-to-webassembly
 
     \section1 Edit Code
 
+    The code editor offers useful features for editing C++ and QML code, such
+    as semantic highlighting, checking code syntax, code completion, and quick
+    fixes. Some of these features are also for other programming languages, such
+    as Python, for which a \e {language server} is available that provides
+    information about the code to IDEs.
+
     \generatelist creator-how-to-edit
 
+    \section2 Configure Editors
+
+    Configure the code and text editor to suit your specific needs by
+    changing the fonts, colors, highlighting, and indentation.
+
+    \generatelist creator-how-to-configure-editors
+
+    \section2 Manage Language Servers
+
+    Configure language servers that \QC adds by default or add more of them.
+
+    \generatelist creator-how-to-lsp
+
+    \section2 Search
+
+    Use the incremental and advanced search to search in currently open projects
+    or files on the file system or use the locator to browse through projects,
+    files, classes, functions, documentation, and file systems.
+
+    \generatelist creator-how-to-search
+
     \section1 Manage Kits
+
+    \QC groups build and run specific settings as kits to make cross-platform
+    development easier. Each kit consists of a set of values that define one
+    environment, such as a device, toolchain, Qt version, and debugger command
+    to use.
 
     \generatelist creator-how-to-manage-kits
 
     \section1 Manage Projects
 
+    Create projects for developing applications and libraries. Then configure
+    the projects for building and running the applications on target platforms.
+
     \generatelist creator-how-to-projects
 
     \section2 Create Projects
 
+    Use preset wizards to create projects or add custom wizards. You can also
+    import projects from version control systems.
+
     \generatelist creator-how-to-projects-create
 
-    \section2 Create Files
+    \section2 Add Files
+
+    Add files to projects.
 
     \generatelist creator-how-to-projects-files
 
     \section2 Configure Projects
 
+    Change the default configurations that installation programs and project
+    wizards create.
+
     \generatelist creator-how-to-projects-configure
 
     \section1 Read Documentation
 
+    \QC integrates the reference documentation for the Qt versions that you
+    install. You can add documentation from other sources.
+
     \generatelist creator-how-to-get-help
 
+    \section1 Test
+
+    Create and run \e {code based tests} and \e {build system based tests}.
+    Code based testing offers special handling for particular testing
+    frameworks that strongly ties to the underlying code models or
+    specialized parsers. Build system based testing is independent from any
+    testing frameworks. It retrieves information directly from the underlying
+    build system and uses it or even the build system as such to execute the
+    respective tests.
+
+    \generatelist creator-how-to-test
+
     \section1 Use \QC
+
+    Use basic \QC features and preinstalled plugins. Install more plugins and
+    configure external tools for use.
 
     \generatelist creator-how-to-use
 
     \section1 Use the UI
 
+    Navigate the UI or change its appearance and behavior.
+
     \generatelist creator-how-to-ui
-*/
-
-/*!
-    \page creator-how-to-move-between-open-files.html
-    \previouspage creator-how-tos.html
-
-    \ingroup creator-how-to-edit
-
-    \title Move between open files
-
-    To quickly move between currently open files, press
-    \key Ctrl+Tab.
-
-    To move forward in the location history, press \key {Alt+Right}
-    (\key {Cmd+Opt+Right} on \macos).
-
-    To move backward, press \key {Alt+Left} (\key {Cmd+Opt+Left} on \macos).
-    For example, if you use the \uicontrol Locator
-    to jump to a symbol in the same file, you can jump back to your original
-    location in that file by pressing \key {Alt+Left}.
 */
 
 /*!
@@ -122,6 +274,8 @@
         \li The second press closes secondary windows
 
     \endlist
+
+    \sa {Edit Code}{How To: Edit Code}, {Edit Mode}
 */
 
 /*!
@@ -149,15 +303,31 @@
 
     \section1 Examples of CLI commands
 
+    The following are examples of the commands on supported platforms when you
+    install \QC with \l{Get and Install Qt}{\QOI} to the default location. Change
+    the paths as necessary.
+
     On Windows:
 
     \list
 
-        \li \c {C:\qtcreator\bin>qtcreator -help}
+        \li \c {C:\Qt\Tools\QtCreator\bin\qtcreator -help}
 
-        \li \c {C:\qtcreator\bin>qtcreator C:\TextFinder\textfinder.cpp:100:2}
+        \li \c {C:\Qt\Tools\QtCreator\bin\qtcreator C:\TextFinder\textfinder.cpp:100:2}
 
-        \li \c {C:\qtcreator\bin>qtcreator C:\TextFinder\textfinder.cpp +100+2}
+        \li \c {C:\Qt\Tools\QtCreator\bin\qtcreator C:\TextFinder\textfinder.cpp +100+2}
+
+    \endlist
+
+    On Linux:
+
+    \list
+
+        \li \c {~/Qt/Tools/QtCreator/bin/qtcreator -help}
+
+        \li \c {~/Qt/Tools/QtCreator/bin/qtcreator /src/TextFinder/textfinder.cpp:100:2}
+
+        \li \c {~/Qt/Tools/QtCreator/bin/qtcreator /src/TextFinder/textfinder.cpp+100+2}
 
     \endlist
 
@@ -165,7 +335,7 @@
 
     \list
 
-        \li \c {Qt\ Creator.app/Contents/MacOS/Qt\ Creator -help}
+        \li \c {~/Qt/Qt\ Creator.app/Contents/MacOS/Qt\ Creator -help}
 
     \endlist
 
@@ -181,29 +351,6 @@
     \c {C:\qtcreator\bin>qtcreator.exe C:\Examples\alarms}
 
     \sa {Command-Line Options}
-*/
-
-/*!
-    \page creator-how-to-move-to-symbols.html
-    \previouspage creator-how-tos.html
-
-    \ingroup creator-how-to-edit
-
-    \title Move to symbols
-
-    To move straight to a symbol used in a project, select the symbol in the
-    \uicontrol Editor toolbar drop-down menu. For more information on the editor
-    toolbar, see \l {Using the Editor Toolbar}.
-
-    To jump to a symbol in the current file, press \key {Ctrl+K} to open the
-    \uicontrol Locator, enter a period (.), and start typing the symbol name. Then
-    select the symbol in the list. For more information on using the locator,
-    see \l{Searching with the Locator}.
-
-    Press \key Ctrl (\key Cmd on \macos) and click a symbol to move directly to
-    the definition or the declaration of the symbol. You can also move the
-    cursor on the symbol and press \key {F2}. For more information, see
-    \l{Moving to Symbol Definition or Declaration}.
 */
 
 /*!
@@ -228,7 +375,7 @@
 
     \image qtcreator-locator-customize.webp "Locator preferences"
 
-    For more information, see \l{Creating Locator Filters}.
+    \sa {Creating Locator Filters}, {Edit Code}{How To: Edit Code}, {Edit Mode}
 */
 
 /*!
@@ -239,25 +386,151 @@
 
     \title Perform calculations
 
-    Open the \uicontrol Locator with \key {Ctrl+K} and type =, followed by a space.
-    You can now do basic calculations, with options to copy the results to the clipboard
-    by navigating through the entries and pressing \key {Enter}.
+    To do basic calculations in the locator:
 
-    \image qtcreator-locator.webp "List of locator filters"
+    \list 1
+        \li Press \key {Ctrl+K} (\key {Cmd+K} on \macos) to activate the locator.
+        \li Enter \c =, followed by a space.
+        \image qtcreator-locator.webp {List of locator filters}
+        \li Perform calculations.
+    \endlist
 
-    For more information, see \l{Executing JavaScript}.
+    Navigate through the entries and press \key {Enter} to copy the results to
+    the clipboard
+
+    \section1 Built-in functions
+
+    Beside simple mathematical operations, like ((1 + 2) * 3), the following
+    built-in functions exist:
+
+    \table
+        \header
+            \li  Function
+            \li  Purpose
+        \row
+            \li  abs(x)
+            \li  Returns the absolute value of x
+        \row
+            \li  acos(x)
+            \li  Returns the arccosine of x, in radians
+        \row
+            \li  asin(x)
+            \li  Returns the arcsine of x, in radians
+        \row
+            \li  atan(x)
+            \li  Returns the arctangent of x, in radians
+        \row
+            \li  atan2(x, y)
+            \li  Returns the arctangent of the quotient of its arguments
+        \row
+            \li  bin(x)
+            \li  Returns the binary representation of x
+        \row
+            \li  ceil(x)
+            \li  Returns the value of x rounded up to the next integer
+        \row
+            \li  cos(x)
+            \li  Returns the cosine of x (x is in radians)
+        \row
+            \li  exp(x)
+            \li  Returns the value of E to the power of x
+        \row
+            \li  e()
+            \li  Returns Euler's number E (2.71828...)
+        \row
+            \li  floor(x)
+            \li  Returns the value of x rounded down to the next integer
+        \row
+            \li  hex(x)
+            \li  Returns the hexadecimal representation of x
+        \row
+            \li  log(x)
+            \li  Returns the natural logarithm (base E) of x
+        \row
+            \li  max([value1[, value2[, ...]]])
+            \li  Returns the highest value of the given numbers
+        \row
+            \li  min([value1[, value2[, ...]]])
+            \li  Returns the lowest value of the given numbers
+        \row
+            \li  oct(x)
+            \li  Returns the octal representation of x
+        \row
+            \li  pi()
+            \li  Returns PI (3.14159...)
+        \row
+            \li  pow(x, y)
+            \li  Returns the value of x to the power of y
+        \row
+            \li  random()
+            \li  Returns a random number between 0 and 1
+        \row
+            \li  round(x)
+            \li  Returns the value of x rounded to the next integer
+        \row
+            \li  sin(x)
+            \li  Returns the sine of x (x is in radians)
+        \row
+            \li  sqrt(x)
+            \li  Returns the square root of x
+        \row
+            \li  tan(x)
+            \li  Returns the tangent of x (x is in radians)
+        \endtable
+
+    \sa {Navigate with locator}, {Locator}
 */
 
 /*!
-    \page creator-how-to-jump-to-functions-in-qml-code.html
+    \page creator-how-to-navigate-qml-code.html
     \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-edit
 
-    \title Jump to a function in QML code
+    \title Move in QML code
 
-    Open the \uicontrol Locator with \key {Ctrl+K} and type m, followed by a space.
-    You can now go directly to any QML method in the file.
+    Find QML methods and types, and move to the C++ implementation of a QML type.
+
+    \section1 Locate QML methods
+
+    To locate a QML method:
+
+    \list 1
+        \li Press \key {Ctrl+K} to activate the locator.
+        \li Type m, followed by a space.
+            \image qtcreator-locator-m-filter.webp {The m filter in the locator}
+        \li Double-click a QML method in the list to move to it in the editor.
+    \endlist
+
+    \section1 Find QML types
+
+    To find instances of a QML type in a project, place the cursor on
+    the type and and do one of the following:
+
+    \list
+        \li Press \key {Ctrl+Shift+U}.
+        \li Go to \uicontrol Tools > \uicontrol {QML/JS} >
+            \uicontrol {Find References to Symbol Under Cursor}.
+    \endlist
+
+    \section1 Inspect QML and JavaScript
+
+    To inspect QML and JavaScript properties, methods, and enums, place the
+    cursor over them and go to \uicontrol Tools > \uicontrol {QML/JS} >
+    \uicontrol {Inspect API for Element Under Cursor}.
+
+    \section1 Move between QML and C++
+
+    To move to the C++ implementation of a QML type in the code editor, place the
+    cursor on the type and do one of the following:
+
+    \list
+        \li Press \key F2.
+        \li Go to \uicontrol {Follow Symbol Under Cursor} in the context menu.
+    \endlist
+
+    \sa {Edit Code}{How To: Edit Code}, {Clangd}, {Edit Mode},
+    {Navigate with locator}
 */
 
 /*!
@@ -301,19 +574,8 @@
     \QC stores copied text in clipboard history. To retrieve clips from the
     history, press \key {Ctrl+Shift+V} until the clip appears.
     The number of clips in the history is fixed to 10.
-*/
 
-/*!
-    \page creator-how-to-sort-lines-alphabetically.html
-    \previouspage creator-how-tos.html
-
-    \ingroup creator-how-to-edit
-
-    \title Sort lines alphabetically
-
-    To sort selected lines alphabetically, select \uicontrol Edit >
-    \uicontrol Advanced > \uicontrol {Sort Selected Lines} or press
-    \key {Alt+Shift+S} (or \key Ctrl+Shift+S on \macos).
+    \sa {Edit Code}{How To: Edit Code}, {Edit Mode}
 */
 
 /*!
@@ -322,16 +584,18 @@
 
     \ingroup creator-how-to-edit
 
-    \title Enclose selected code in curly braces, parentheses, or double quotes
+    \title Enclose code in brackets or quotes
 
-    When you have selected code and enter one of the following opening
-    characters, the matching closing character is added automatically
-    at the end of the selection:
+    Select code and enter one of the following opening characters to add
+    the matching closing character at the end of the selection:
 
     \list
-        \li {
         \li (
+        \li {
+        \li [
+        \li <
         \li "
+        \li '
     \endlist
 
     To specify whether to automatically insert matching characters,
@@ -339,7 +603,7 @@
 
     \image qtcreator-preferences-texteditor-completion.webp "Completion preferences"
 
-    \sa {Completing Code}
+    \sa {Completion}, {Edit Code}{How To: Edit Code}, {Edit Mode}
 */
 
 /*!
@@ -348,26 +612,24 @@
 
     \ingroup creator-how-to-edit
 
-    \title Select the enclosing block in C++
+    \title Select the current code block
 
-    Press \key {Ctrl+U}.
-*/
+    To select the current block of C++ code in the code editor, press
+    \key Ctrl+U.
 
-/*!
-    \page creator-how-to-add-code-snippets.html
-    \previouspage creator-how-tos.html
+    Press \key Ctrl+U a second time to extend the selection to the parent block.
 
-    \ingroup creator-how-to-edit
+    To undo the last selection, press \key {Ctrl+Alt+Shift+U}.
 
-    \title Add code snippets to the auto-complete menu
+    \section1 Turn on smart block selection
 
-    Add, modify, and remove snippets in the snippet editor.
-    To open the editor, select \preferences > \uicontrol {Text Editor} >
-    \uicontrol Snippets.
+    To turn on smart block selection, go to \preferences
+    > \uicontrol {Text Editor} > \uicontrol Behavior and select
+    \uicontrol {Enable smart selection changing}.
 
-    \image qtcreator-snippet-modifiers.png "Snippets preferences"
+    \image qtcreator-preferences-texteditor-behavior.webp {Text Editor Behavior preferences}
 
-    For more information, see \l {Adding and Editing Snippets}.
+    \sa {Edit Code}{How To: Edit Code}, {Edit Mode}
 */
 
 /*!
@@ -420,34 +682,43 @@
 
 /*!
     \page creator-how-to-search-and-replace-using-regexp.html
-    \previouspage creator-how-to-move-between-open-files.html
+    \previouspage creator-how-tos.html
 
-    \ingroup creator-how-to-edit
+    \ingroup creator-how-to-search
 
-    \title Search and replace across files using a regular expression
+    \title Search and replace using a regular expression
 
-    As an example, say you want to replace equality checks (\c {foo == bar})
-    with a function (\c {foo.equals(bar)}):
+    Search and replace across files using regular expressions in the
+    \uicontrol {Search Results} view.
+
+    Regular expressions used in \QC are modeled on Perl regular expressions.
+    For more information about using regular expressions, see
+    \l QRegularExpression.
+
+    For example, to replace equality checks (\c {foo == bar}) with a function
+    (\c {foo.equals(bar)}):
 
     \list 1
-    \li Ensure that any work you have done is committed to version control,
-        as the changes cannot be undone.
-    \li Press \key {Ctrl+Shift+F} to bring up the \uicontrol {Advanced Find}
-        form.
-    \li Change the scope to whatever is appropriate for your search.
-    \li Under the \uicontrol {Search for} text field, select
-        the \uicontrol {Use regular expressions} check box.
-    \li Enter the following text in the \uicontrol {Search for} text field:
+    \li Commit your changes to version control, as you cannot undo the
+        replace action.
+    \li Press \key {Ctrl+Shift+F} or go to \uicontrol Edit >
+        \uicontrol {Find/Replace} > \uicontrol {Advanced Find} >
+        \uicontrol {Open Advanced Find} to open \uicontrol {Search Results}.
+        \image qtcreator-search-reg-exp.webp {Regular expression in Search Results view}
+    \li In \uicontrol Scope, select whatever is appropriate for your search.
+    \li Select \uicontrol {Use regular expressions}.
+    \li Enter the following text in \uicontrol {Search for}:
         \badcode
         if \((.*) == (.*)\)
         \endcode
-    \li Press \uicontrol {Search & Replace} to see a list of search results.
-    \li In the \uicontrol {Replace with} text field, enter the following text:
+    \li Select \uicontrol {Search & Replace} to see a list of search results.
+        \image qtcreator-search-results-reg-exp.webp {Search results for the regular expression}
+    \li In \uicontrol {Replace with}, enter the following text:
         \badcode
         if (\1.strictlyEquals(\2))
         \endcode
-    \li Press \uicontrol Replace to replace all instances of the text.
+    \li Select \uicontrol Replace to replace all instances of the text.
     \endlist
 
-    For more information, see \l {Advanced Search}.
+    \sa {Edit Code}{How To: Edit Code}, {Search}{How To: Search}, {Edit Mode}
 */

@@ -29,11 +29,7 @@ public:
 
         setUsePortsGatherer(isCppDebugging(), isQmlDebugging());
         addQmlServerInferiorCommandLineArgumentIfNeeded();
-
-        auto debugServer = new DebugServerRunner(runControl, portsGatherer());
-        debugServer->setEssential(true);
-
-        addStartDependency(debugServer);
+        setUseDebugServer({}, true, true);
 
         setStartMode(AttachToRemoteServer);
         setCloseMode(KillAndExitMonitorAtClose);
@@ -54,25 +50,17 @@ public:
     {
         setId("RemoteLinuxQmlToolingSupport");
 
-        auto portsGatherer = new PortsGatherer(runControl);
-        addStartDependency(portsGatherer);
-
-        // The ports gatherer can safely be stopped once the process is running, even though it has to
-        // be started before.
-        addStopDependency(portsGatherer);
+        runControl->requestQmlChannel();
 
         auto runworker = runControl->createWorker(QmlDebug::runnerIdForRunMode(runControl->runMode()));
         runworker->addStartDependency(this);
         addStopDependency(runworker);
 
-        setStartModifier([this, runControl, portsGatherer, runworker] {
-            const QUrl serverUrl = portsGatherer->findEndPoint();
-            runworker->recordData("QmlServerUrl", serverUrl);
-
+        setStartModifier([this, runControl] {
             QmlDebug::QmlDebugServicesPreset services = QmlDebug::servicesForRunMode(runControl->runMode());
 
             CommandLine cmd = commandLine();
-            cmd.addArg(QmlDebug::qmlDebugTcpArguments(services, serverUrl));
+            cmd.addArg(QmlDebug::qmlDebugTcpArguments(services, qmlChannel()));
             setCommandLine(cmd);
         });
     }
@@ -89,29 +77,48 @@ static const QList<Id> supportedRunConfigs()
     };
 }
 
-RemoteLinuxRunWorkerFactory::RemoteLinuxRunWorkerFactory()
+class RemoteLinuxRunWorkerFactory final : public RunWorkerFactory
 {
-    setProduct<SimpleTargetRunner>();
-    addSupportedRunMode(ProjectExplorer::Constants::NORMAL_RUN_MODE);
-    addSupportedDeviceType(Constants::GenericLinuxOsType);
-    setSupportedRunConfigs(supportedRunConfigs());
-}
+public:
+    RemoteLinuxRunWorkerFactory()
+    {
+        setProduct<SimpleTargetRunner>();
+        addSupportedRunMode(ProjectExplorer::Constants::NORMAL_RUN_MODE);
+        addSupportedDeviceType(Constants::GenericLinuxOsType);
+        setSupportedRunConfigs(supportedRunConfigs());
+    }
+};
 
-RemoteLinuxDebugWorkerFactory::RemoteLinuxDebugWorkerFactory()
+class RemoteLinuxDebugWorkerFactory final : public ProjectExplorer::RunWorkerFactory
 {
-    setProduct<RemoteLinuxDebugWorker>();
-    addSupportedRunMode(ProjectExplorer::Constants::DEBUG_RUN_MODE);
-    addSupportedDeviceType(Constants::GenericLinuxOsType);
-    setSupportedRunConfigs(supportedRunConfigs());
-}
+public:
+    RemoteLinuxDebugWorkerFactory()
+    {
+        setProduct<RemoteLinuxDebugWorker>();
+        addSupportedRunMode(ProjectExplorer::Constants::DEBUG_RUN_MODE);
+        addSupportedDeviceType(Constants::GenericLinuxOsType);
+        setSupportedRunConfigs(supportedRunConfigs());
+    }
+};
 
-RemoteLinuxQmlToolingWorkerFactory::RemoteLinuxQmlToolingWorkerFactory()
+class RemoteLinuxQmlToolingWorkerFactory final : public ProjectExplorer::RunWorkerFactory
 {
-    setProduct<RemoteLinuxQmlToolingSupport>();
-    addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
-    addSupportedRunMode(ProjectExplorer::Constants::QML_PREVIEW_RUN_MODE);
-    addSupportedDeviceType(Constants::GenericLinuxOsType);
-    setSupportedRunConfigs(supportedRunConfigs());
+public:
+    RemoteLinuxQmlToolingWorkerFactory()
+    {
+        setProduct<RemoteLinuxQmlToolingSupport>();
+        addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
+        addSupportedRunMode(ProjectExplorer::Constants::QML_PREVIEW_RUN_MODE);
+        addSupportedDeviceType(Constants::GenericLinuxOsType);
+        setSupportedRunConfigs(supportedRunConfigs());
+    }
+};
+
+void setupRemoteLinuxRunAndDebugSupport()
+{
+    static RemoteLinuxRunWorkerFactory runWorkerFactory;
+    static RemoteLinuxDebugWorkerFactory debugWorkerFactory;
+    static RemoteLinuxQmlToolingWorkerFactory qmlToolingWorkerFactory;
 }
 
 } // RemoteLinux::Internal

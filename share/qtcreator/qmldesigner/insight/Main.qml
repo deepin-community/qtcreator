@@ -3,9 +3,8 @@
 
 import QtQuick
 import QtQuick.Controls
-import QtQuickDesignerTheme 1.0
-import HelperWidgets 2.0 as HelperWidgets
-import StudioControls 1.0 as StudioControls
+import HelperWidgets as HelperWidgets
+import StudioControls as StudioControls
 import StudioTheme as StudioTheme
 
 Rectangle {
@@ -55,7 +54,7 @@ Rectangle {
             id: column
             width: root.width
 
-            Section {
+            HelperWidgets.Section {
                 id: trackingSection
                 caption: qsTr("Tracking")
                 anchors.left: parent.left
@@ -166,8 +165,8 @@ Rectangle {
                     }
                 }
             }
-
-            Section {
+/*
+            HelperWidgets.Section {
                 id: predefinedSection
                 caption: qsTr("Predefined Categories")
                 anchors.left: parent.left
@@ -227,7 +226,7 @@ Rectangle {
                             }
                         }
 
-                        Item { width: 1; height: 4}
+                        Item { width: 1; height: 4 }
 
                         Repeater {
                             model: insightModel
@@ -268,7 +267,7 @@ Rectangle {
                 }
             }
 
-            Section {
+            HelperWidgets.Section {
                 id: customSection
                 caption: qsTr("Custom Categories")
                 anchors.left: parent.left
@@ -325,7 +324,7 @@ Rectangle {
                             }
                         }
 
-                        Item { width: 1; height: 4}
+                        Item { width: 1; height: 4 }
 
                         Repeater {
                             id: customRepeater
@@ -387,7 +386,7 @@ Rectangle {
                             }
                         }
 
-                        Item { width: 1; height: 4}
+                        Item { width: 1; height: 4 }
 
                         Row {
                             spacing: StudioTheme.Values.checkBoxSpacing
@@ -412,6 +411,7 @@ Rectangle {
                     }
                 }
             }
+*/
         }
     }
 }

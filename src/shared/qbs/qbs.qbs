@@ -3,28 +3,22 @@ Project {
     qbsSearchPaths: ["qbs-resources"]
     property bool withCode: true
     property bool withDocumentation: true
-    property bool withExamples: false
     property bool withTests: withCode
     property stringList autotestArguments: []
     property stringList autotestWrapper: []
 
     references: [
         "docker/docker.qbs",
+        "examples/examples.qbs",
         "share/share.qbs",
         "scripts/scripts.qbs",
+        "tutorial/tutorial.qbs",
     ]
 
     SubProject {
         filePath: "doc/doc.qbs"
         Properties {
             condition: parent.withDocumentation
-        }
-    }
-
-    SubProject {
-        filePath: "examples/examples.qbs"
-        Properties {
-            condition: parent.withExamples
         }
     }
 
@@ -45,11 +39,6 @@ Project {
     Product {
         name: "version"
         files: ["VERSION"]
-    }
-
-    Product {
-        name: "cmake project files for qbs"
-        files: ["**/CMakeLists.txt"]
     }
 
     Product {

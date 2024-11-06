@@ -43,6 +43,7 @@ public:
     QAction *deleteAction() const;
     QAction *selectAllAction() const;
     QAction *openParentDiagramAction() const;
+    QAction *toggleViewFilterAction() const;
     QAction *synchronizeBrowserAction() const;
     QAction *exportDiagramAction() const;
     QAction *exportSelectedElementsAction() const;
@@ -56,10 +57,14 @@ private:
     void onEditProperties();
     void onEditItem();
 
-    Core::Command *registerCommand(const Utils::Id &id, void (ModelEditor::*function)(),
-                                   const Core::Context &context, const QString &title = QString(),
-                                   const QKeySequence &keySequence = QKeySequence(),
-                                   const QIcon &icon = QIcon());
+    Core::Command *registerCommand(
+        const Utils::Id &id,
+        void (ModelEditor::*function)(),
+        const Core::Context &context,
+        const QString &title = QString(),
+        const QKeySequence &keySequence = QKeySequence(),
+        const QIcon &icon = QIcon(),
+        const QString &toolTip = {});
 
 private:
     ActionHandlerPrivate *d;

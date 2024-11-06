@@ -1135,12 +1135,8 @@ Dodatne dokumente o GTest filtrima potraži u Google Test dokumentaciji.</transl
         <translation>Deaktiviraj rukovatelja urušivanja tijekom uklanjanja grešaka</translation>
     </message>
     <message>
-        <source>XML output is recommended, because it avoids parsing issues, while plain text is more human readable.
-
-Warning: Plain text misses some information, such as duration.</source>
-        <translation>Preporuča se XML izlaz, jer izbjegava probleme s raščlanjivanjem, dok je običan tekst čitljiviji za čitanje.
-
-Upozorenje: Običan tekst propušta neke informacije, kao što je trajanje.</translation>
+        <source>XML output is recommended, because it avoids parsing issues, while plain text is more human readable.&lt;p&gt;Warning: Plain text misses some information, such as duration.</source>
+        <translation>Preporuča se XML izlaz, jer izbjegava probleme s raščlanjivanjem, dok je običan tekst čitljiviji za čitanje.&lt;p&gt;Upozorenje: Običan tekst propušta neke informacije, kao što je trajanje.</translation>
     </message>
     <message>
         <source>Use XML output</source>
@@ -2137,7 +2133,13 @@ Međutim, korištenje opuštenih i proširenih pravila također znači da nije m
     </message>
     <message>
         <source>Executable:</source>
+        <comment>adjective</comment>
         <translation>Izvršavajuća:</translation>
+    </message>
+    <message>
+        <source>Executable:</source>
+        <comment>noun</comment>
+        <translation>Izvršna datoteka:</translation>
     </message>
     <message>
         <source>Symbolic link:</source>
@@ -4546,8 +4548,8 @@ Dodaj, izmijeni i ukloni filtre dokumenata koji određuju skup dokumentacije pri
         </translation>
     </message>
     <message>
-        <source>Cannot start simulator (%1, %2) in current state: %3</source>
-        <translation>Nije moguće pokrenuti simulatora (%1, %2) u trenutačnom stanju: %3</translation>
+        <source>Cannot start simulator (%1, %2) in current state: %3.</source>
+        <translation>Nije moguće pokrenuti simulatora (%1, %2) u trenutačnom stanju: %3.</translation>
     </message>
     <message>
         <source>simulator start</source>
@@ -8029,7 +8031,7 @@ In addition, Shift+Enter inserts an escape character at the cursor position and 
         <translation>Automatski rastavi znakovne nizove</translation>
     </message>
     <message>
-        <source>&amp;Automatically insert matching characters</source>
+        <source>&amp;Automatically Insert Matching Characters</source>
         <translation>&amp;Automatski umetni poklapajuće znakove</translation>
     </message>
     <message>
@@ -8197,7 +8199,7 @@ In addition, Shift+Enter inserts an escape character at the cursor position and 
         <translation>Označi promjene u &amp;tekstu</translation>
     </message>
     <message>
-        <source>Line annotations</source>
+        <source>Line Annotations</source>
         <translation>Napomene za retke</translation>
     </message>
     <message>
@@ -8447,7 +8449,7 @@ Utječe na uvlačenje neprekinutih redaka.
         <translation>Resetiraj</translation>
     </message>
     <message>
-        <source>Scanning scope</source>
+        <source>Scanning Scope</source>
         <translation>Raspon pretrage</translation>
     </message>
     <message>
@@ -13225,9 +13227,11 @@ The minimum API level required by the kit is %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>
-Uninstalling the installed package may solve the issue.
-Do you want to uninstall the existing package?</source>
+        <source>Uninstalling the installed package may solve the issue.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Do you want to uninstall the existing package?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -15308,8 +15312,8 @@ Check the test environment.</source>
         <translation>Python uređivač</translation>
     </message>
     <message>
-        <source>Qt Designer</source>
-        <translation>Qt Designer</translation>
+        <source>Qt Widgets Designer</source>
+        <translation>Qt Widgets Designer</translation>
     </message>
     <message>
         <source>Qt Linguist</source>
@@ -20904,8 +20908,8 @@ Rebuilding the project might help.</source>
         <translation>Alt+Shift+R</translation>
     </message>
     <message>
-        <source>About Qt Designer Plugins...</source>
-        <translation>O Qt Designer dodacima …</translation>
+        <source>About Qt Widgets Designer Plugins...</source>
+        <translation>O Qt Widgets Designer dodacima …</translation>
     </message>
     <message>
         <source>Preview in</source>
@@ -27567,43 +27571,35 @@ to project &quot;%2&quot;.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Path &quot;%1&quot; does not exist when checking Json wizard search paths.
-</source>
+        <source>Path &quot;%1&quot; does not exist when checking JSON wizard search paths.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Checking &quot;%1&quot; for %2.
-</source>
+        <source>Checking &quot;%1&quot; for %2.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>* Failed to parse &quot;%1&quot;:%2:%3: %4
-</source>
+        <source>* Failed to parse &quot;%1&quot;:%2:%3: %4</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>* Did not find a JSON object in &quot;%1&quot;.
-</source>
+        <source>* Did not find a JSON object in &quot;%1&quot;.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>* Configuration found and parsed.
-</source>
+        <source>* Configuration found and parsed.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>* Version %1 not supported.
-</source>
+        <source>* Version %1 not supported.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>* Failed to create: %1
-</source>
+        <source>* Failed to create: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>JsonWizard: &quot;%1&quot; not found
-</source>
+        <source>JsonWizard: &quot;%1&quot; not found.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -303,8 +303,7 @@ void GraphicsView::updateSelection()
     std::vector<CurveItem *> preservedItems = m_scene->takePinnedItems();
     std::vector<CurveItem *> deleteItems;
     for (auto *curve : m_model->selectedCurves()) {
-        auto finder = [curve](CurveItem *item) { return curve->id() == item->id(); };
-        auto iter = std::find_if(preservedItems.begin(), preservedItems.end(), finder);
+        auto iter = std::ranges::find(preservedItems, curve->id(), &CurveItem::id);
         if (iter == preservedItems.end())
             preservedItems.push_back(curve);
         else
@@ -410,7 +409,7 @@ void GraphicsView::contextMenuEvent(QContextMenuEvent *event)
     if (event->modifiers() != Qt::NoModifier)
         return;
 
-    auto openStyleEditor = [this]() { m_dialog.show(); };
+    auto openStyleEditor = [this] { m_dialog.show(); };
 
     QMenu menu;
 

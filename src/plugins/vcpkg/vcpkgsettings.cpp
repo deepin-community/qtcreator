@@ -35,12 +35,14 @@ VcpkgSettings::VcpkgSettings()
 
     vcpkgRoot.setSettingsKey("VcpkgRoot");
     vcpkgRoot.setExpectedKind(PathChooser::ExistingDirectory);
-    FilePath defaultPath = Environment::systemEnvironment().searchInPath(Constants::VCPKG_COMMAND)
-                               .parentDir();
+    FilePath defaultPath = FilePath::fromUserInput(
+        qtcEnvironmentVariable(Constants::ENVVAR_VCPKG_ROOT));
+
     if (!defaultPath.isDir())
-        defaultPath = FilePath::fromUserInput(qtcEnvironmentVariable(Constants::ENVVAR_VCPKG_ROOT));
+        defaultPath = Environment::systemEnvironment().searchInPath(Constants::VCPKG_COMMAND).parentDir();
+
     if (defaultPath.isDir())
-        vcpkgRoot.setDefaultValue(defaultPath.toUserOutput());
+        vcpkgRoot.setDefaultPathValue(defaultPath);
 
     connect(this, &AspectContainer::applied, this, &VcpkgSettings::setVcpkgRootEnvironmentVariable);
 

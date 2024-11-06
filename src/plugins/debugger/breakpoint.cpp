@@ -207,7 +207,8 @@ QString BreakpointParameters::toString() const
         ts << " [pending]";
     if (!functionName.isEmpty())
         ts << " Function: " << functionName;
-    ts << " Hit: " << hitCount << " times";
+    if (hitCount)
+        ts << " Hit: " << *hitCount << " times";
     ts << ' ';
 
     return result;
@@ -271,6 +272,7 @@ void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::F
     QTC_ASSERT(bkpt.isValid(), return);
 
     QString originalLocation;
+    QString reportedLocation;
     QString file;
     QString fullName;
 
@@ -307,7 +309,7 @@ void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::F
             // Any content here would be interesting only if we did accept
             // spontaneously appearing breakpoints (user using gdb commands).
             if (file.isEmpty())
-                file = child.data();
+                reportedLocation = child.data();
             pending = true;
         } else if (child.hasName("at")) {
             // Happens with gdb 6.4 symbianelf.
@@ -369,6 +371,9 @@ void BreakpointParameters::updateFromGdbOutput(const GdbMi &bkpt, const Utils::F
     }
     if (!name.isEmpty())
         fileName = fileRoot.withNewPath(name);
+
+    if (fileName.isEmpty())
+        updateLocation(reportedLocation);
 
     if (fileName.isEmpty())
         updateLocation(originalLocation);

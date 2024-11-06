@@ -40,6 +40,7 @@
 import qbs.Environment
 import qbs.File
 import qbs.FileInfo
+import qbs.Host
 import qbs.ModUtils
 import qbs.PkgConfig
 import qbs.ProviderUtils
@@ -50,30 +51,38 @@ import qbs.TextFile
 import "Qt/setup-qt.js" as SetupQt
 
 ModuleProvider {
-    property string executableFilePath
+    property stringList executableNames: ["pkgconf", "pkg-config"]
+    property string executableFilePath: pkgConfigProbe.filePath
     property stringList extraPaths
     property stringList libDirs
     property bool staticMode: false
+    property bool definePrefix: Host.os().includes("windows")
 
     // We take the sysroot default from qbs.sysroot, except for Xcode toolchains, where
     // the sysroot points into the Xcode installation and does not contain .pc files.
     property path sysroot: qbs.toolchain && qbs.toolchain.includes("xcode")
                            ? undefined : qbs.sysroot
 
-    property bool mergeDependencies: false
-    PropertyOptions {
-        name: "mergeDependencies"
-        removalVersion: "2.3.0"
+    Probes.BinaryProbe {
+        id: pkgConfigProbe
+        condition: !executableFilePath
+        names: executableNames
     }
 
     Probes.QbsPkgConfigProbe {
         id: theProbe
-        // TODO: without explicit 'parent' we do not have access to the fake "qbs" scope
-        _executableFilePath: parent.executableFilePath
-        _extraPaths: parent.extraPaths
-        _sysroot: parent.sysroot
-        _libDirs: parent.libDirs
-        _staticMode: parent.staticMode
+        _executableFilePath: executableFilePath
+        _extraPaths: extraPaths
+        _sysroot: sysroot
+        _libDirs: libDirs
+        _staticMode: staticMode
+        _definePrefix: definePrefix
+    }
+
+    Probes.QmakeProbe {
+        id: qmakeProbe
+        condition: moduleName.startsWith("Qt") && theProbe.qmakePaths
+        qmakePaths: theProbe.qmakePaths
     }
 
     isEager: false
@@ -139,10 +148,8 @@ ModuleProvider {
         var outputDir = FileInfo.joinPaths(outputBaseDir, "modules");
         File.makePath(outputDir);
 
-        // TODO: ponder how we can solve forward mapping with Packages so we can fill deps
         var moduleMapping = {
-            "protobuf": "protobuflib",
-            "grpc++": "grpcpp"
+            "protobuf": "protobuflib"
         }
         var reverseMapping = {}
         for (var key in moduleMapping)
@@ -150,14 +157,14 @@ ModuleProvider {
 
         if (moduleName.startsWith("Qt")) {
             function setupQt(packageName, qtInfos) {
-                if (qtInfos === undefined)
+                if (qtInfos === undefined || qtInfos.length === 0)
                     return [];
                 var qtProviderDir = FileInfo.joinPaths(path, "Qt");
                 return SetupQt.doSetup(packageName, qtInfos, outputBaseDir, qtProviderDir);
             }
 
             if (!sysroot) {
-                return setupQt(moduleName, theProbe.qtInfos);
+                return setupQt(moduleName, qmakeProbe.qtInfos);
             }
             return [];
         }

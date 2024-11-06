@@ -87,8 +87,10 @@ void SnapConfiguration::resetDefaults()
 
 void SnapConfiguration::hideCursor()
 {
-    if (QGuiApplication::overrideCursor())
+    if (m_cursorHidden)
         return;
+
+    m_cursorHidden = true;
 
     QGuiApplication::setOverrideCursor(QCursor(Qt::BlankCursor));
 
@@ -98,8 +100,10 @@ void SnapConfiguration::hideCursor()
 
 void SnapConfiguration::restoreCursor()
 {
-    if (!QGuiApplication::overrideCursor())
+    if (!m_cursorHidden)
         return;
+
+    m_cursorHidden = false;
 
     QGuiApplication::restoreOverrideCursor();
 
@@ -109,7 +113,7 @@ void SnapConfiguration::restoreCursor()
 
 void SnapConfiguration::holdCursorInPlace()
 {
-    if (!QGuiApplication::overrideCursor())
+    if (!m_cursorHidden)
         return;
 
     if (QWindow *w = QGuiApplication::focusWindow())
@@ -235,7 +239,7 @@ void SnapConfiguration::setScaleInt(double value)
 
 void SnapConfiguration::asyncClose()
 {
-    QTimer::singleShot(0, this, [this]() {
+    QTimer::singleShot(0, this, [this] {
         if (!m_configDialog.isNull() && m_configDialog->isVisible())
             m_configDialog->close();
     });

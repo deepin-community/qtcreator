@@ -3,32 +3,32 @@
 
 #include "qmlproject.h"
 
-#include <qtsupport/baseqtversion.h>
-#include <qtsupport/qtkitaspect.h>
-#include <qtsupport/qtsupportconstants.h>
-
-#include <QTimer>
-
-#include <projectexplorer/projectexplorerconstants.h>
-#include <projectexplorer/projectmanager.h>
-#include <projectexplorer/target.h>
+#include "qmlprojectconstants.h"
+#include "qmlprojectmanagertr.h"
 
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/icore.h>
 
-#include "projectexplorer/devicesupport/idevice.h"
-#include "qmlprojectconstants.h"
-#include "qmlprojectmanagerconstants.h"
-#include "qmlprojectmanagertr.h"
-#include "utils/algorithm.h"
+#include <projectexplorer/devicesupport/idevice.h>
+#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/kitmanager.h>
+#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectmanager.h>
+#include <projectexplorer/target.h>
+
 #include <qmljs/qmljsmodelmanagerinterface.h>
+
+#include <qtsupport/baseqtversion.h>
+#include <qtsupport/qtkitaspect.h>
+#include <qtsupport/qtsupportconstants.h>
 
 #include <texteditor/textdocument.h>
 
 #include <utils/algorithm.h>
 #include <utils/infobar.h>
-#include <utils/process.h>
+#include <utils/mimeconstants.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QDebug>
@@ -44,20 +44,28 @@ using namespace Utils;
 namespace QmlProjectManager {
 
 QmlProject::QmlProject(const Utils::FilePath &fileName)
-    : Project(QString::fromLatin1(Constants::QMLPROJECT_MIMETYPE), fileName)
+    : Project(Utils::Constants::QMLPROJECT_MIMETYPE, fileName)
 {
     setId(QmlProjectManager::Constants::QML_PROJECT_ID);
     setProjectLanguages(Core::Context(ProjectExplorer::Constants::QMLJS_LANGUAGE_ID));
     setDisplayName(fileName.completeBaseName());
 
     setNeedsBuildConfigurations(false);
-    setBuildSystemCreator([](Target *t) { return new QmlBuildSystem(t); });
+    setBuildSystemCreator<QmlBuildSystem>();
 
     if (Core::ICore::isQtDesignStudio()) {
-        if (allowOnlySingleProject()) {
+        if (allowOnlySingleProject() && !fileName.endsWith(Constants::fakeProjectName)) {
             EditorManager::closeAllDocuments();
             ProjectManager::closeAllProjects();
         }
+    }
+
+    if (fileName.endsWith(Constants::fakeProjectName)) {
+        auto uiFile = fileName.toString();
+        uiFile.remove(Constants::fakeProjectName);
+        auto parentDir = Utils::FilePath::fromString(uiFile).parentDir();
+
+        setDisplayName(parentDir.completeBaseName());
     }
 
     connect(this, &QmlProject::anyParsingFinished, this, &QmlProject::parsingFinished);
@@ -177,13 +185,13 @@ Tasks QmlProject::projectIssues(const Kit *k) const
         result.append(createProjectTask(Task::TaskType::Warning, Tr::tr("No Qt version set in kit.")));
 
     IDevice::ConstPtr dev = DeviceKitAspect::device(k);
-    if (dev.isNull())
+    if (!dev)
         result.append(createProjectTask(Task::TaskType::Error, Tr::tr("Kit has no device.")));
 
     if (version && version->qtVersion() < QVersionNumber(5, 0, 0))
         result.append(createProjectTask(Task::TaskType::Error, Tr::tr("Qt version is too old.")));
 
-    if (dev.isNull() || !version)
+    if (!dev || !version)
         return result; // No need to check deeper than this
 
     if (dev->type() == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE) {
@@ -236,6 +244,19 @@ bool QmlProject::allowOnlySingleProject()
     QtcSettings *settings = Core::ICore::settings();
     const Key key = "QML/Designer/AllowMultipleProjects";
     return !settings->value(key, false).toBool();
+}
+
+bool QmlProject::isMCUs()
+{
+    if (!ProjectExplorer::ProjectManager::startupTarget())
+        return false;
+
+    const QmlProjectManager::QmlBuildSystem *buildSystem
+        = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
+            ProjectExplorer::ProjectManager::startupTarget()->buildSystem());
+    QTC_ASSERT(buildSystem, return false);
+
+    return buildSystem && buildSystem->qtForMCUs();
 }
 
 } // namespace QmlProjectManager

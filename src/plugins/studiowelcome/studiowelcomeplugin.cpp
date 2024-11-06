@@ -7,7 +7,6 @@
 #include "qdsnewdialog.h"
 
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/dialogs/restartdialog.h>
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/helpmanager.h>
@@ -30,6 +29,8 @@
 #include <qtsupport/baseqtversion.h>
 #include <qtsupport/qtkitaspect.h>
 
+#include <qmldesignerbase/qmldesignerbaseplugin.h>
+
 #include <qmldesigner/components/componentcore/theme.h>
 #include <qmldesigner/dynamiclicensecheck.h>
 #include <qmldesigner/qmldesignerconstants.h>
@@ -39,6 +40,7 @@
 
 #include <utils/appinfo.h>
 #include <utils/checkablemessagebox.h>
+#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/icon.h>
 #include <utils/infobar.h>
@@ -67,19 +69,13 @@
 #include <algorithm>
 #include <memory>
 
+using namespace Core;
 using namespace ProjectExplorer;
 using namespace Utils;
+using namespace Core;
 
 namespace StudioWelcome {
 namespace Internal {
-
-static bool useNewWelcomePage()
-{
-    QtcSettings *settings = Core::ICore::settings();
-    const Key newWelcomePageEntry = "QML/Designer/NewWelcomePage"; //entry from qml settings
-
-    return settings->value(newWelcomePageEntry, false).toBool();
-}
 
 static void openOpenProjectDialog()
 {
@@ -93,9 +89,7 @@ static void openOpenProjectDialog()
 
 const char DO_NOT_SHOW_SPLASHSCREEN_AGAIN_KEY[] = "StudioSplashScreen";
 
-const char DETAILED_USAGE_STATISTICS[] = "DetailedUsageStatistics";
-const char STATISTICS_COLLECTION_MODE[] = "StatisticsCollectionMode";
-const char NO_TELEMETRY[] = "NoTelemetry";
+const char TELEMETRY_INSIGHT_SETTING[] = "Telemetry";
 const char CRASH_REPORTER_SETTING[] = "CrashReportingEnabled";
 
 QPointer<QQuickView> s_viewWindow = nullptr;
@@ -163,44 +157,24 @@ public:
 
     void setupModel()
     {
-        auto settings = makeUserFeedbackSettings();
-        QVariant value = settings->value(STATISTICS_COLLECTION_MODE);
-        m_usageStatisticEnabled = value.isValid() && value.toString() == DETAILED_USAGE_STATISTICS;
-
+        m_usageStatisticEnabled = Core::ICore::settings()->value(TELEMETRY_INSIGHT_SETTING, false).toBool();
         m_crashReporterEnabled = Core::ICore::settings()->value(CRASH_REPORTER_SETTING, false).toBool();
 
         emit usageStatisticChanged();
         emit crashReporterEnabledChanged();
     }
-
-    Q_INVOKABLE void setCrashReporterEnabled(bool b)
-    {
-        if (m_crashReporterEnabled == b)
-            return;
-
-        Core::ICore::settings()->setValue(CRASH_REPORTER_SETTING, b);
-
-        const QString restartText = tr("The change will take effect after restart.");
-        Core::RestartDialog restartDialog(Core::ICore::dialogParent(), restartText);
-        restartDialog.exec();
-
-        setupModel();
-    }
-
     Q_INVOKABLE void setTelemetryEnabled(bool b)
     {
-        if (m_usageStatisticEnabled == b)
+        if (m_usageStatisticEnabled == b && m_crashReporterEnabled == b)
             return;
 
-        auto settings = makeUserFeedbackSettings();
+        bool restartPending = ICore::askForRestart(tr("The change will take effect after restart."));
 
-        settings->setValue(STATISTICS_COLLECTION_MODE, b ? DETAILED_USAGE_STATISTICS : NO_TELEMETRY);
+        ICore::settings()->setValue(TELEMETRY_INSIGHT_SETTING, b);
+        ICore::settings()->setValue(CRASH_REPORTER_SETTING, b);
 
-        const QString restartText = tr("The change will take effect after restart.");
-        Core::RestartDialog restartDialog(Core::ICore::dialogParent(), restartText);
-        restartDialog.exec();
-
-        setupModel();
+        if (restartPending)
+            ICore::restart();
     }
 
 signals:
@@ -221,12 +195,16 @@ public:
 
     Q_PROPERTY(bool communityVersion MEMBER m_communityVersion NOTIFY communityVersionChanged)
     Q_PROPERTY(bool enterpriseVersion MEMBER m_enterpriseVersion NOTIFY enterpriseVersionChanged)
+    Q_PROPERTY(bool liteDesignerEnabled MEMBER m_liteDesignerEnabled CONSTANT)
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
 
     explicit ProjectModel(QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
+
+    int count() { return ProjectExplorer::ProjectExplorerPlugin::recentProjects().count(); }
 
     Q_INVOKABLE void createProject()
     {
@@ -249,7 +227,7 @@ public:
         const FilePath projectFile = FilePath::fromVariant(
             data(index(row, 0), ProjectModel::FilePathRole));
         if (projectFile.exists()) {
-            const ProjectExplorerPlugin::OpenProjectResult result
+            const OpenProjectResult result
                 = ProjectExplorer::ProjectExplorerPlugin::openProject(projectFile);
             if (!result && !result.alreadyOpen().isEmpty()) {
                 const auto fileToOpen = getMainUiFileWithFallback();
@@ -259,6 +237,33 @@ public:
             };
         }
 
+        delayedResetProjects();
+    }
+
+    Q_INVOKABLE void removeFromRecentProjects(int row)
+    {
+        if (m_blockOpenRecent)
+            return;
+
+        m_blockOpenRecent = true;
+        const FilePath projectFile = FilePath::fromVariant(
+            data(index(row, 0), ProjectModel::FilePathRole));
+
+        if (projectFile.exists())
+            ProjectExplorer::ProjectExplorerPlugin::removeFromRecentProjects(projectFile);
+
+        resetProjects();
+    }
+
+    Q_INVOKABLE void clearRecentProjects()
+    {
+        if (m_blockOpenRecent)
+            return;
+
+        m_blockOpenRecent = true;
+
+        ProjectExplorer::ProjectExplorerPlugin::clearRecentProjects();
+
         resetProjects();
     }
 
@@ -266,7 +271,8 @@ public:
 
     Q_INVOKABLE void showHelp()
     {
-        QDesktopServices::openUrl(QUrl("qthelp://org.qt-project.qtdesignstudio/doc/index.html"));
+        QDesktopServices::openUrl(
+            QUrl("qthelp://org.qt-project.qtdesignstudio/doc/studio-getting-started.html"));
     }
 
     Q_INVOKABLE void openExample(const QString &examplePath,
@@ -315,12 +321,42 @@ public:
         Core::EditorManager::openEditor(qmlFile);
     }
 
+    Q_INVOKABLE bool exampleVersionOk(const QString &exampleVersion)
+    {
+        if (exampleVersion.isEmpty())
+            return true;
+
+        // Split versions into parts (major, minor, patch)
+        QStringList qdsVersionParts = QCoreApplication::applicationVersion().split('.');
+        QStringList exampleVersionParts = exampleVersion.split('.');
+
+        // Fill missing parts with zeros
+        while (qdsVersionParts.size() < 3)
+            qdsVersionParts.append("0");
+
+        while (exampleVersionParts.size() < 3)
+            exampleVersionParts.append("0");
+
+        int qdsMajor = qdsVersionParts.at(0).toInt();
+        int qdsMinor = qdsVersionParts.at(1).toInt();
+        int qdsPatch = qdsVersionParts.at(2).toInt();
+
+        int exMajor = exampleVersionParts.at(0).toInt();
+        int exMinor = exampleVersionParts.at(1).toInt();
+        int exPatch = exampleVersionParts.at(2).toInt();
+
+        return QT_VERSION_CHECK(exMajor, exMinor, exPatch)
+               <= QT_VERSION_CHECK(qdsMajor, qdsMinor, qdsPatch);
+    }
+
 public slots:
     void resetProjects();
+    void delayedResetProjects();
 
 signals:
     void communityVersionChanged();
     void enterpriseVersionChanged();
+    void countChanged();
 
 private:
     void setupVersion();
@@ -328,6 +364,7 @@ private:
     bool m_communityVersion = true;
     bool m_enterpriseVersion = false;
     bool m_blockOpenRecent = false;
+    bool m_liteDesignerEnabled = false;
 };
 
 void ProjectModel::setupVersion()
@@ -335,6 +372,7 @@ void ProjectModel::setupVersion()
     QmlDesigner::FoundLicense license = QmlDesigner::checkLicense();
     m_communityVersion = license == QmlDesigner::FoundLicense::community;
     m_enterpriseVersion = license == QmlDesigner::FoundLicense::enterprise;
+    m_liteDesignerEnabled = QmlDesigner::QmlDesignerBasePlugin::isLiteModeEnabled();
 }
 
 ProjectModel::ProjectModel(QObject *parent)
@@ -343,7 +381,9 @@ ProjectModel::ProjectModel(QObject *parent)
     connect(ProjectExplorer::ProjectExplorerPlugin::instance(),
             &ProjectExplorer::ProjectExplorerPlugin::recentProjectsChanged,
             this,
-            &ProjectModel::resetProjects);
+            &ProjectModel::delayedResetProjects);
+
+    connect(this, &QAbstractListModel::modelReset, this, &ProjectModel::countChanged);
 
     setupVersion();
 }
@@ -410,13 +450,13 @@ static QString tags(const FilePath &projectFilePath)
     const bool isQt6 = data.contains("qt6Project: true");
     const bool isMcu = data.contains("qtForMCUs: true");
 
-    if (isQt6)
+    if (isMcu)
+        ret.append("Qt For MCU");
+    else if (isQt6)
         ret.append("Qt 6");
     else
         ret.append("Qt 5");
 
-    if (isMcu)
-        ret.append("Qt For MCU");
 
     return ret.join(",");
 }
@@ -433,20 +473,20 @@ QVariant ProjectModel::data(const QModelIndex &index, int role) const
             ProjectExplorer::ProjectExplorerPlugin::recentProjects().at(index.row());
     switch (role) {
     case Qt::DisplayRole:
-        return data.second;
+        return data.displayName;
         break;
     case FilePathRole:
-        return data.first.toVariant();
+        return data.filePath.toVariant();
     case PrettyFilePathRole:
-        return data.first.absolutePath().withTildeHomePath();
+        return data.filePath.absolutePath().withTildeHomePath();
     case PreviewUrl:
-        return QVariant(QStringLiteral("image://project_preview/") +
-                        QmlProjectManager::ProjectFileContentTools::appQmlFile(
-                            data.first));
+        return QVariant(
+            QStringLiteral("image://project_preview/")
+            + QmlProjectManager::ProjectFileContentTools::appQmlFile(data.filePath));
     case TagData:
-        return tags(data.first);
+        return tags(data.filePath);
     case Description:
-        return description(data.first);
+        return description(data.filePath);
     default:
         return QVariant();
     }
@@ -468,7 +508,14 @@ QHash<int, QByteArray> ProjectModel::roleNames() const
 
 void ProjectModel::resetProjects()
 {
-    QTimer::singleShot(2000, this, [this]() {
+    beginResetModel();
+    endResetModel();
+    m_blockOpenRecent = false;
+}
+
+void ProjectModel::delayedResetProjects()
+{
+    QTimer::singleShot(2000, this, [this] {
         beginResetModel();
         endResetModel();
         m_blockOpenRecent = false;
@@ -527,6 +574,9 @@ static bool forceDownLoad()
 
 static bool showSplashScreen()
 {
+    // some error dialog is maybe open, be silent to avoid focus problems (macOS had some)
+    if (Core::ICore::mainWindow() != Core::ICore::dialogParent())
+        return false;
     const Key lastQDSVersionEntry = "QML/Designer/lastQDSVersion";
 
     QtcSettings *settings = Core::ICore::settings();
@@ -549,8 +599,7 @@ void StudioWelcomePlugin::extensionsInitialized()
 
     // Enable QDS new project dialog and QDS wizards
     if (Core::ICore::isQtDesignStudio()) {
-        ProjectExplorer::JsonWizardFactory::clearWizardPaths();
-        ProjectExplorer::JsonWizardFactory::addWizardPath(
+        ProjectExplorer::JsonWizardFactory::setInstalledWizardsPath(
             Core::ICore::resourcePath("qmldesigner/studio_templates"));
 
         Core::ICore::setNewDialogFactory([](QWidget *parent) { return new QdsNewDialog(parent); });
@@ -699,13 +748,10 @@ WelcomeMode::WelcomeMode()
 
     const Utils::Icon FLAT({{":/studiowelcome/images/mode_welcome_mask.png",
                       Utils::Theme::IconsBaseColor}});
-    const Utils::Icon FLAT_ACTIVE({{":/studiowelcome/images/mode_welcome_mask.png",
-                             Utils::Theme::IconsModeWelcomeActiveColor}});
-    setIcon(Utils::Icon::modeIcon(FLAT, FLAT, FLAT_ACTIVE));
+    setIcon(Icon::sideBarIcon(FLAT, FLAT));
 
     setPriority(Core::Constants::P_MODE_WELCOME);
     setId(Core::Constants::MODE_WELCOME);
-    setContextHelp("Qt Design Studio Manual");
     setContext(Core::Context(Core::Constants::C_WELCOME_MODE));
 
     QFontDatabase::addApplicationFont(":/studiofonts/TitilliumWeb-Regular.ttf");
@@ -717,7 +763,8 @@ WelcomeMode::WelcomeMode()
         m_dataModelDownloader->setForceDownload(true);
 
     connect(m_dataModelDownloader, &DataModelDownloader::progressChanged, this, [this](){
-        m_quickWidget->rootObject()->setProperty("loadingProgress", m_dataModelDownloader->progress());
+        if (m_quickWidget->rootObject())
+            m_quickWidget->rootObject()->setProperty("loadingProgress", m_dataModelDownloader->progress());
     });
 
     connect(m_dataModelDownloader, &DataModelDownloader::finished, this, [this, welcomePagePath]() {
@@ -727,7 +774,7 @@ WelcomeMode::WelcomeMode()
         m_modeWidget->layout()->addWidget(m_quickWidget);
     });
 
-    connect(m_dataModelDownloader, &DataModelDownloader::downloadFailed, this, [this]() {
+    connect(m_dataModelDownloader, &DataModelDownloader::downloadFailed, this, [this] {
         m_quickWidget->setEnabled(true);
     });
 
@@ -749,19 +796,15 @@ WelcomeMode::WelcomeMode()
     m_modeWidget = new QWidget;
     m_modeWidget->setLayout(boxLayout);
     boxLayout->addWidget(m_quickWidget);
+    IContext::attach(m_modeWidget, {}, "Qt Design Studio Manual");
     setWidget(m_modeWidget);
 
-    QStringList designStudioQchPathes
-        = {Core::HelpManager::documentationPath() + "/qtdesignstudio.qch",
-           Core::HelpManager::documentationPath() + "/qtquick.qch",
-           Core::HelpManager::documentationPath() + "/qtquickcontrols.qch",
-           Core::HelpManager::documentationPath() + "/qtquicktimeline.qch",
-           Core::HelpManager::documentationPath() + "/qtquick3d.qch",
-           Core::HelpManager::documentationPath() + "/qtqml.qch"};
+    QStringList designStudioQchPathes;
+    QDir qchDir(Core::HelpManager::documentationPath());
+    for (const QFileInfo &fileInfo : qchDir.entryInfoList({"*.qch"}, QDir::Files))
+        designStudioQchPathes.append(fileInfo.absoluteFilePath());
 
-    Core::HelpManager::registerDocumentation(
-                Utils::filtered(designStudioQchPathes,
-                                [](const QString &path) { return QFileInfo::exists(path); }));
+    Core::HelpManager::registerDocumentation(designStudioQchPathes);
 }
 
 WelcomeMode::~WelcomeMode()
@@ -771,19 +814,6 @@ WelcomeMode::~WelcomeMode()
 
 void WelcomeMode::setupQuickWidget(const QString &welcomePagePath)
 {
-    if (!useNewWelcomePage()) {
-
-#ifdef QT_DEBUG
-        m_quickWidget->engine()->addImportPath(QLatin1String(STUDIO_QML_PATH)
-                                               + "welcomepage/imports");
-        m_quickWidget->setSource(
-            QUrl::fromLocalFile(QLatin1String(STUDIO_QML_PATH) + "welcomepage/main.qml"));
-#else
-        m_quickWidget->rootContext()->setContextProperty("$dataModel", m_dataModelDownloader);
-        m_quickWidget->engine()->addImportPath("qrc:/qml/welcomepage/imports");
-        m_quickWidget->setSource(QUrl("qrc:/qml/welcomepage/main.qml"));
-#endif
-    } else {
         m_quickWidget->rootContext()->setContextProperty("$dataModel", m_dataModelDownloader);
 
         m_quickWidget->engine()->addImportPath(Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources/imports").toString());
@@ -800,7 +830,6 @@ void WelcomeMode::setupQuickWidget(const QString &welcomePagePath)
         connect(updateShortcut, &QShortcut::activated, this, [this, welcomePagePath](){
             m_quickWidget->setSource(QUrl::fromLocalFile(welcomePagePath + "/main.qml"));
         });
-    }
 }
 
 void WelcomeMode::createQuickWidget()

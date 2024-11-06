@@ -116,9 +116,9 @@ Store QnxQtVersion::toMap() const
     return result;
 }
 
-void QnxQtVersion::fromMap(const Store &map, const FilePath &, bool forceRefreshCache)
+void QnxQtVersion::fromMap(const Store &map, const FilePath &)
 {
-    QtVersion::fromMap(map, {}, forceRefreshCache);
+    QtVersion::fromMap(map, {});
     setSdpPath(FilePath::fromSettings(map.value(SDP_PATH_KEY)));
 }
 
@@ -128,9 +128,9 @@ Abis QnxQtVersion::detectQtAbis() const
     return QnxUtils::convertAbis(QtVersion::detectQtAbis());
 }
 
-void QnxQtVersion::addToEnvironment(const Kit *k, Environment &env) const
+void QnxQtVersion::addToBuildEnvironment(const Kit *k, Environment &env) const
 {
-    QtSupport::QtVersion::addToEnvironment(k, env);
+    QtSupport::QtVersion::addToBuildEnvironment(k, env);
     updateEnvironment();
     env.modify(m_qnxEnv);
 }
@@ -190,12 +190,21 @@ EnvironmentItems QnxQtVersion::environment() const
 
 // Factory
 
-QnxQtVersionFactory::QnxQtVersionFactory()
+class QnxQtVersionFactory : public QtSupport::QtVersionFactory
 {
-    setQtVersionCreator([] { return new QnxQtVersion; });
-    setSupportedType(Constants::QNX_QNX_QT);
-    setPriority(50);
-    setRestrictionChecker([](const SetupData &setup) { return setup.isQnx; });
+public:
+    QnxQtVersionFactory()
+    {
+        setQtVersionCreator([] { return new QnxQtVersion; });
+        setSupportedType(Constants::QNX_QNX_QT);
+        setPriority(50);
+        setRestrictionChecker([](const SetupData &setup) { return setup.isQnx; });
+    }
+};
+
+void setupQnxQtVersion()
+{
+    static QnxQtVersionFactory theQnxQtVersionFactory;
 }
 
 } // Qnx::Internal

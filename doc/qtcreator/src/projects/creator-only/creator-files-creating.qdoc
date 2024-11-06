@@ -18,9 +18,8 @@
     \image qtcreator-new-file.webp {New File wizard}
 
     \note You can also use the \c f locator filter to create a new
-    file and open it in the editor. For more information, see
-    \l {Creating Files and Directories from Locator}. However, you must
-    manually add the created file to a project.
+    file and open it in the editor. However, you must manually add
+    the created file to a project.
 
     \section1 Select file type
 
@@ -38,14 +37,13 @@
     \row
         \li \uicontrol {Modeling}
         \li State Chart XML (SCXML) files, Universal Modeling Language (UML)
-            style \l {Modeling}{models}, and scratch models that use a temporary
-            file.
+            style models, and scratch models that use a temporary file.
     \row
         \li \uicontrol {Qt}
         \li Source and header files for item, table,
             or list models, \QD forms and a matching classes for Qt Widgets
-            projects, Qt resource files, as well as QML and JavaScript files
-            for Qt Quick projects.
+            projects, Qt resource and translation files, as well as QML and
+            JavaScript files for Qt Quick projects.
     \row
         \li \uicontrol {Compiler Explorer}
         \li Example setup for using Compiler Explorer to compile C++ or Python
@@ -67,13 +65,17 @@
         \li \uicontrol {vcpkg} (experimental)
         \li vcpkg package manager manifest files (vcpkg.json).
     \row
+        \li \uicontrol {Test Case}
+        \li Test framework specific file holding a new test case, to be
+            added to projects already using a test framework.
+    \row
         \li \uicontrol {Nim} (experimental)
         \li Empty Nim source and script files.
     \endtable
 
-    \sa {Create compiler explorer sessions}, {Create C++ classes},
-    {Create OpenGL fragment and vertex shaders}, {Create resource files},
-    {Create vcpkg manifest files}, {Use project wizards}
+    \sa {Navigate with locator}, {Add Files}{How To: Add Files},
+    {Add tests to existing test projects}, {Create UML-style models},
+    {Use project wizards}
 */
 
 /*!
@@ -148,7 +150,7 @@
     \list 1
         \li Select \uicontrol File > \uicontrol {New File} > \uicontrol {Qt} >
             \uicontrol {Qt Resource File} > \uicontrol Choose.
-            \image qtcreator-add-resource-wizard.png {New File dialog}
+            \image qtcreator-new-file-qrc.webp {New File dialog}
         \li Follow the instructions of the wizard to create a resource
             collection file (.qrc).
         \li Open the resource file in the resource editor.

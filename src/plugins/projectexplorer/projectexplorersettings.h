@@ -3,9 +3,11 @@
 
 #pragma once
 
-#include <coreplugin/coreconstants.h>
-#include <coreplugin/dialogs/ioptionspage.h>
+#include "projectexplorer_export.h"
 
+#include <coreplugin/coreconstants.h>
+
+#include <utils/environment.h>
 #include <utils/hostosinfo.h>
 
 #include <QUuid>
@@ -19,25 +21,8 @@ enum class StopBeforeBuild { None, SameProject, All, SameBuildDir, SameApp };
 class ProjectExplorerSettings
 {
 public:
-    friend bool operator==(const ProjectExplorerSettings &p1, const ProjectExplorerSettings &p2)
-    {
-        return p1.buildBeforeDeploy == p2.buildBeforeDeploy
-                && p1.deployBeforeRun == p2.deployBeforeRun
-                && p1.saveBeforeBuild == p2.saveBeforeBuild
-                && p1.useJom == p2.useJom
-                && p1.prompToStopRunControl == p2.prompToStopRunControl
-                && p1.automaticallyCreateRunConfigurations == p2.automaticallyCreateRunConfigurations
-                && p1.addLibraryPathsToRunEnv == p2.addLibraryPathsToRunEnv
-                && p1.environmentId == p2.environmentId
-                && p1.stopBeforeBuild == p2.stopBeforeBuild
-                && p1.terminalMode == p2.terminalMode
-                && p1.closeSourceFilesWithProject == p2.closeSourceFilesWithProject
-                && p1.clearIssuesOnRebuild == p2.clearIssuesOnRebuild
-                && p1.abortBuildAllOnError == p2.abortBuildAllOnError
-                && p1.lowBuildPriority == p2.lowBuildPriority;
-    }
-
     BuildBeforeRunMode buildBeforeDeploy = BuildBeforeRunMode::WholeProject;
+    int reaperTimeoutInSeconds = 1;
     bool deployBeforeRun = true;
     bool saveBeforeBuild = false;
     bool useJom = true;
@@ -48,10 +33,13 @@ public:
     bool clearIssuesOnRebuild = true;
     bool abortBuildAllOnError = true;
     bool lowBuildPriority = false;
+    bool warnAgainstNonAsciiBuildDir = true;
+    bool showAllKits = true;
     StopBeforeBuild stopBeforeBuild = Utils::HostOsInfo::isWindowsHost()
                                           ? StopBeforeBuild::SameProject
                                           : StopBeforeBuild::None;
     TerminalMode terminalMode = TerminalMode::Off;
+    Utils::EnvironmentItems appEnvChanges;
 
     // Add a UUid which is used to identify the development environment.
     // This is used to warn the user when he is trying to open a .user file that was created
@@ -59,26 +47,15 @@ public:
     QUuid environmentId;
 };
 
+PROJECTEXPLORER_EXPORT const ProjectExplorerSettings &projectExplorerSettings();
+ProjectExplorerSettings &mutableProjectExplorerSettings();
+
 namespace Internal {
 
-enum class AppOutputPaneMode { FlashOnOutput, PopupOnOutput, PopupOnFirstOutput };
+void setPromptToStopSettings(bool promptToStop); // FIXME: Remove.
+void setSaveBeforeBuildSettings(bool saveBeforeBuild); // FIXME: Remove.
 
-class AppOutputSettings
-{
-public:
-    AppOutputPaneMode runOutputMode = AppOutputPaneMode::PopupOnFirstOutput;
-    AppOutputPaneMode debugOutputMode = AppOutputPaneMode::FlashOnOutput;
-    bool cleanOldOutput = false;
-    bool mergeChannels = false;
-    bool wrapOutput = false;
-    int maxCharCount = Core::Constants::DEFAULT_MAX_CHAR_COUNT;
-};
-
-class ProjectExplorerSettingsPage : public Core::IOptionsPage
-{
-public:
-    ProjectExplorerSettingsPage();
-};
+void setupProjectExplorerSettings();
 
 } // namespace Internal
 } // namespace ProjectExplorer

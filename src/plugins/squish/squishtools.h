@@ -9,7 +9,7 @@
 #include "suiteconf.h"
 
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QObject>
 #include <QStringList>
@@ -21,8 +21,7 @@ class QFile;
 class QFileSystemWatcher;
 QT_END_NAMESPACE
 
-namespace Squish {
-namespace Internal {
+namespace Squish::Internal {
 
 class SquishXmlOutputHandler;
 
@@ -172,5 +171,6 @@ private:
     bool m_closeRunnerOnEndRecord = false;
 };
 
-} // namespace Internal
-} // namespace Squish
+void setupSquishTools(QObject *guard);
+
+} // Squish::Internal

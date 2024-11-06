@@ -4,10 +4,13 @@
 #include "pyside.h"
 
 #include "pipsupport.h"
-#include "pythonplugin.h"
+#include "pythonbuildconfiguration.h"
+#include "pythonconstants.h"
+#include "pythonproject.h"
 #include "pythontr.h"
 #include "pythonutils.h"
 
+#include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/runconfigurationaspects.h>
@@ -20,8 +23,9 @@
 #include <utils/algorithm.h>
 #include <utils/async.h>
 #include <utils/infobar.h>
-#include <utils/process.h>
+#include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 
 #include <QBoxLayout>
 #include <QComboBox>
@@ -36,19 +40,17 @@ namespace Python::Internal {
 
 const char installPySideInfoBarId[] = "Python::InstallPySide";
 
-PySideInstaller *PySideInstaller::instance()
-{
-    static PySideInstaller *instance = new PySideInstaller; // FIXME: Leaks.
-    return instance;
-}
-
 void PySideInstaller::checkPySideInstallation(const FilePath &python,
                                               TextEditor::TextDocument *document)
 {
     document->infoBar()->removeInfo(installPySideInfoBarId);
-    const QString pySide = importedPySide(document->plainText());
+    if (QPointer<QFutureWatcher<bool>> watcher = m_futureWatchers.value(document))
+        watcher->cancel();
+    if (!python.exists())
+        return;
+    const QString pySide = usedPySide(document->plainText(), document->mimeType());
     if (pySide == "PySide2" || pySide == "PySide6")
-        instance()->runPySideChecker(python, pySide, document);
+        runPySideChecker(python, pySide, document);
 }
 
 bool PySideInstaller::missingPySideInstallation(const FilePath &pythonPath,
@@ -68,17 +70,25 @@ bool PySideInstaller::missingPySideInstallation(const FilePath &pythonPath,
     return missing;
 }
 
-QString PySideInstaller::importedPySide(const QString &text)
+QString PySideInstaller::usedPySide(const QString &text, const QString &mimeType)
 {
-    static QRegularExpression importScanner("^\\s*(import|from)\\s+(PySide\\d)",
-                                            QRegularExpression::MultilineOption);
-    const QRegularExpressionMatch match = importScanner.match(text);
-    return match.captured(2);
+    using namespace Python::Constants;
+    if (mimeType == C_PY_MIMETYPE || mimeType == C_PY3_MIMETYPE || mimeType == C_PY_GUI_MIMETYPE) {
+        static QRegularExpression
+            scanner("^\\s*(import|from)\\s+(PySide\\d)", QRegularExpression::MultilineOption);
+        const QRegularExpressionMatch match = scanner.match(text);
+        return match.captured(2);
+    }
+    if (mimeType == Utils::Constants::QML_MIMETYPE)
+        return QStringLiteral("PySide6"); // Good enough for now.
+    return {};
 }
 
 PySideInstaller::PySideInstaller()
-    : QObject(PythonPlugin::instance())
-{}
+{
+    connect(Core::EditorManager::instance(), &Core::EditorManager::documentOpened,
+            this, &PySideInstaller::handleDocumentOpened);
+}
 
 void PySideInstaller::installPyside(const FilePath &python,
                                     const QString &pySide,
@@ -119,7 +129,7 @@ void PySideInstaller::installPyside(const FilePath &python,
 
     auto install = new PipInstallTask(python);
     connect(install, &PipInstallTask::finished, install, &QObject::deleteLater);
-    connect(install, &PipInstallTask::finished, this, [=](bool success){
+    connect(install, &PipInstallTask::finished, this, [this, python, pySide](bool success) {
         if (success)
             emit pySideInstalled(python, pySide);
     });
@@ -128,20 +138,40 @@ void PySideInstaller::installPyside(const FilePath &python,
     } else {
         QDialog dialog;
         dialog.setWindowTitle(Tr::tr("Select PySide Version"));
-        dialog.setLayout(new QVBoxLayout());
-        dialog.layout()->addWidget(new QLabel(Tr::tr("Select which PySide version to install:")));
+
+        // Logo for the corner in the QDialog
+        QPixmap logo(":/python/images/qtforpython_neon.png");
+        QLabel *logoLabel = new QLabel();
+        logoLabel->setPixmap(logo);
+
+        QVBoxLayout *dialogLayout = new QVBoxLayout();
+        QHBoxLayout *hlayout = new QHBoxLayout();
+        hlayout->addWidget(logoLabel);
+        hlayout->addWidget(new QLabel("<b>" + Tr::tr("Installing PySide") + "</b>"));
+        dialogLayout->addLayout(hlayout);
+
+        QLabel *installDescription = new QLabel(Tr::tr("You can install PySide "
+                                                       "from PyPi (Community OSS version) or from your Qt "
+                                                       "installation location, if you are using the Qt "
+                                                       "Installer and have a commercial license."));
+        installDescription->setWordWrap(true);
+        dialogLayout->addWidget(installDescription);
+
+        dialogLayout->addWidget(new QLabel(Tr::tr("Select which version to install:")));
         QComboBox *pySideSelector = new QComboBox();
-        pySideSelector->addItem(Tr::tr("Latest PySide from the Python Package Index"));
+        pySideSelector->addItem(Tr::tr("Latest PySide from the PyPI"));
         for (const Utils::FilePath &version : std::as_const(availablePySides)) {
             const FilePath dir = version.parentDir();
             const QString text
                 = Tr::tr("PySide %1 Wheel (%2)").arg(dir.fileName(), dir.toUserOutput());
             pySideSelector->addItem(text, version.toVariant());
         }
-        dialog.layout()->addWidget(pySideSelector);
+        dialogLayout->addWidget(pySideSelector);
         QDialogButtonBox box;
         box.setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-        dialog.layout()->addWidget(&box);
+        dialogLayout->addWidget(&box);
+
+        dialog.setLayout(dialogLayout);
         connect(&box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         connect(&box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
@@ -169,11 +199,35 @@ void PySideInstaller::handlePySideMissing(const FilePath &python,
     const QString message = Tr::tr("%1 installation missing for %2 (%3)")
                                 .arg(pySide, pythonName(python), python.toUserOutput());
     InfoBarEntry info(installPySideInfoBarId, message, InfoBarEntry::GlobalSuppression::Enabled);
-    auto installCallback = [=]() { installPyside(python, pySide, document); };
+    auto installCallback = [this, python, pySide, document] { installPyside(python, pySide, document); };
     const QString installTooltip = Tr::tr("Install %1 for %2 using pip package installer.")
                                        .arg(pySide, python.toUserOutput());
     info.addCustomButton(Tr::tr("Install"), installCallback, installTooltip);
     document->infoBar()->addInfo(info);
+}
+
+void PySideInstaller::handleDocumentOpened(Core::IDocument *document)
+{
+    if (document->mimeType() != Utils::Constants::QML_MIMETYPE)
+        return;
+
+    TextEditor::TextDocument *textDocument = qobject_cast<TextEditor::TextDocument *>(document);
+    if (!textDocument)
+        return;
+    PythonProject *project = pythonProjectForFile(textDocument->filePath());
+    if (!project)
+        return;
+    Target *target = project->activeTarget();
+    if (!target)
+        return;
+    BuildConfiguration *buildConfig = target->activeBuildConfiguration();
+    if (!buildConfig)
+        return;
+    auto *pythonBuildConfig = qobject_cast<PythonBuildConfiguration *>(buildConfig);
+    if (!pythonBuildConfig)
+        return;
+
+    PySideInstaller::instance().checkPySideInstallation(pythonBuildConfig->python(), textDocument);
 }
 
 void PySideInstaller::runPySideChecker(const FilePath &python,
@@ -186,20 +240,26 @@ void PySideInstaller::runPySideChecker(const FilePath &python,
 
     // cancel and delete watcher after a 10 second timeout
     QTimer::singleShot(10000, this, [watcher]() {
-        if (watcher) {
+        if (watcher)
             watcher->cancel();
-            watcher->deleteLater();
-        }
     });
-    connect(watcher,
-            &CheckPySideWatcher::resultReadyAt,
-            this,
-            [=, document = QPointer<TextEditor::TextDocument>(document)]() {
+    connect(watcher, &CheckPySideWatcher::resultReadyAt, this,
+            [this, watcher, python, pySide, document = QPointer<TextEditor::TextDocument>(document)] {
                 if (watcher->result())
                     handlePySideMissing(python, pySide, document);
-                watcher->deleteLater();
             });
+    connect(watcher, &CheckPySideWatcher::finished, watcher, &CheckPySideWatcher::deleteLater);
+    connect(watcher, &CheckPySideWatcher::finished, this, [this, document]{
+        m_futureWatchers.remove(document);
+    });
     watcher->setFuture(Utils::asyncRun(&missingPySideInstallation, python, pySide));
+    m_futureWatchers[document] = watcher;
+}
+
+PySideInstaller &PySideInstaller::instance()
+{
+    static PySideInstaller thePySideInstaller;
+    return thePySideInstaller;
 }
 
 } // Python::Internal

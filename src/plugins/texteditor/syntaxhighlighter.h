@@ -6,6 +6,7 @@
 #include "texteditor_global.h"
 
 #include <texteditor/texteditorconstants.h>
+#include <texteditor/textdocumentlayout.h>
 
 #include <QObject>
 #include <QTextLayout>
@@ -31,7 +32,6 @@ class SyntaxHighlighterPrivate;
 class TEXTEDITOR_EXPORT SyntaxHighlighter : public QObject
 {
     Q_OBJECT
-    Q_DECLARE_PRIVATE(SyntaxHighlighter)
 public:
     SyntaxHighlighter(QObject *parent = nullptr);
     SyntaxHighlighter(QTextDocument *parent);
@@ -41,9 +41,8 @@ public:
     void setDocument(QTextDocument *doc);
     QTextDocument *document() const;
 
-    void setExtraFormats(const QTextBlock &block, QVector<QTextLayout::FormatRange> &&formats);
-    void clearExtraFormats(const QTextBlock &block);
-    void clearAllExtraFormats();
+    void setMimeType(const QString &mimeType);
+    QString mimeType() const;
 
     static QList<QColor> generateColors(int n, const QColor &background);
 
@@ -51,11 +50,20 @@ public:
     virtual void setFontSettings(const TextEditor::FontSettings &fontSettings);
     TextEditor::FontSettings fontSettings() const;
 
-    void setNoAutomaticHighlighting(bool noAutomatic);
+    void setExtraFormats(const QTextBlock &block, const QList<QTextLayout::FormatRange> &formats);
+    virtual void setLanguageFeaturesFlags(unsigned int /*flags*/) {}; // needed for CppHighlighting
+    virtual void setEnabled(bool /*enabled*/) {}; // needed for DiffAndLogHighlighter
+    virtual void setDefinitionName(const QString & /*definitionName*/) {} // needed for Highlighter
+
+    bool syntaxHighlighterUpToDate() const;
 
 public slots:
-    void rehighlight();
+    virtual void rehighlight();
+    virtual void scheduleRehighlight();
     void rehighlightBlock(const QTextBlock &block);
+    void clearExtraFormats(const QTextBlock &block);
+    void reformatBlocks(int from, int charsRemoved, int charsAdded);
+    void clearAllExtraFormats();
 
 protected:
     void setDefaultTextFormatCategories();
@@ -86,12 +94,18 @@ protected:
 
     QTextBlock currentBlock() const;
 
-private:
-    void setTextFormatCategories(const QVector<std::pair<int, TextStyle>> &categories);
-    void reformatBlocks(int from, int charsRemoved, int charsAdded);
-    void delayedRehighlight();
+    virtual void documentChanged(QTextDocument * /*oldDoc*/, QTextDocument * /*newDoc*/) {};
 
-    QScopedPointer<SyntaxHighlighterPrivate> d_ptr;
+signals:
+    void finished();
+
+private:
+    void setTextFormatCategories(const QList<std::pair<int, TextStyle>> &categories);
+    void delayedRehighlight();
+    void continueRehighlight();
+
+    friend class SyntaxHighlighterPrivate;
+    std::unique_ptr<SyntaxHighlighterPrivate> d;
 
 #ifdef WITH_TESTS
     friend class tst_highlighter;

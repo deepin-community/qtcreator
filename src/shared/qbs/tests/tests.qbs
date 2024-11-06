@@ -4,7 +4,9 @@ Project {
     references: [
         "auto/auto.qbs",
         "benchmarker/benchmarker.qbs",
+        "clang-format-test/clang-format-test.qbs",
         "fuzzy-test/fuzzy-test.qbs",
+        "lspclient/lspclient.qbs",
     ]
 
     AutotestRunner {

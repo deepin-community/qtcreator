@@ -8,11 +8,9 @@
 // **********************************************************************
 
 /*!
-    \previouspage creator-project-managing.html
     \page creator-project-creating.html
-    \nextpage creator-project-qmake-libraries.html
-
-    \ingroup creator-explanation-projects
+    \previouspage creator-overview.html
+    \nextpage creator-configuring-projects.html
 
     \title Creating Projects
 
@@ -47,13 +45,14 @@
     \uicontrol {New File} dialogs you can see an icon (1), a display name (2),
     and a description (3) of the wizard.
 
-    \image qtcreator-custom-wizard.png {Wizard details in the New Project dialog}
+    \image qtcreator-custom-wizard.webp {Wizard details in the New File dialog}
 
     In most project wizards, you can choose the build system to use for
-    building the project: qmake, CMake, or Qbs. If you do not get to choose,
-    the project uses qmake as the build system.
+    building the project: qmake, CMake, Qbs, and possibly others, depending on
+    which plugins you have installed. If you do not get to choose,
+    the project usually uses CMake as the build system.
 
-    \image qtcreator-new-project-build-system-qt-gui.png {Define Build System dialog}
+    \image qtcreator-new-project-build-system.webp {Define Build System dialog}
 
     You can use wizards also to create plain C or C++ projects that use
     qmake, Qbs, or CMake, but do not use the Qt library.
@@ -64,10 +63,10 @@
 
     To test applications on \l{glossary-device}{devices}, you can install
     toolchains for mobile and embedded development as part of Qt distributions.
-    The installers create \l{glossary-buildandrun-kit}{kits} and specify build
+    The installers create \l{Kits}{kits} and specify build
     and run settings for the installed device types. However, you might need to
     install and configure some additional software on the devices to be able to
-    \l{Connecting Devices}{connect} to them from the development PC.
+    \l{Develop for Devices}{connect} to them from the computer.
 
     \sa {Manage Projects}{How To: Manage Projects}, {Custom Wizards}
 */
@@ -82,7 +81,7 @@
 
     To create a new project, select \uicontrol File > \uicontrol{New Project} and
     select the type of your project. The contents of the wizard dialogs depend
-    on the project type and the \l{glossary-buildandrun-kit}{kits} that you
+    on the project type and the \l{Kits}{kits} that you
     select in the \uicontrol {Kit Selection} dialog. Follow the instructions of
     the wizard.
 
@@ -122,17 +121,20 @@
                 application extensions, or a \QC plugin.
         \row
             \li Other project
-            \li Create custom \l{Developing Widget Based Applications}{\QD}
-                 widgets or widget collections,
-                \l{Qt Quick UI Projects}{Qt Quick UI projects},
-                \l {Creating Tests}{auto-test projects},
+            \li Create custom \l{\QD} widgets or widget collections,
+                \l{Create Qt Quick UI Prototypes}{Qt Quick UI projects},
                 \l{Add subprojects to projects}{subprojects},
                 empty qmake projects, or qmake projects for testing
                 code snippets.
         \row
             \li Non-Qt project
-            \li Create plain C or C++ applications or \l {Setting Up Nimble}
-                {Nim or Nimble} applications (experimental)
+            \li Create plain C or C++ applications or \l {Create Nimble projects}
+                {Nim or Nimble} applications (experimental).
+        \row
+            \li Test project
+            \li Create a test project based on different supported test
+                frameworks, such as Qt Test, Qt Quick Test, Google Test,
+                Boost Test, or Catch2.
         \row
             \li Imported project
             \li Import projects from a supported \l{Version Control Systems}
@@ -144,7 +146,7 @@
                 launcher for debugging and analysis tools.
         \row
             \li Squish
-            \li Create new \l {Using Squish}{Squish test suites}.
+            \li Create new Squish test suites.
 
     \endtable
 
@@ -154,9 +156,6 @@
 
     For examples of creating different types of projects, see
     \l{Tutorials}.
-
-    For more information about creating Qt Quick projects, see
-    \l {Creating Qt Quick Projects}.
 
     \section1 Bind keyboard shortcuts to wizards
 
@@ -170,7 +169,8 @@
     \uicontrol Impl there.
 
     \sa {Assign keyboard shortcuts}, {Activate kits for a project},
-    {Create files}, {Creating Projects}
+    {Create files}, {Test}{How To: Test},
+    {Create Projects}{How To: Create Projects}, {Creating Projects}
 */
 
 /*!
@@ -199,8 +199,8 @@
     directory in the \l {File System} view.
 
     Declaring files as a part of the project also makes them visible to the
-    \l{Searching with the Locator}{locator} and \l{Advanced Search}
-    {project-wide search}.
+    \l{Navigate with locator}{locator} and
+    \l{Search in projects or file systems}{project-wide search}.
 
     \section1 CMake Projects
 

@@ -15,7 +15,7 @@
 #include <remotelinux/linuxprocessinterface.h>
 
 #include <utils/portlist.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/theme/theme.h>
 
@@ -41,7 +41,11 @@ private:
     {
         QTC_ASSERT(controlSignal != ControlSignal::Interrupt, return);
         QTC_ASSERT(controlSignal != ControlSignal::KickOff, return);
-        runInShell({Constants::AppcontrollerFilepath, {"--stop"}});
+        if (m_setup.m_commandLine.executable().path() == Constants::AppcontrollerFilepath) {
+            runInShell({Constants::AppcontrollerFilepath, {"--stop"}});
+            return;
+        }
+        SshProcessInterface::handleSendControlSignal(controlSignal);
     }
 };
 
@@ -84,9 +88,9 @@ private:
             }
             showMessage(errorString, true);
             if (!stdOut.isEmpty())
-                showMessage(Tr::tr("stdout was: \"%1\"").arg(stdOut));
+                showMessage(Tr::tr("stdout was: \"%1\".").arg(stdOut));
             if (!stdErr.isEmpty())
-                showMessage(Tr::tr("stderr was: \"%1\"").arg(stdErr));
+                showMessage(Tr::tr("stderr was: \"%1\".").arg(stdErr));
         } else {
             showMessage(Tr::tr("Commands on device \"%1\" finished successfully.")
                         .arg(m_deviceName));
@@ -103,11 +107,11 @@ private:
 
 QdbDevice::QdbDevice()
 {
-    setDisplayType(Tr::tr("Boot2Qt Device"));
+    setDisplayType(Tr::tr("Boot to Qt Device"));
     setType(Constants::QdbLinuxOsType);
 
     addDeviceAction({Tr::tr("Reboot Device"), [](const IDevice::Ptr &device, QWidget *) {
-        (void) new DeviceApplicationObserver(device, {device->filePath("reboot"), {}});
+        (void) new DeviceApplicationObserver(device, CommandLine{device->filePath("reboot")});
     }});
 
     addDeviceAction({Tr::tr("Restore Default App"), [](const IDevice::Ptr &device, QWidget *) {
@@ -124,30 +128,7 @@ ProjectExplorer::IDeviceWidget *QdbDevice::createWidget()
 
 ProcessInterface *QdbDevice::createProcessInterface() const
 {
-    return new QdbProcessImpl(sharedFromThis());
-}
-
-void QdbDevice::setSerialNumber(const QString &serial)
-{
-    m_serialNumber = serial;
-}
-
-QString QdbDevice::serialNumber() const
-{
-    return m_serialNumber;
-}
-
-void QdbDevice::fromMap(const Store &map)
-{
-    ProjectExplorer::IDevice::fromMap(map);
-    setSerialNumber(map.value("Qdb.SerialNumber").toString());
-}
-
-Store QdbDevice::toMap() const
-{
-    Store map = ProjectExplorer::IDevice::toMap();
-    map.insert("Qdb.SerialNumber", serialNumber());
-    return map;
+    return new QdbProcessImpl(shared_from_this());
 }
 
 void QdbDevice::setupDefaultNetworkSettings(const QString &host)
@@ -214,7 +195,7 @@ public:
     QdbDeviceWizard(QWidget *parent)
         : QWizard(parent)
     {
-        setWindowTitle(Tr::tr("Boot2Qt Network Device Setup"));
+        setWindowTitle(Tr::tr("Boot to Qt Network Device Setup"));
         settingsPage.setCommitPage(true);
 
         enum { SettingsPageId };
@@ -226,7 +207,7 @@ public:
     {
         QdbDevice::Ptr device = QdbDevice::create();
 
-        device->settings()->displayName.setValue(settingsPage.deviceName());
+        device->setDisplayName(settingsPage.deviceName());
         device->setupId(ProjectExplorer::IDevice::ManuallyAdded, Utils::Id());
         device->setType(Constants::QdbLinuxOsType);
         device->setMachineType(ProjectExplorer::IDevice::Hardware);
@@ -243,21 +224,30 @@ private:
 
 // Device factory
 
-QdbLinuxDeviceFactory::QdbLinuxDeviceFactory()
-    : IDeviceFactory(Constants::QdbLinuxOsType)
+class QdbLinuxDeviceFactory final : public IDeviceFactory
 {
-    setDisplayName(Tr::tr("Boot2Qt Device"));
-    setCombinedIcon(":/qdb/images/qdbdevicesmall.png", ":/qdb/images/qdbdevice.png");
-    setQuickCreationAllowed(true);
-    setConstructionFunction(&QdbDevice::create);
-    setCreator([] {
-        QdbDeviceWizard wizard(Core::ICore::dialogParent());
-        if (!creatorTheme()->preferredStyles().isEmpty())
-            wizard.setWizardStyle(QWizard::ModernStyle);
-        if (wizard.exec() != QDialog::Accepted)
-            return IDevice::Ptr();
-        return wizard.device();
-    });
+public:
+    QdbLinuxDeviceFactory()
+        : IDeviceFactory(Constants::QdbLinuxOsType)
+    {
+        setDisplayName(Tr::tr("Boot to Qt Device"));
+        setCombinedIcon(":/qdb/images/qdbdevicesmall.png", ":/qdb/images/qdbdevice.png");
+        setQuickCreationAllowed(true);
+        setConstructionFunction(&QdbDevice::create);
+        setCreator([] {
+            QdbDeviceWizard wizard(Core::ICore::dialogParent());
+            if (!creatorTheme()->preferredStyles().isEmpty())
+                wizard.setWizardStyle(QWizard::ModernStyle);
+            if (wizard.exec() != QDialog::Accepted)
+                return IDevice::Ptr();
+            return wizard.device();
+        });
+    }
+};
+
+void setupQdbLinuxDevice()
+{
+    static QdbLinuxDeviceFactory theQdbLinuxSeviceFactory;
 }
 
 } // Qdb::Internal

@@ -92,9 +92,9 @@ CommonVcsSettings::CommonVcsSettings()
                 empty,
                 PushButton {
                     text(Tr::tr("Reset VCS Cache")),
-                    tooltip(Tr::tr("Reset information about which "
-                                   "version control system handles which directory.")),
-                    onClicked(&VcsManager::clearVersionControlCache)
+                    Layouting::toolTip(Tr::tr("Reset information about which "
+                                              "version control system handles which directory.")),
+                    onClicked(&VcsManager::clearVersionControlCache, this)
                 }
             }
         };
@@ -114,7 +114,7 @@ CommonVcsSettings::CommonVcsSettings()
 
 // CommonVcsSettingsPage
 
-class CommonVcsSettingsPage final : public Core::IOptionsPage
+class CommonVcsSettingsPage final : public IOptionsPage
 {
 public:
     CommonVcsSettingsPage()

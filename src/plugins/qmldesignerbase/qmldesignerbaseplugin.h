@@ -24,9 +24,17 @@ public:
     QmlDesignerBasePlugin();
     ~QmlDesignerBasePlugin();
 
+    static QmlDesignerBasePlugin &instance();
+
     static class DesignerSettings &settings();
     static QStyle *style();
     static class StudioConfigSettingsPage *studioConfigSettingsPage();
+
+    static bool experimentalFeaturesEnabled();
+    static QByteArray experimentalFeaturesSettingsKey();
+
+    static void enbableLiteMode();
+    static bool isLiteModeEnabled();
 
 private:
     bool initialize(const QStringList &arguments, QString *errorMessage) override;
@@ -34,6 +42,7 @@ private:
 private:
     class Data;
     std::unique_ptr<Data> d;
+    bool m_enableLiteMode = false;
 };
 
 } // namespace QmlDesigner

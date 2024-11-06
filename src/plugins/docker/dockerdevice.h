@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "dockersettings.h"
-
 #include <coreplugin/documentmanager.h>
 
 #include <projectexplorer/devicesupport/idevice.h>
@@ -14,46 +12,18 @@
 
 namespace Docker::Internal {
 
-class DockerDeviceSettings : public ProjectExplorer::DeviceSettings
-{
-public:
-    DockerDeviceSettings();
-
-    void fromMap(const Utils::Store &map) override;
-
-    QString repoAndTag() const;
-    QString repoAndTagEncoded() const;
-    Utils::FilePath rootPath() const;
-
-    Utils::StringAspect imageId{this};
-    Utils::StringAspect repo{this};
-    Utils::StringAspect tag{this};
-    Utils::BoolAspect useLocalUidGid{this};
-    Utils::FilePathListAspect mounts{this};
-    Utils::BoolAspect keepEntryPoint{this};
-    Utils::BoolAspect enableLldbFlags{this};
-    Utils::FilePathAspect clangdExecutable{this};
-    Utils::StringSelectionAspect network{this};
-    Utils::StringAspect extraArgs{this};
-
-    Utils::TextDisplay containerStatus{this};
-};
-
 class DockerDevice : public ProjectExplorer::IDevice
 {
 public:
-    using Ptr = QSharedPointer<DockerDevice>;
-    using ConstPtr = QSharedPointer<const DockerDevice>;
+    using Ptr = std::shared_ptr<DockerDevice>;
+    using ConstPtr = std::shared_ptr<const DockerDevice>;
 
-    explicit DockerDevice(std::unique_ptr<DockerDeviceSettings> settings);
+    DockerDevice();
     ~DockerDevice();
 
     void shutdown();
 
-    static Ptr create(std::unique_ptr<DockerDeviceSettings> settings)
-    {
-        return Ptr(new DockerDevice(std::move(settings)));
-    }
+    static Ptr create() { return Ptr(new DockerDevice); }
 
     Utils::CommandLine createCommandLine() const;
 
@@ -64,11 +34,16 @@ public:
 
     bool canCreateProcessModel() const override { return true; }
     bool hasDeviceTester() const override { return false; }
-    ProjectExplorer::DeviceTester *createDeviceTester() const override;
+    ProjectExplorer::DeviceTester *createDeviceTester() override;
     bool usableAsBuildDevice() const override;
 
     Utils::FilePath rootPath() const override;
     Utils::FilePath filePath(const QString &pathOnDevice) const override;
+
+    bool canMount(const Utils::FilePath &filePath) const override
+    {
+        return !filePath.needsDevice() || filePath.isSameDevice(rootPath());
+    }
 
     bool handlesFile(const Utils::FilePath &filePath) const override;
     bool ensureReachable(const Utils::FilePath &other) const override;
@@ -82,9 +57,25 @@ public:
     bool prepareForBuild(const ProjectExplorer::Target *target) override;
     std::optional<Utils::FilePath> clangdExecutable() const override;
 
+    QString repoAndTag() const;
+    QString repoAndTagEncoded() const;
+
+    Utils::StringAspect imageId{this};
+    Utils::StringAspect repo{this};
+    Utils::StringAspect tag{this};
+    Utils::BoolAspect useLocalUidGid{this};
+    Utils::FilePathListAspect mounts{this};
+    Utils::BoolAspect keepEntryPoint{this};
+    Utils::BoolAspect enableLldbFlags{this};
+    Utils::FilePathAspect clangdExecutableAspect{this};
+    Utils::StringSelectionAspect network{this};
+    Utils::StringAspect extraArgs{this};
+
+    Utils::TextDisplay containerStatus{this};
+
 protected:
     void fromMap(const Utils::Store &map) final;
-    Utils::Store toMap() const final;
+    void toMap(Utils::Store &map) const final;
 
 private:
     void aboutToBeRemoved() const final;
@@ -104,7 +95,7 @@ public:
 
 private:
     QMutex m_deviceListMutex;
-    std::vector<QWeakPointer<DockerDevice>> m_existingDevices;
+    std::vector<std::weak_ptr<DockerDevice>> m_existingDevices;
 };
 
 } // namespace Docker::Internal

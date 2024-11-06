@@ -13,20 +13,22 @@ ProtobufBase {
 
     property string _cxxLanguageVersion: "c++17"
 
+    _searchPaths: protobuflib.present ? protobuflib.hostBinDirs : undefined
+    property stringList _grpcSearchPaths: grpcpp.present ? grpcpp.hostBinDirs : undefined
+
     cpp.includePaths: outputDir
 
     Depends { name: "cpp" }
     Depends {
         name: "protobuflib";
         condition: _linkLibraries;
-        required: false;
-        enableFallback: false
+        required: false
     }
     Depends {
-        name: "grpcpp";
+        name: "grpc++";
+        id: grpcpp
         condition: _linkLibraries && useGrpc;
-        required: false;
-        enableFallback: false
+        required: false
     }
 
     property path grpcPluginPath: grpcPluginProbe.filePath
@@ -35,6 +37,7 @@ ProtobufBase {
         condition: useGrpc
         id: grpcPluginProbe
         names: "grpc_cpp_plugin"
+        searchPaths: _grpcSearchPaths
     }
 
     cpp.cxxLanguageVersion: _cxxLanguageVersion

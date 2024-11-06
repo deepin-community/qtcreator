@@ -19,6 +19,8 @@
 #include <cplusplus/Symbols.h>
 #include <cplusplus/TranslationUnit.h>
 
+#include <utils/fileutils.h>
+
 //TESTED_COMPONENT=src/libs/cplusplus
 using namespace CPlusPlus;
 
@@ -35,7 +37,7 @@ public:
         return _exprs;
     }
 
-    virtual bool preVisit(AST *ast) {
+    bool preVisit(AST *ast) override {
         if (NameAST *nameAst = ast->asName())
             if (!qstrcmp(_name, nameAst->name->identifier()->chars()))
                 _exprs.append(nameAst);

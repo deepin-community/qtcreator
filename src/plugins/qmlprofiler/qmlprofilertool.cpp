@@ -7,7 +7,6 @@
 #include "qmlprofilerclientmanager.h"
 #include "qmlprofilerconstants.h"
 #include "qmlprofilermodelmanager.h"
-#include "qmlprofilerplugin.h"
 #include "qmlprofilerrunconfigurationaspect.h"
 #include "qmlprofilerruncontrol.h"
 #include "qmlprofilersettings.h"
@@ -49,6 +48,7 @@
 
 #include <utils/fancymainwindow.h>
 #include <utils/fileinprojectfinder.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
 #include <utils/url.h>
@@ -75,8 +75,7 @@ using namespace QmlProfiler::Constants;
 using namespace ProjectExplorer;
 using namespace Utils;
 
-namespace QmlProfiler {
-namespace Internal {
+namespace QmlProfiler::Internal {
 
 static QmlProfilerTool *m_instance = nullptr;
 
@@ -190,7 +189,7 @@ QmlProfilerTool::QmlProfilerTool()
     d->m_searchButton->setEnabled(false);
 
     connect(d->m_searchButton, &QToolButton::clicked, this, &QmlProfilerTool::showTimeLineSearch);
-    connect(d->m_viewContainer, &QmlProfilerViewManager::viewsCreated, this, [this]() {
+    connect(d->m_viewContainer, &QmlProfilerViewManager::viewsCreated, this, [this] {
         d->m_searchButton->setEnabled(d->m_viewContainer->traceView()->isUsable());
     });
 
@@ -243,7 +242,7 @@ QmlProfilerTool::QmlProfilerTool()
         });
     }
 
-    auto updateRecordButton = [this]() {
+    auto updateRecordButton = [this] {
         const bool recording =
                 d->m_profilerState->currentState() != QmlProfilerStateManager::AppRunning
                 ? d->m_profilerState->clientRecording() : d->m_profilerState->serverRecording();
@@ -355,7 +354,7 @@ void QmlProfilerTool::finalizeRunControl(QmlProfilerRunner *runWorker)
 {
     d->m_toolBusy = true;
     auto runControl = runWorker->runControl();
-    if (auto aspect = runControl->aspect<QmlProfilerRunConfigurationAspect>()) {
+    if (auto aspect = runControl->aspectData<QmlProfilerRunConfigurationAspect>()) {
         if (auto settings = static_cast<const QmlProfilerSettings *>(aspect->currentSettings)) {
             d->m_profilerConnections->setFlushInterval(settings->flushEnabled() ?
                                                            settings->flushInterval() : 0);
@@ -430,7 +429,7 @@ void QmlProfilerTool::finalizeRunControl(QmlProfilerRunner *runWorker)
         infoBox->show();
     }, Qt::QueuedConnection); // Queue any connection failures after reportStarted()
 
-    d->m_profilerConnections->connectToServer(runWorker->serverUrl());
+    d->m_profilerConnections->connectToServer(runControl->qmlChannel());
     d->m_profilerState->setCurrentState(QmlProfilerStateManager::AppRunning);
 }
 
@@ -604,8 +603,9 @@ ProjectExplorer::RunControl *QmlProfilerTool::attachToWaitingApplication()
 
     auto runControl = new RunControl(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
     runControl->copyDataFromRunConfiguration(ProjectManager::startupRunConfiguration());
-    auto profiler = new QmlProfilerRunner(runControl);
-    profiler->setServerUrl(serverUrl);
+    // The object as such is needed, the RunWorker becomes part of the RunControl at construction time,
+    // similar to how QObject children are owned by their parents
+    [[maybe_unused]] auto profiler = new QmlProfilerRunner(runControl);
 
     connect(d->m_profilerConnections, &QmlProfilerClientManager::connectionClosed,
             runControl, &RunControl::initiateStop);
@@ -740,7 +740,7 @@ void QmlProfilerTool::clientsDisconnected()
 
     // ... and return to the "base" state
     if (d->m_profilerState->currentState() == QmlProfilerStateManager::AppDying) {
-        QTimer::singleShot(0, d->m_profilerState, [this]() {
+        QTimer::singleShot(0, d->m_profilerState, [this] {
             d->m_profilerState->setCurrentState(QmlProfilerStateManager::Idle);
         });
     }
@@ -857,7 +857,7 @@ void QmlProfilerTool::profilerStateChanged()
             d->m_profilerConnections->stopRecording();
         } else {
             // Directly transition to idle
-            QTimer::singleShot(0, d->m_profilerState, [this]() {
+            QTimer::singleShot(0, d->m_profilerState, [this] {
                 d->m_profilerState->setCurrentState(QmlProfilerStateManager::Idle);
             });
         }
@@ -919,8 +919,17 @@ void QmlProfilerTool::toggleVisibleFeature(QAction *action)
                     d->m_profilerModelManager->visibleFeatures() | (1ULL << feature));
     else
         d->m_profilerModelManager->setVisibleFeatures(
-                    d->m_profilerModelManager->visibleFeatures() & (~(1ULL << feature)));
+            d->m_profilerModelManager->visibleFeatures() & (~(1ULL << feature)));
 }
 
-} // namespace Internal
-} // namespace QmlProfiler
+void setupQmlProfilerTool()
+{
+    (void) new QmlProfilerTool;
+}
+
+void destroyQmlProfilerTool()
+{
+    delete m_instance;
+}
+
+} // QmlProfiler::Internal

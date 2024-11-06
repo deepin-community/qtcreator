@@ -37,6 +37,9 @@ public:
                                   const Parameters *parameters) override;
     const Style *applyObjectStyle(const Style *baseStyle, const StyledObject &styledObject,
                                   const Parameters *parameters) override;
+    const Style *applyRelationStyle(const Style *baseStyle, ElementType elementType,
+                                    const RelationVisuals &relationVisuals,
+                                    const Parameters *parameters) override;
     const Style *applyRelationStyle(const Style *baseStyle, const StyledRelation &styledRelation,
                                     const Parameters *parameters) override;
     const Style *applyAnnotationStyle(const Style *baseStyle, const DAnnotation *annotation,

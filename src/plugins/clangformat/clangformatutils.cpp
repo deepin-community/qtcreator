@@ -19,8 +19,11 @@
 #include <projectexplorer/projectmanager.h>
 
 #include <utils/qtcassert.h>
+#include <utils/expected.h>
+#include <utils/fileutils.h>
 
 #include <QCryptographicHash>
+#include <QLoggingCategory>
 
 using namespace clang;
 using namespace format;
@@ -41,49 +44,39 @@ clang::format::FormatStyle calculateQtcStyle()
 #if LLVM_VERSION_MAJOR >= 15
     style.AlignConsecutiveAssignments = {false, false, false, false, false};
     style.AlignConsecutiveDeclarations = {false, false, false, false, false};
-#elif LLVM_VERSION_MAJOR >= 12
+#else
     style.AlignConsecutiveAssignments = FormatStyle::ACS_None;
     style.AlignConsecutiveDeclarations = FormatStyle::ACS_None;
-#else
-    style.AlignConsecutiveAssignments = false;
-    style.AlignConsecutiveDeclarations = false;
 #endif
     style.AlignEscapedNewlines = FormatStyle::ENAS_DontAlign;
-#if LLVM_VERSION_MAJOR >= 11
     style.AlignOperands = FormatStyle::OAS_Align;
-#else
-    style.AlignOperands = true;
-#endif
 #if LLVM_VERSION_MAJOR >= 16
     style.AlignTrailingComments = {FormatStyle::TCAS_Always, 0};
 #else
     style.AlignTrailingComments = true;
 #endif
     style.AllowAllParametersOfDeclarationOnNextLine = true;
-#if LLVM_VERSION_MAJOR >= 10
     style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Never;
-#else
-    style.AllowShortBlocksOnASingleLine = false;
-#endif
     style.AllowShortCaseLabelsOnASingleLine = false;
     style.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Inline;
-#if LLVM_VERSION_MAJOR >= 9
     style.AllowShortIfStatementsOnASingleLine = FormatStyle::SIS_Never;
-#else
-    style.AllowShortIfStatementsOnASingleLine = false;
-#endif
     style.AllowShortLoopsOnASingleLine = false;
-    style.AlwaysBreakAfterReturnType = FormatStyle::RTBS_None;
     style.AlwaysBreakBeforeMultilineStrings = false;
-    style.AlwaysBreakTemplateDeclarations = FormatStyle::BTDS_Yes;
-    style.BinPackArguments = false;
-    style.BinPackParameters = false;
-    style.BraceWrapping.AfterClass = true;
-#if LLVM_VERSION_MAJOR >= 10
-    style.BraceWrapping.AfterControlStatement = FormatStyle::BWACS_Never;
+#if LLVM_VERSION_MAJOR >= 19
+    style.BreakAfterReturnType = FormatStyle::RTBS_None;
+    style.BreakTemplateDeclarations = FormatStyle::BTDS_Yes;
 #else
-    style.BraceWrapping.AfterControlStatement = false;
+    style.AlwaysBreakAfterReturnType = FormatStyle::RTBS_None;
+    style.AlwaysBreakTemplateDeclarations = FormatStyle::BTDS_Yes;
 #endif
+    style.BinPackArguments = false;
+#if LLVM_VERSION_MAJOR >= 20
+    style.BinPackParameters = FormatStyle::BPPS_OnePerLine;
+#else
+    style.BinPackParameters = false;
+#endif
+    style.BraceWrapping.AfterClass = true;
+    style.BraceWrapping.AfterControlStatement = FormatStyle::BWACS_Never;
     style.BraceWrapping.AfterEnum = false;
     style.BraceWrapping.AfterFunction = true;
     style.BraceWrapping.AfterNamespace = false;
@@ -118,18 +111,18 @@ clang::format::FormatStyle calculateQtcStyle()
     style.ExperimentalAutoDetectBinPacking = false;
     style.FixNamespaceComments = true;
     style.ForEachMacros = {"forever", "foreach", "Q_FOREACH", "BOOST_FOREACH"};
-#if LLVM_VERSION_MAJOR >= 12
     style.IncludeStyle.IncludeCategories = {{"^<Q.*", 200, 200, true}};
-#else
-    style.IncludeStyle.IncludeCategories = {{"^<Q.*", 200, 200}};
-#endif
     style.IncludeStyle.IncludeIsMainRegex = "(Test)?$";
     style.IndentCaseLabels = false;
     style.IndentWidth = 4;
     style.IndentWrappedFunctionNames = false;
     style.JavaScriptQuotes = FormatStyle::JSQS_Leave;
     style.JavaScriptWrapImports = true;
+#if LLVM_VERSION_MAJOR >= 19
+    style.KeepEmptyLines = {false, false, false};
+#else
     style.KeepEmptyLinesAtTheStartOfBlocks = false;
+#endif
     // Do not add QT_BEGIN_NAMESPACE/QT_END_NAMESPACE as this will indent lines in between.
     style.MacroBlockBegin = "";
     style.MacroBlockEnd = "";
@@ -146,12 +139,12 @@ clang::format::FormatStyle calculateQtcStyle()
     style.PenaltyExcessCharacter = 50;
     style.PenaltyReturnTypeOnItsOwnLine = 300;
     style.PointerAlignment = FormatStyle::PAS_Right;
-    style.ReflowComments = false;
-#if LLVM_VERSION_MAJOR >= 13
-    style.SortIncludes = FormatStyle::SI_CaseSensitive;
+#if LLVM_VERSION_MAJOR >= 20
+    style.ReflowComments = FormatStyle::RCS_Never;
 #else
-    style.SortIncludes = true;
+    style.ReflowComments = false;
 #endif
+    style.SortIncludes = FormatStyle::SI_CaseSensitive;
 #if LLVM_VERSION_MAJOR >= 16
     style.SortUsingDeclarations = FormatStyle::SUD_Lexicographic;
 #else
@@ -165,11 +158,7 @@ clang::format::FormatStyle calculateQtcStyle()
     style.SpaceInEmptyParentheses = false;
 #endif
     style.SpacesBeforeTrailingComments = 1;
-#if LLVM_VERSION_MAJOR >= 13
     style.SpacesInAngles = FormatStyle::SIAS_Never;
-#else
-    style.SpacesInAngles = false;
-#endif
     style.SpacesInContainerLiterals = false;
 #if LLVM_VERSION_MAJOR >= 17
     style.SpacesInParens = FormatStyle::SIPO_Never;
@@ -224,9 +213,7 @@ void fromCppCodeStyleSettings(clang::format::FormatStyle &style,
         style.BreakBeforeBraces = FormatStyle::BS_Custom;
 
     style.IndentCaseLabels = settings.indentSwitchLabels;
-#if LLVM_VERSION_MAJOR >= 11
     style.IndentCaseBlocks = settings.indentBlocksRelativeToSwitchLabels;
-#endif
 
     if (settings.extraPaddingForConditionsIfConfusingAlign)
         style.BreakBeforeBinaryOperators = FormatStyle::BOS_All;
@@ -287,24 +274,25 @@ bool getProjectUseGlobalSettings(const ProjectExplorer::Project *project)
     return projectUseGlobalSettings.isValid() ? projectUseGlobalSettings.toBool() : true;
 }
 
-bool getProjectOverriddenSettings(const ProjectExplorer::Project *project)
+bool getProjectCustomSettings(const ProjectExplorer::Project *project)
 {
-    const QVariant projectOverride = project ? project->namedSettings(Constants::OVERRIDE_FILE_ID)
-                                             : QVariant();
+    const QVariant projectCustomSettings = project ? project->namedSettings(
+                                               Constants::USE_CUSTOM_SETTINGS_ID)
+                                                   : QVariant();
 
-    return projectOverride.isValid()
-               ? projectOverride.toBool()
-               : ClangFormatSettings::instance().overrideDefaultFile();
+    return projectCustomSettings.isValid()
+               ? projectCustomSettings.toBool()
+               : ClangFormatSettings::instance().useCustomSettings();
 }
 
-bool getCurrentOverriddenSettings(const Utils::FilePath &filePath)
+bool getCurrentCustomSettings(const Utils::FilePath &filePath)
 {
     const ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::projectForFile(
         filePath);
 
     return getProjectUseGlobalSettings(project)
-               ? ClangFormatSettings::instance().overrideDefaultFile()
-               : getProjectOverriddenSettings(project);
+               ? ClangFormatSettings::instance().useCustomSettings()
+               : getProjectCustomSettings(project);
 }
 
 ClangFormatSettings::Mode getProjectIndentationOrFormattingSettings(
@@ -329,9 +317,9 @@ ClangFormatSettings::Mode getCurrentIndentationOrFormattingSettings(const Utils:
                : getProjectIndentationOrFormattingSettings(project);
 }
 
-Utils::FilePath findConfig(const Utils::FilePath &fileName)
+Utils::FilePath findConfig(const Utils::FilePath &filePath)
 {
-    Utils::FilePath parentDirectory = fileName.parentDir();
+    Utils::FilePath parentDirectory = filePath.parentDir();
     while (parentDirectory.exists()) {
         Utils::FilePath settingsFilePath = parentDirectory / Constants::SETTINGS_FILE_NAME;
         if (settingsFilePath.exists())
@@ -346,19 +334,22 @@ Utils::FilePath findConfig(const Utils::FilePath &fileName)
     return {};
 }
 
-Utils::FilePath configForFile(const Utils::FilePath &fileName)
+ICodeStylePreferences *preferencesForFile(const Utils::FilePath &filePath)
 {
-    if (!getCurrentOverriddenSettings(fileName))
-        return findConfig(fileName);
+    const ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::projectForFile(
+        filePath);
 
-    const ProjectExplorer::Project *projectForFile
-        = ProjectExplorer::ProjectManager::projectForFile(fileName);
+    return !getProjectUseGlobalSettings(project) && project
+               ? project->editorConfiguration()->codeStyle("Cpp")->currentPreferences()
+               : TextEditor::TextEditorSettings::codeStyle("Cpp")->currentPreferences();
+}
 
-    const TextEditor::ICodeStylePreferences *preferences
-        = projectForFile
-              ? projectForFile->editorConfiguration()->codeStyle("Cpp")->currentPreferences()
-              : TextEditor::TextEditorSettings::codeStyle("Cpp")->currentPreferences();
+Utils::FilePath configForFile(const Utils::FilePath &filePath)
+{
+    if (!getCurrentCustomSettings(filePath))
+        return findConfig(filePath);
 
+    const TextEditor::ICodeStylePreferences *preferences = preferencesForFile(filePath);
     return filePathToCurrentSettings(preferences);
 }
 
@@ -372,6 +363,7 @@ void addQtcStatementMacros(clang::format::FormatStyle &style)
                                                     "Q_GADGET",
                                                     "Q_GADGET_EXPORT",
                                                     "Q_INTERFACES",
+                                                    "Q_LOGGING_CATEGORY",
                                                     "Q_MOC_INCLUDE",
                                                     "Q_NAMESPACE",
                                                     "Q_NAMESPACE_EXPORT",
@@ -407,6 +399,16 @@ void addQtcStatementMacros(clang::format::FormatStyle &style)
             == style.StatementMacros.end())
             style.StatementMacros.emplace_back(macro);
     }
+
+    const std::vector<std::string> emitMacros = {"emit", "Q_EMIT"};
+    for (const std::string &emitMacro : emitMacros) {
+        if (std::find(
+                style.StatementAttributeLikeMacros.begin(),
+                style.StatementAttributeLikeMacros.end(),
+                emitMacro)
+            == style.StatementAttributeLikeMacros.end())
+            style.StatementAttributeLikeMacros.push_back(emitMacro);
+    }
 }
 
 Utils::FilePath filePathToCurrentSettings(const TextEditor::ICodeStylePreferences *codeStyle)
@@ -415,4 +417,39 @@ Utils::FilePath filePathToCurrentSettings(const TextEditor::ICodeStylePreference
            / Utils::FileUtils::fileSystemFriendlyName(codeStyle->displayName())
            / QLatin1String(Constants::SETTINGS_FILE_NAME);
 }
+
+Utils::expected_str<void> parseConfigurationContent(const std::string &fileContent,
+                                                    clang::format::FormatStyle &style,
+                                                    bool allowUnknownOptions)
+{
+    llvm::SourceMgr::DiagHandlerTy diagHandler = [](const llvm::SMDiagnostic &diag, void *context) {
+        QString *errorMessage = reinterpret_cast<QString *>(context);
+        *errorMessage = QString::fromStdString(diag.getMessage().str()) + " "
+                        + QString::number(diag.getLineNo()) + ":"
+                        + QString::number(diag.getColumnNo());
+    };
+
+    QString errorMessage;
+    style.Language = clang::format::FormatStyle::LK_Cpp;
+    const std::error_code error = parseConfiguration(
+        llvm::MemoryBufferRef(fileContent, "YAML"),
+        &style,
+        allowUnknownOptions,
+        diagHandler,
+        &errorMessage);
+
+    errorMessage = errorMessage.trimmed().isEmpty() ? QString::fromStdString(error.message())
+                                                    : errorMessage;
+    if (error)
+        return make_unexpected(errorMessage);
+    return {};
+}
+
+Utils::expected_str<void> parseConfigurationFile(const Utils::FilePath &filePath,
+                                                 clang::format::FormatStyle &style)
+{
+    return parseConfigurationContent(filePath.fileContents().value_or(QByteArray()).toStdString(),
+                                     style, true);
+}
+
 } // namespace ClangFormat

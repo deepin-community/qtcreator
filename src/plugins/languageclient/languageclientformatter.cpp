@@ -24,7 +24,7 @@ LanguageClientFormatter::LanguageClientFormatter(TextEditor::TextDocument *docum
 {
     m_cancelConnection = QObject::connect(document->document(),
                                           &QTextDocument::contentsChanged,
-                                          [this]() {
+                                          [this] {
         if (m_ignoreCancel)
             m_ignoreCancel = false;
         else
@@ -69,7 +69,8 @@ QFutureWatcher<ChangeSet> *LanguageClientFormatter::format(
             = m_client->capabilities().documentRangeFormattingProvider();
         if (!provider.has_value())
             return nullptr;
-        if (std::holds_alternative<bool>(*provider) && !std::get<bool>(*provider))
+        const auto boolvalue = std::get_if<bool>(&*provider);
+        if (boolvalue && !*boolvalue)
             return nullptr;
     }
     DocumentRangeFormattingParams params;
@@ -93,7 +94,7 @@ QFutureWatcher<ChangeSet> *LanguageClientFormatter::format(
     m_ignoreCancel = true;
     m_progress.reportStarted();
     auto watcher = new QFutureWatcher<ChangeSet>();
-    QObject::connect(watcher, &QFutureWatcher<ChangeSet>::canceled, [this]() {
+    QObject::connect(watcher, &QFutureWatcher<ChangeSet>::canceled, [this] {
         cancelCurrentRequest();
     });
     watcher->setFuture(m_progress.future());

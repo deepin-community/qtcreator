@@ -13,6 +13,8 @@
 
 #include <QPair>
 
+#include <optional>
+
 QT_BEGIN_NAMESPACE
 class QPoint;
 class QThreadPool;
@@ -22,24 +24,67 @@ namespace Core {
 class OutputWindow;
 } // Core
 
-namespace Utils { class CommandLine; }
-
 namespace ProjectExplorer {
 class CustomParserSettings;
 class FolderNode;
 class Node;
 class Project;
-class ProjectExplorerSettings;
 class RunControl;
 class RunConfiguration;
 
 namespace Internal {
-class AppOutputSettings;
 class MiniProjectTargetSelector;
 }
 
-using RecentProjectsEntry = QPair<Utils::FilePath, QString>;
+class RecentProjectsEntry
+{
+public:
+    Utils::FilePath filePath;
+    QString displayName;
+    bool exists = true;
+};
+
 using RecentProjectsEntries = QList<RecentProjectsEntry>;
+
+class PROJECTEXPLORER_EXPORT OpenProjectResult
+{
+public:
+    OpenProjectResult(const QList<Project *> &projects, const QList<Project *> &alreadyOpen,
+                      const QString &errorMessage)
+        : m_projects(projects), m_alreadyOpen(alreadyOpen),
+          m_errorMessage(errorMessage)
+    { }
+
+    explicit operator bool() const
+    {
+        return m_errorMessage.isEmpty() && m_alreadyOpen.isEmpty();
+    }
+
+    Project *project() const
+    {
+        return m_projects.isEmpty() ? nullptr : m_projects.first();
+    }
+
+    QList<Project *> projects() const
+    {
+        return m_projects;
+    }
+
+    QString errorMessage() const
+    {
+        return m_errorMessage;
+    }
+
+    QList<Project *> alreadyOpen() const
+    {
+        return m_alreadyOpen;
+    }
+
+private:
+    QList<Project *> m_projects;
+    QList<Project *> m_alreadyOpen;
+    QString m_errorMessage;
+};
 
 class PROJECTEXPLORER_EXPORT ProjectExplorerPlugin : public ExtensionSystem::IPlugin
 {
@@ -53,45 +98,6 @@ public:
     ~ProjectExplorerPlugin() override;
 
     static ProjectExplorerPlugin *instance();
-
-    class OpenProjectResult
-    {
-    public:
-        OpenProjectResult(const QList<Project *> &projects, const QList<Project *> &alreadyOpen,
-                          const QString &errorMessage)
-            : m_projects(projects), m_alreadyOpen(alreadyOpen),
-              m_errorMessage(errorMessage)
-        { }
-
-        explicit operator bool() const
-        {
-            return m_errorMessage.isEmpty() && m_alreadyOpen.isEmpty();
-        }
-
-        Project *project() const
-        {
-            return m_projects.isEmpty() ? nullptr : m_projects.first();
-        }
-
-        QList<Project *> projects() const
-        {
-            return m_projects;
-        }
-
-        QString errorMessage() const
-        {
-            return m_errorMessage;
-        }
-
-        QList<Project *> alreadyOpen() const
-        {
-            return m_alreadyOpen;
-        }
-    private:
-        QList<Project *> m_projects;
-        QList<Project *> m_alreadyOpen;
-        QString m_errorMessage;
-    };
 
     static OpenProjectResult openProject(const Utils::FilePath &filePath);
     static OpenProjectResult openProjects(const Utils::FilePaths &filePaths);
@@ -109,12 +115,6 @@ public:
     bool delayedInitialize() override;
     ShutdownFlag aboutToShutdown() override;
 
-    static void setProjectExplorerSettings(const ProjectExplorerSettings &pes);
-    static const ProjectExplorerSettings &projectExplorerSettings();
-
-    static void setAppOutputSettings(const Internal::AppOutputSettings &settings);
-    static const Internal::AppOutputSettings &appOutputSettings();
-
     static void setCustomParsers(const QList<CustomParserSettings> &settings);
     static void addCustomParser(const CustomParserSettings &settings);
     static void removeCustomParser(Utils::Id id);
@@ -123,8 +123,14 @@ public:
     static void startRunControl(RunControl *runControl);
     static void showOutputPaneForRunControl(RunControl *runControl);
 
-    // internal public for FlatModel
-    static void renameFile(Node *node, const QString &newFilePath);
+    static Utils::FilePairs renameFiles(
+        const QList<std::pair<Node *, Utils::FilePath>> &nodesAndNewFilePaths);
+
+#ifdef WITH_TESTS
+    static bool renameFile(const Utils::FilePath &source, const Utils::FilePath &target,
+                           Project *project = nullptr);
+#endif
+
     static QStringList projectFilePatterns();
     static bool isProjectFile(const Utils::FilePath &filePath);
     static RecentProjectsEntries recentProjects();
@@ -158,12 +164,11 @@ public:
     static void removeFromRecentProjects(const Utils::FilePath &filePath);
 
     static void updateRunActions();
+    static void updateVcsActions(const QString &vcsDisplayName);
 
     static Core::OutputWindow *buildSystemOutput();
 
 signals:
-    void finishedInitialization();
-
     // Is emitted when a project has been added/removed,
     // or the file list of a specific project has changed.
     void fileListChanged();
@@ -174,87 +179,14 @@ signals:
     void customParsersChanged();
 
     void runActionsUpdated();
+    void runControlStarted(ProjectExplorer::RunControl *runControl);
+    void runControlStoped(ProjectExplorer::RunControl *runControl);
+
+    void filesRenamed(const Utils::FilePairs &oldAndNewPaths);
 
 private:
     static bool coreAboutToClose();
     void handleCommandLineArguments(const QStringList &arguments);
-
-#ifdef WITH_TESTS
-private slots:
-    void testJsonWizardsEmptyWizard();
-    void testJsonWizardsEmptyPage();
-    void testJsonWizardsUnusedKeyAtFields_data();
-    void testJsonWizardsUnusedKeyAtFields();
-    void testJsonWizardsCheckBox();
-    void testJsonWizardsLineEdit();
-    void testJsonWizardsComboBox();
-    void testJsonWizardsIconList();
-
-    void testAnsiFilterOutputParser_data();
-    void testAnsiFilterOutputParser();
-
-    void testGccOutputParsers_data();
-    void testGccOutputParsers();
-
-    void testCustomOutputParsers_data();
-    void testCustomOutputParsers();
-
-    void testClangOutputParser_data();
-    void testClangOutputParser();
-
-    void testLinuxIccOutputParsers_data();
-    void testLinuxIccOutputParsers();
-
-    void testGnuMakeParserParsing_data();
-    void testGnuMakeParserParsing();
-    void testGnuMakeParserTaskMangling();
-
-    void testXcodebuildParserParsing_data();
-    void testXcodebuildParserParsing();
-
-    void testMsvcOutputParsers_data();
-    void testMsvcOutputParsers();
-
-    void testClangClOutputParsers_data();
-    void testClangClOutputParsers();
-
-    void testGccAbiGuessing_data();
-    void testGccAbiGuessing();
-
-    void testAbiRoundTrips();
-    void testAbiOfBinary_data();
-    void testAbiOfBinary();
-    void testAbiFromTargetTriplet_data();
-    void testAbiFromTargetTriplet();
-    void testAbiUserOsFlavor_data();
-    void testAbiUserOsFlavor();
-
-    void testDeviceManager();
-
-    void testToolChainMerging_data();
-    void testToolChainMerging();
-    void deleteTestToolchains();
-
-    void testUserFileAccessor_prepareToReadSettings();
-    void testUserFileAccessor_prepareToReadSettingsObsoleteVersion();
-    void testUserFileAccessor_prepareToReadSettingsObsoleteVersionNewVersion();
-    void testUserFileAccessor_prepareToWriteSettings();
-    void testUserFileAccessor_mergeSettings();
-    void testUserFileAccessor_mergeSettingsEmptyUser();
-    void testUserFileAccessor_mergeSettingsEmptyShared();
-
-    void testProject_setup();
-    void testProject_changeDisplayName();
-    void testProject_parsingSuccess();
-    void testProject_parsingFail();
-    void testProject_projectTree();
-    void testProject_multipleBuildConfigs();
-
-    void testSourceToBinaryMapping();
-    void testSourceToBinaryMapping_data();
-
-    void testSessionSwitch();
-#endif // WITH_TESTS
 };
 
 } // namespace ProjectExplorer

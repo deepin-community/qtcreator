@@ -29,22 +29,22 @@
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
 
+#include <utils/action.h>
 #include <utils/algorithm.h>
 #include <utils/async.h>
+#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/infobar.h>
 #include <utils/layoutbuilder.h>
-#include <utils/parameteraction.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/temporarydirectory.h>
 
-#include <vcsbase/basevcseditorfactory.h>
-#include <vcsbase/basevcssubmiteditorfactory.h>
 #include <vcsbase/vcsbaseeditor.h>
 #include <vcsbase/vcsoutputwindow.h>
 #include <vcsbase/vcsbasesubmiteditor.h>
 #include <vcsbase/vcsbaseplugin.h>
+#include <vcsbase/vcsbasetr.h>
 #include <vcsbase/vcscommand.h>
 
 #include <QAbstractButton>
@@ -65,7 +65,6 @@
 #include <QMetaObject>
 #include <QMutex>
 #include <QRegularExpression>
-#include <QSharedPointer>
 #include <QTextCodec>
 #include <QUuid>
 #include <QVBoxLayout>
@@ -79,10 +78,11 @@ using namespace Core;
 using namespace ProjectExplorer;
 using namespace VcsBase;
 using namespace Utils;
+
+using namespace std::chrono;
 using namespace std::placeholders;
 
-namespace ClearCase {
-namespace Internal {
+namespace ClearCase::Internal {
 
 const char CLEARCASE_CONTEXT[]         = "ClearCase Context";
 const char CMD_ID_CLEARCASE_MENU[]     = "ClearCase.Menu";
@@ -101,40 +101,16 @@ const char CMD_ID_UPDATE_VIEW[]        = "ClearCase.UpdateView";
 const char CMD_ID_CHECKIN_ALL[]        = "ClearCase.CheckInAll";
 const char CMD_ID_STATUS[]             = "ClearCase.Status";
 
-const VcsBaseEditorParameters logEditorParameters {
-    LogOutput,
-    "ClearCase File Log Editor",   // id
-    QT_TRANSLATE_NOOP("QtC::VcsBase", "ClearCase File Log Editor"),   // display_name
-    "text/vnd.qtcreator.clearcase.log"
-};
-
-const VcsBaseEditorParameters annotateEditorParameters {
-    AnnotateOutput,
-    "ClearCase Annotation Editor",  // id
-    QT_TRANSLATE_NOOP("QtC::VcsBase", "ClearCase Annotation Editor"),   // display_name
-    "text/vnd.qtcreator.clearcase.annotation"
-};
-
-const VcsBaseEditorParameters diffEditorParameters {
-    DiffOutput,
-    "ClearCase Diff Editor",  // id
-    QT_TRANSLATE_NOOP("QtC::VcsBase", "ClearCase Diff Editor"),   // display_name
-    "text/x-patch"
-};
-
-const VcsBaseSubmitEditorParameters submitParameters {
-    Constants::CLEARCASE_SUBMIT_MIMETYPE,
-    Constants::CLEARCASECHECKINEDITOR_ID,
-    Constants::CLEARCASECHECKINEDITOR_DISPLAY_NAME,
-    VcsBaseSubmitEditorParameters::DiffFiles
-};
+const char LOG_EDITOR_ID[]             = "ClearCase File Log Editor";
+const char ANNOTATION_EDITOR_ID[]      = "ClearCase Annotation Editor";
+const char DIFF_EDITOR_ID[]            = "ClearCase Diff Editor";
 
 static QString debugCodec(const QTextCodec *c)
 {
     return c ? QString::fromLatin1(c->name()) : QString::fromLatin1("Null codec");
 }
 
-class ClearCasePluginPrivate final : public VcsBase::VcsBasePluginPrivate
+class ClearCasePluginPrivate final : public VcsBase::VersionControlBase
 {
     Q_OBJECT
 
@@ -143,7 +119,7 @@ public:
     ~ClearCasePluginPrivate() final;
 
     // IVersionControl
-    QString displayName() const final;
+    QString displayName() const final { return "ClearCase"; }
     Id id() const final;
 
     bool isVcsFileOrDirectory(const FilePath &filePath) const final;
@@ -163,6 +139,9 @@ public:
     bool vcsCreateRepository(const FilePath &directory) final;
 
     void vcsAnnotate(const FilePath &file, int line) final;
+    void vcsLog(const Utils::FilePath &topLevel, const Utils::FilePath &relativeDirectory) final {
+        history(topLevel, {relativeDirectory.path()});
+    }
     void vcsDescribe(const FilePath &source, const QString &changeNr) final;
 
     QString vcsOpenText() const final;
@@ -196,14 +175,14 @@ public:
     QString ccGetComment(const FilePath &workingDir, const QString &fileName) const;
     bool ccFileOp(const FilePath &workingDir, const QString &title, const QStringList &args,
                   const QString &fileName, const QString &file2 = {});
-    FileStatus vcsStatus(const QString &file) const;
-    void checkAndReIndexUnknownFile(const QString &file);
+    FileStatus vcsStatus(const FilePath &file) const;
+    void checkAndReIndexUnknownFile(const FilePath &file);
     QString currentView() const { return m_viewData.name; }
     QString viewRoot() const { return m_viewData.root; }
     void refreshActivities();
     inline bool isUcm() const { return m_viewData.isUcm; }
     inline bool isDynamic() const { return m_viewData.isDynamic; }
-    void setStatus(const QString &file, FileStatus::Status status, bool update = true);
+    void setStatus(const FilePath &file, FileStatus::Status status, bool update = true);
 
     bool ccCheckUcm(const QString &viewname, const FilePath &workingDir) const;
 #ifdef WITH_TESTS
@@ -216,7 +195,7 @@ public:
     void updateStreamAndView();
 
 protected:
-    void updateActions(VcsBase::VcsBasePluginPrivate::ActionState) override;
+    void updateActions(VcsBase::VersionControlBase::ActionState) override;
     bool activateCommit() override;
     void discardCommit() override { cleanCheckInMessageFile(); }
     QString ccGet(const FilePath &workingDir, const QString &file, const QString &prefix = {});
@@ -251,10 +230,10 @@ private:
     void closing();
 
     inline bool isCheckInEditorOpen() const;
-    QStringList getVobList() const;
-    QString ccManagesDirectory(const FilePath &directory) const;
-    QString ccViewRoot(const FilePath &directory) const;
-    QString findTopLevel(const FilePath &directory) const;
+    FilePaths getVobList() const;
+    FilePath ccManagesDirectory(const FilePath &directory) const;
+    FilePath ccViewRoot(const FilePath &directory) const;
+    FilePath findTopLevel(const FilePath &directory) const;
     IEditor *showOutputInEditor(const QString& title, const QString &output, Id id,
                                 const FilePath &source, QTextCodec *codec) const;
     CommandResult runCleartoolProc(const FilePath &workingDir,
@@ -262,7 +241,7 @@ private:
     CommandResult runCleartool(const FilePath &workingDir, const QStringList &arguments,
                                VcsBase::RunFlags flags = VcsBase::RunFlags::None,
                                QTextCodec *codec = nullptr, int timeoutMultiplier = 1) const;
-    static void sync(QPromise<void> &promise, QStringList files);
+    static void sync(QPromise<void> &promise, FilePaths files);
 
     void history(const FilePath &workingDir,
                  const QStringList &file = {},
@@ -279,12 +258,13 @@ private:
     QString getFile(const QString &nativeFile, const QString &prefix);
     QString runExtDiff(const FilePath &workingDir, const QStringList &arguments, int timeOutS,
                        QTextCodec *outputCodec = nullptr);
-    static QString getDriveLetterOfPath(const QString &directory);
+    static FilePath getDriveLetterOfPath(FilePath directory);
 
-    FileStatus::Status getFileStatus(const QString &fileName) const;
-    void updateStatusForFile(const QString &absFile);
-    void updateEditDerivedObjectWarning(const QString &fileName, const FileStatus::Status status);
+    FileStatus::Status getFileStatus(const FilePath &fileName) const;
+    void updateStatusForFile(const FilePath &absFile);
+    void updateEditDerivedObjectWarning(const FilePath &fileName, const FileStatus::Status status);
 
+public:
     ClearCaseSettings m_settings;
 
     FilePath m_checkInMessageFilePath;
@@ -297,60 +277,61 @@ private:
     QString m_diffPrefix;
 
     CommandLocator *m_commandLocator = nullptr;
-    ParameterAction *m_checkOutAction = nullptr;
-    ParameterAction *m_checkInCurrentAction = nullptr;
-    ParameterAction *m_undoCheckOutAction = nullptr;
-    ParameterAction *m_undoHijackAction = nullptr;
-    ParameterAction *m_diffCurrentAction = nullptr;
-    ParameterAction *m_historyCurrentAction = nullptr;
-    ParameterAction *m_annotateCurrentAction = nullptr;
-    ParameterAction *m_addFileAction = nullptr;
+    Action *m_checkOutAction = nullptr;
+    Action *m_checkInCurrentAction = nullptr;
+    Action *m_undoCheckOutAction = nullptr;
+    Action *m_undoHijackAction = nullptr;
+    Action *m_diffCurrentAction = nullptr;
+    Action *m_historyCurrentAction = nullptr;
+    Action *m_annotateCurrentAction = nullptr;
+    Action *m_addFileAction = nullptr;
     QAction *m_diffActivityAction = nullptr;
     QAction *m_updateIndexAction = nullptr;
-    ParameterAction *m_updateViewAction = nullptr;
-    ParameterAction *m_checkInActivityAction = nullptr;
+    Action *m_updateViewAction = nullptr;
+    Action *m_checkInActivityAction = nullptr;
     QAction *m_checkInAllAction = nullptr;
     QAction *m_statusAction = nullptr;
 
     QAction *m_menuAction = nullptr;
     QMutex m_activityMutex;
     QList<QStringPair> m_activities;
-    QSharedPointer<StatusMap> m_statusMap;
+    std::shared_ptr<StatusMap> m_statusMap;
 
     ClearCaseSettingsPage m_settingsPage;
 
-    VcsSubmitEditorFactory m_submitEditorFactory {
-        submitParameters,
-        [] { return new ClearCaseSubmitEditor; },
-        this
-    };
-
-    VcsEditorFactory logEditorFactory {
-        &logEditorParameters,
+    VcsEditorFactory logEditorFactory {{
+        LogOutput,
+        LOG_EDITOR_ID,
+        VcsBase::Tr::tr("ClearCase File Log Editor"),   // display_name
+        "text/vnd.qtcreator.clearcase.log",
         [] { return new ClearCaseEditorWidget; },
         std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)
-    };
+    }};
 
-    VcsEditorFactory annotateEditorFactory {
-        &annotateEditorParameters,
+    VcsEditorFactory annotateEditorFactory {{
+        AnnotateOutput,
+        ANNOTATION_EDITOR_ID,
+        VcsBase::Tr::tr("ClearCase Annotation Editor"),   // display_name
+        "text/vnd.qtcreator.clearcase.annotation",
         [] { return new ClearCaseEditorWidget; },
         std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)
-    };
+    }};
 
-    VcsEditorFactory diffEditorFactory {
-        &diffEditorParameters,
+    VcsEditorFactory diffEditorFactory {{
+        DiffOutput,
+        DIFF_EDITOR_ID,
+        VcsBase::Tr::tr("ClearCase Diff Editor"),   // display_name
+        "text/x-patch",
         [] { return new ClearCaseEditorWidget; },
         std::bind(&ClearCasePluginPrivate::vcsDescribe, this, _1, _2)
-    };
+    }};
 
-    friend class ClearCasePlugin;
 #ifdef WITH_TESTS
     bool m_fakeClearTool = false;
     FilePath m_tempFile;
 #endif
 };
 
-// ------------- ClearCasePlugin
 static ClearCasePluginPrivate *dd = nullptr;
 
 ClearCasePluginPrivate::~ClearCasePluginPrivate()
@@ -375,32 +356,33 @@ bool ClearCasePluginPrivate::isCheckInEditorOpen() const
 }
 
 /// Files in this directories are under ClearCase control
-QStringList ClearCasePluginPrivate::getVobList() const
+FilePaths ClearCasePluginPrivate::getVobList() const
 {
     const CommandResult result = runCleartoolProc(currentState().topLevel(), {"lsvob", "-s"});
-    return result.cleanedStdOut().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    return transform(
+        result.cleanedStdOut().split(QLatin1Char('\n'), Qt::SkipEmptyParts),
+        FilePath::fromUserInput);
 }
 
 /// Get the drive letter of a path
 /// Necessary since QDir(directory).rootPath() returns C:/ in all cases
-QString ClearCasePluginPrivate::getDriveLetterOfPath(const QString &directory)
+FilePath ClearCasePluginPrivate::getDriveLetterOfPath(FilePath directory)
 {
-    // cdUp until we get just the drive letter
-    QDir dir(directory);
-    while (!dir.isRoot() && dir.cdUp())
-        ;
+    // Go up until we get just the drive letter
+    while (!directory.isRootPath() && directory.parentDir().exists())
+        directory = directory.parentDir();
 
-    return dir.path();
+    return directory;
 }
 
-void ClearCasePluginPrivate::updateStatusForFile(const QString &absFile)
+void ClearCasePluginPrivate::updateStatusForFile(const FilePath &absFile)
 {
     setStatus(absFile, getFileStatus(absFile), false);
 }
 
 /// Give warning if a derived object is edited
-void ClearCasePluginPrivate::updateEditDerivedObjectWarning(const QString &fileName,
-                                                     const FileStatus::Status status)
+void ClearCasePluginPrivate::updateEditDerivedObjectWarning(
+    const FilePath &fileName, const FileStatus::Status status)
 {
     if (!isDynamic())
         return;
@@ -416,26 +398,26 @@ void ClearCasePluginPrivate::updateEditDerivedObjectWarning(const QString &fileN
         if (!infoBar->canInfoBeAdded(derivedObjectWarning))
             return;
 
-        infoBar->addInfo(InfoBarEntry(derivedObjectWarning,
-                                      Tr::tr("Editing Derived Object: %1").arg(fileName)));
+        infoBar->addInfo(InfoBarEntry(
+            derivedObjectWarning,
+            Tr::tr("Editing Derived Object: %1").arg(fileName.toUserOutput())));
     } else {
         infoBar->removeInfo(derivedObjectWarning);
     }
 }
 
-FileStatus::Status ClearCasePluginPrivate::getFileStatus(const QString &fileName) const
+FileStatus::Status ClearCasePluginPrivate::getFileStatus(const FilePath &fileName) const
 {
     QTC_CHECK(!fileName.isEmpty());
 
-    const QDir viewRootDir = QFileInfo(fileName).dir();
-    const QString buffer = runCleartoolProc(FilePath::fromString(viewRootDir.path()),
-                                            {"ls", fileName}).cleanedStdOut();
+    const FilePath viewRootDir = fileName.parentDir();
+    const QString buffer
+        = runCleartoolProc(FilePath::fromString(viewRootDir.path()), {"ls", fileName.nativePath()})
+              .cleanedStdOut();
     const int atatpos = buffer.indexOf(QLatin1String("@@"));
     if (atatpos != -1) { // probably a managed file
-        const QString absFile =
-                viewRootDir.absoluteFilePath(
-                    QDir::fromNativeSeparators(buffer.left(atatpos)));
-        QTC_CHECK(QFileInfo::exists(absFile));
+        const FilePath absFile = viewRootDir.pathAppended(buffer.left(atatpos)).absolutePath();
+        QTC_CHECK(absFile.exists());
         QTC_CHECK(!absFile.isEmpty());
 
         // "cleartool ls" of a derived object looks like this:
@@ -452,7 +434,7 @@ FileStatus::Status ClearCasePluginPrivate::getFileStatus(const QString &fileName
         else
             return FileStatus::CheckedIn;
     } else {
-        QTC_CHECK(QFileInfo::exists(fileName));
+        QTC_CHECK(fileName.exists());
         QTC_CHECK(!fileName.isEmpty());
         return FileStatus::NotManaged;
     }
@@ -492,7 +474,7 @@ FileStatus::Status ClearCasePluginPrivate::getFileStatus(const QString &fileName
 /// snapshot views.
 ///
 /// Returns the ClearCase topLevel/VOB directory for this directory.
-QString ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) const
+FilePath ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) const
 {
     const CommandResult result = runCleartoolProc(directory, {"pwv"});
     if (result.result() != ProcessResult::FinishedWithSuccess)
@@ -513,21 +495,18 @@ QString ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) co
     const QString workingDirectoryView = output[0].mid(workingDirPattern.size());
     const QString setView = output[1].mid(setViewDirPattern.size());
     const QString none(QLatin1String("** NONE **"));
-    QString rootDir;
-    if (setView != none || workingDirectoryView != none)
-        rootDir = ccViewRoot(directory);
-    else
+    if (setView == none && workingDirectoryView == none)
         return {};
+    const FilePath rootDir = ccViewRoot(directory);
 
     // Check if the directory is inside one of the known VOBs.
-    static QStringList vobs;
+    static FilePaths vobs;
     if (vobs.empty())
         vobs = getVobList();
 
-    for (const QString &relativeVobDir : std::as_const(vobs)) {
-        const QString vobPath = QDir::cleanPath(rootDir + QDir::fromNativeSeparators(relativeVobDir));
-        const bool isManaged = (vobPath == directory.toString())
-                || directory.isChildOf(FilePath::fromString(vobPath));
+    for (const FilePath &relativeVobDir : std::as_const(vobs)) {
+        const FilePath vobPath = rootDir.resolvePath(relativeVobDir).cleanPath();
+        const bool isManaged = (vobPath == directory) || directory.isChildOf(vobPath);
         if (isManaged)
             return vobPath;
     }
@@ -535,46 +514,36 @@ QString ClearCasePluginPrivate::ccManagesDirectory(const FilePath &directory) co
 }
 
 /// Find the root path of a clearcase view. Precondition: This is a clearcase managed dir
-QString ClearCasePluginPrivate::ccViewRoot(const FilePath &directory) const
+FilePath ClearCasePluginPrivate::ccViewRoot(const FilePath &directory) const
 {
     const CommandResult result = runCleartoolProc(directory, {"pwv", "-root"});
-    QString root = result.cleanedStdOut().trimmed();
+    auto root = FilePath::fromUserInput(result.cleanedStdOut().trimmed());
     if (root.isEmpty()) {
         if (HostOsInfo::isWindowsHost())
-            root = getDriveLetterOfPath(directory.toString());
+            root = getDriveLetterOfPath(directory);
         else
-            root = QLatin1Char('/');
+            root = FilePath::fromUserInput("/");
     }
 
-    return QDir::fromNativeSeparators(root);
+    return root;
 }
 
 /*! Find top level for view that contains \a directory
  *
  * Handles both dynamic views and snapshot views.
  */
-QString ClearCasePluginPrivate::findTopLevel(const FilePath &directory) const
+FilePath ClearCasePluginPrivate::findTopLevel(const FilePath &directory) const
 {
     // Do not check again if we've already tested that the dir is managed,
     // or if it is a child of a managed dir (top level).
     if (directory == m_topLevel || directory.isChildOf(m_topLevel))
-        return m_topLevel.toString();
+        return m_topLevel;
 
     return ccManagesDirectory(directory);
 }
 
-void ClearCasePlugin::initialize()
-{
-    dd = new ClearCasePluginPrivate;
-}
-
-void ClearCasePlugin::extensionsInitialized()
-{
-    dd->extensionsInitialized();
-}
-
 ClearCasePluginPrivate::ClearCasePluginPrivate()
-    : VcsBase::VcsBasePluginPrivate(Context(CLEARCASE_CONTEXT)),
+    : VcsBase::VersionControlBase(Context(CLEARCASE_CONTEXT)),
       m_statusMap(new StatusMap)
 {
     dd = this;
@@ -614,123 +583,162 @@ ClearCasePluginPrivate::ClearCasePluginPrivate()
     clearcaseMenu->menu()->setTitle(Tr::tr("C&learCase"));
     toolsContainer->addMenu(clearcaseMenu);
     m_menuAction = clearcaseMenu->menu()->menuAction();
-    Command *command;
 
-    m_checkOutAction = new ParameterAction(Tr::tr("Check Out..."), Tr::tr("Check &Out \"%1\"..."), ParameterAction::AlwaysEnabled, this);
-    command = ActionManager::registerAction(m_checkOutAction, CMD_ID_CHECKOUT,
-        context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+O") : Tr::tr("Alt+L,Alt+O")));
-    connect(m_checkOutAction, &QAction::triggered, this, &ClearCasePluginPrivate::checkOutCurrentFile);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder checkOut(this, CMD_ID_CHECKOUT);
+    checkOut.setParameterText(Tr::tr("Check &Out \"%1\"..."), Tr::tr("Check Out..."),
+                              ActionBuilder::AlwaysEnabled);
+    checkOut.bindContextAction(&m_checkOutAction);
+    checkOut.setContext(context);
+    checkOut.setCommandAttribute(Command::CA_UpdateText);
+    checkOut.setDefaultKeySequence(Tr::tr("Meta+L,Meta+O"), Tr::tr("Alt+L,Alt+O"));
+    checkOut.addOnTriggered(this, &ClearCasePluginPrivate::checkOutCurrentFile);
+    checkOut.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(checkOut.command());
 
-    m_checkInCurrentAction = new ParameterAction(Tr::tr("Check &In..."), Tr::tr("Check &In \"%1\"..."), ParameterAction::AlwaysEnabled, this);
-    command = ActionManager::registerAction(m_checkInCurrentAction, CMD_ID_CHECKIN, context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+I") : Tr::tr("Alt+L,Alt+I")));
-    connect(m_checkInCurrentAction, &QAction::triggered, this, &ClearCasePluginPrivate::startCheckInCurrentFile);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder checkInCurrent(this, CMD_ID_CHECKIN);
+    checkInCurrent.setParameterText(Tr::tr("Check &In \"%1\"..."), Tr::tr("Check &In..."),
+                                    ActionBuilder::AlwaysEnabled);
+    checkInCurrent.bindContextAction(&m_checkInCurrentAction);
+    checkInCurrent.setContext(context);
+    checkInCurrent.setCommandAttribute(Command::CA_UpdateText);
+    checkInCurrent.setDefaultKeySequence(Tr::tr("Meta+L,Meta+I"), Tr::tr("Alt+L,Alt+I"));
+    checkInCurrent.addOnTriggered(this, &ClearCasePluginPrivate::startCheckInCurrentFile);
+    checkInCurrent.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(checkInCurrent.command());
 
-    m_undoCheckOutAction = new ParameterAction(Tr::tr("Undo Check Out"), Tr::tr("&Undo Check Out \"%1\""), ParameterAction::AlwaysEnabled, this);
-    command = ActionManager::registerAction(m_undoCheckOutAction, CMD_ID_UNDOCHECKOUT, context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+U") : Tr::tr("Alt+L,Alt+U")));
-    connect(m_undoCheckOutAction, &QAction::triggered, this, &ClearCasePluginPrivate::undoCheckOutCurrent);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder undoCheckOut(this, CMD_ID_UNDOCHECKOUT);
+    undoCheckOut.setParameterText("&Undo Check Out \"%1\"", Tr::tr("Undo Check Out"),
+                                  ActionBuilder::AlwaysEnabled);
+    undoCheckOut.bindContextAction(&m_undoCheckOutAction);
+    undoCheckOut.setContext(context);
+    undoCheckOut.setCommandAttribute(Command::CA_UpdateText);
+    undoCheckOut.setDefaultKeySequence(Tr::tr("Meta+L,Meta+U"), Tr::tr("Alt+L,Alt+U"));
+    undoCheckOut.addOnTriggered(this, &ClearCasePluginPrivate::undoCheckOutCurrent);
+    undoCheckOut.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(undoCheckOut.command());
 
-    m_undoHijackAction = new ParameterAction(Tr::tr("Undo Hijack"), Tr::tr("Undo Hi&jack \"%1\""), ParameterAction::AlwaysEnabled, this);
-    command = ActionManager::registerAction(m_undoHijackAction, CMD_ID_UNDOHIJACK, context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+R") : Tr::tr("Alt+L,Alt+R")));
-    connect(m_undoHijackAction, &QAction::triggered, this, &ClearCasePluginPrivate::undoHijackCurrent);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
-
-    clearcaseMenu->addSeparator(context);
-
-    m_diffCurrentAction = new ParameterAction(Tr::tr("Diff Current File"), Tr::tr("&Diff \"%1\""), ParameterAction::EnabledWithParameter, this);
-    command = ActionManager::registerAction(m_diffCurrentAction,
-        CMD_ID_DIFF_CURRENT, context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+D") : Tr::tr("Alt+L,Alt+D")));
-    connect(m_diffCurrentAction, &QAction::triggered, this, &ClearCasePluginPrivate::diffCurrentFile);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
-
-    m_historyCurrentAction = new ParameterAction(Tr::tr("History Current File"), Tr::tr("&History \"%1\""), ParameterAction::EnabledWithParameter, this);
-    command = ActionManager::registerAction(m_historyCurrentAction,
-        CMD_ID_HISTORY_CURRENT, context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+H") : Tr::tr("Alt+L,Alt+H")));
-    connect(m_historyCurrentAction, &QAction::triggered, this,
-        &ClearCasePluginPrivate::historyCurrentFile);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
-
-    m_annotateCurrentAction = new ParameterAction(Tr::tr("Annotate Current File"), Tr::tr("&Annotate \"%1\""), ParameterAction::EnabledWithParameter, this);
-    command = ActionManager::registerAction(m_annotateCurrentAction,
-        CMD_ID_ANNOTATE, context);
-    command->setAttribute(Command::CA_UpdateText);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+A") : Tr::tr("Alt+L,Alt+A")));
-    connect(m_annotateCurrentAction, &QAction::triggered, this,
-        &ClearCasePluginPrivate::annotateCurrentFile);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
-
-    m_addFileAction = new ParameterAction(Tr::tr("Add File..."), Tr::tr("Add File \"%1\""), ParameterAction::EnabledWithParameter, this);
-    command = ActionManager::registerAction(m_addFileAction, CMD_ID_ADD_FILE, context);
-    command->setAttribute(Command::CA_UpdateText);
-    connect(m_addFileAction, &QAction::triggered, this, &ClearCasePluginPrivate::addCurrentFile);
-    clearcaseMenu->addAction(command);
+    ActionBuilder undoHijack(this, CMD_ID_UNDOHIJACK);
+    undoHijack.setParameterText(Tr::tr("Undo Hi&jack \"%1\""), Tr::tr("Undo Hijack"),
+                                ActionBuilder::AlwaysEnabled);
+    undoHijack.bindContextAction(&m_undoHijackAction);
+    undoHijack.setContext(context);
+    undoHijack.setCommandAttribute(Command::CA_UpdateText);
+    undoHijack.setDefaultKeySequence(Tr::tr("Meta+L,Meta+R"), Tr::tr("Alt+L,Alt+R"));
+    undoHijack.addOnTriggered(this, &ClearCasePluginPrivate::undoHijackCurrent);
+    undoHijack.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(undoHijack.command());
 
     clearcaseMenu->addSeparator(context);
 
-    m_diffActivityAction = new QAction(Tr::tr("Diff A&ctivity..."), this);
-    m_diffActivityAction->setEnabled(false);
-    command = ActionManager::registerAction(m_diffActivityAction, CMD_ID_DIFF_ACTIVITY, context);
-    connect(m_diffActivityAction, &QAction::triggered, this, &ClearCasePluginPrivate::diffActivity);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder diffCurrent(this, CMD_ID_DIFF_CURRENT);
+    diffCurrent.setParameterText(Tr::tr("&Diff \"%1\""), Tr::tr("Diff Current File"),
+                                 ActionBuilder::EnabledWithParameter);
+    diffCurrent.bindContextAction(&m_diffCurrentAction);
+    diffCurrent.setContext(context);
+    diffCurrent.setCommandAttribute(Command::CA_UpdateText);
+    diffCurrent.setDefaultKeySequence(Tr::tr("Meta+L,Meta+D"), Tr::tr("Alt+L,Alt+D"));
+    diffCurrent.addOnTriggered(this, &ClearCasePluginPrivate::diffCurrentFile);
+    diffCurrent.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(diffCurrent.command());
 
-    m_checkInActivityAction = new ParameterAction(Tr::tr("Ch&eck In Activity"), Tr::tr("Chec&k In Activity \"%1\"..."), ParameterAction::EnabledWithParameter, this);
-    m_checkInActivityAction->setEnabled(false);
-    command = ActionManager::registerAction(m_checkInActivityAction, CMD_ID_CHECKIN_ACTIVITY, context);
-    connect(m_checkInActivityAction, &QAction::triggered, this, &ClearCasePluginPrivate::startCheckInActivity);
-    command->setAttribute(Command::CA_UpdateText);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder historyCurrent(this, CMD_ID_HISTORY_CURRENT);
+    historyCurrent.setParameterText(Tr::tr("&History \"%1\""), Tr::tr("History Current File"),
+                                    ActionBuilder::EnabledWithParameter);
+    historyCurrent.bindContextAction(&m_historyCurrentAction);
+    historyCurrent.setContext(context);
+    historyCurrent.setCommandAttribute(Command::CA_UpdateText);
+    historyCurrent.setDefaultKeySequence(Tr::tr("Meta+L,Meta+H"), Tr::tr("Alt+L,Alt+H"));
+    historyCurrent.addOnTriggered(this, &ClearCasePluginPrivate::historyCurrentFile);
+    historyCurrent.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(historyCurrent.command());
+
+    ActionBuilder annotateCurrent(this, CMD_ID_ANNOTATE);
+    annotateCurrent.setParameterText(Tr::tr("&Annotate \"%1\""),Tr::tr("Annotate Current File"),
+                                     ActionBuilder::EnabledWithParameter);
+    annotateCurrent.bindContextAction(&m_annotateCurrentAction);
+    annotateCurrent.setContext(context);
+    annotateCurrent.setCommandAttribute(Command::CA_UpdateText);
+    annotateCurrent.setDefaultKeySequence(Tr::tr("Meta+L,Meta+A"), Tr::tr("Alt+L,Alt+A"));
+    annotateCurrent.addOnTriggered(this, &ClearCasePluginPrivate::annotateCurrentFile);
+    annotateCurrent.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(annotateCurrent.command());
+
+    ActionBuilder addFile(this, CMD_ID_ADD_FILE);
+    addFile.setParameterText(Tr::tr("Add File \"%1\""), Tr::tr("Add File..."),
+                             ActionBuilder::EnabledWithParameter);
+    addFile.bindContextAction(&m_addFileAction);
+    addFile.setContext(context);
+    addFile.setCommandAttribute(Command::CA_UpdateText);
+    addFile.addOnTriggered(this, &ClearCasePluginPrivate::addCurrentFile);
+    addFile.addToContainer(CMD_ID_CLEARCASE_MENU);
 
     clearcaseMenu->addSeparator(context);
 
-    m_updateIndexAction = new QAction(Tr::tr("Update Index"), this);
-    command = ActionManager::registerAction(m_updateIndexAction, CMD_ID_UPDATEINDEX, context);
-    connect(m_updateIndexAction, &QAction::triggered, this, &ClearCasePluginPrivate::updateIndex);
-    clearcaseMenu->addAction(command);
+    ActionBuilder diffActivity(this, CMD_ID_DIFF_ACTIVITY);
+    diffActivity.setText(Tr::tr("Diff A&ctivity..."));
+    diffActivity.bindContextAction(&m_diffActivityAction);
+    diffActivity.setContext(context);
+    diffActivity.setEnabled(false);
+    diffActivity.addOnTriggered(this, &ClearCasePluginPrivate::diffActivity);
+    diffActivity.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(diffActivity.command());
 
-    m_updateViewAction = new ParameterAction(Tr::tr("Update View"), Tr::tr("U&pdate View \"%1\""), ParameterAction::EnabledWithParameter, this);
-    command = ActionManager::registerAction(m_updateViewAction, CMD_ID_UPDATE_VIEW, context);
-    connect(m_updateViewAction, &QAction::triggered, this, &ClearCasePluginPrivate::updateView);
-    command->setAttribute(Command::CA_UpdateText);
-    clearcaseMenu->addAction(command);
+    ActionBuilder checkInActivity(this, CMD_ID_CHECKIN_ACTIVITY);
+    checkInActivity.setParameterText(Tr::tr("Chec&k In Activity \"%1\"..."), Tr::tr("Ch&eck In Activity"),
+                                     ActionBuilder::EnabledWithParameter);
+    checkInActivity.bindContextAction(&m_checkInActivityAction);
+    checkInActivity.setContext(context);
+    checkInActivity.setEnabled(false);
+    checkInActivity.addOnTriggered(this, &ClearCasePluginPrivate::startCheckInActivity);
+    checkInActivity.setCommandAttribute(Command::CA_UpdateText);
+    checkInActivity.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(checkInActivity.command());
 
     clearcaseMenu->addSeparator(context);
 
-    m_checkInAllAction = new QAction(Tr::tr("Check In All &Files..."), this);
-    command = ActionManager::registerAction(m_checkInAllAction, CMD_ID_CHECKIN_ALL, context);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+F") : Tr::tr("Alt+L,Alt+F")));
-    connect(m_checkInAllAction, &QAction::triggered, this, &ClearCasePluginPrivate::startCheckInAll);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder updateIndex(this, CMD_ID_UPDATEINDEX);
+    updateIndex.setText(Tr::tr("Update Index"));
+    updateIndex.bindContextAction(&m_updateIndexAction);
+    updateIndex.setContext(context);
+    updateIndex.addOnTriggered(this, &ClearCasePluginPrivate::updateIndex);
+    updateIndex.addToContainer(CMD_ID_CLEARCASE_MENU);
 
-    m_statusAction = new QAction(Tr::tr("View &Status"), this);
-    command = ActionManager::registerAction(m_statusAction, CMD_ID_STATUS, context);
-    command->setDefaultKeySequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+L,Meta+S") : Tr::tr("Alt+L,Alt+S")));
-    connect(m_statusAction, &QAction::triggered, this, &ClearCasePluginPrivate::viewStatus);
-    clearcaseMenu->addAction(command);
-    m_commandLocator->appendCommand(command);
+    ActionBuilder updateView(this, CMD_ID_UPDATE_VIEW);
+    updateView.setParameterText(Tr::tr("U&pdate View \"%1\""), Tr::tr("Update View"),
+                                ActionBuilder::EnabledWithParameter);
+    updateView.bindContextAction(&m_updateViewAction);
+    updateView.setContext(context);
+    updateView.setCommandAttribute(Command::CA_UpdateText);
+    updateView.addOnTriggered(this, &ClearCasePluginPrivate::updateView);
+    updateView.addToContainer(CMD_ID_CLEARCASE_MENU);
+
+    clearcaseMenu->addSeparator(context);
+
+    ActionBuilder checkInAll(this, CMD_ID_CHECKIN_ALL);
+    checkInAll.setText(Tr::tr("Check In All &Files..."));
+    checkInAll.bindContextAction(&m_checkInAllAction);
+    checkInAll.setContext(context);
+    checkInAll.setDefaultKeySequence(Tr::tr("Meta+L,Meta+F"), Tr::tr("Alt+L,Alt+F"));
+    checkInAll.addOnTriggered(this, &ClearCasePluginPrivate::startCheckInAll);
+    checkInAll.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(checkInAll.command());
+
+    ActionBuilder status(this, CMD_ID_STATUS);
+    status.setText(Tr::tr("View &Status"));
+    status.bindContextAction(&m_statusAction);
+    status.setContext(context);
+    status.setDefaultKeySequence(Tr::tr("Meta+L,Meta+S"), Tr::tr("Alt+L,Alt+S"));
+    status.addOnTriggered(this, &ClearCasePluginPrivate::viewStatus);
+    status.addToContainer(CMD_ID_CLEARCASE_MENU);
+    m_commandLocator->appendCommand(status.command());
+
+    setupVcsSubmitEditor(this, {
+        Constants::CLEARCASE_SUBMIT_MIMETYPE,
+        Constants::CLEARCASECHECKINEDITOR_ID,
+        VcsBase::Tr::tr("ClearCase Check In Editor"),
+        VcsBaseSubmitEditorParameters::DiffFiles,
+        [] { return new ClearCaseSubmitEditor; }
+    });
 }
 
 // called before closing the submit editor
@@ -834,19 +842,20 @@ QStringList ClearCasePluginPrivate::ccGetActiveVobs() const
     return res;
 }
 
-void ClearCasePluginPrivate::checkAndReIndexUnknownFile(const QString &file)
+void ClearCasePluginPrivate::checkAndReIndexUnknownFile(const FilePath &file)
 {
     if (isDynamic()) {
         // reindex unknown files
-        if (m_statusMap->value(file, FileStatus(FileStatus::Unknown)).status == FileStatus::Unknown)
+        if (m_statusMap->value(file.path(), FileStatus(FileStatus::Unknown)).status
+            == FileStatus::Unknown)
             updateStatusForFile(file);
     }
 }
 
 // file must be absolute, and using '/' path separator
-FileStatus ClearCasePluginPrivate::vcsStatus(const QString &file) const
+FileStatus ClearCasePluginPrivate::vcsStatus(const FilePath &file) const
 {
-    return m_statusMap->value(file, FileStatus(FileStatus::Unknown));
+    return m_statusMap->value(file.path(), FileStatus(FileStatus::Unknown));
 }
 
 QString ClearCasePluginPrivate::ccGetFileActivity(const FilePath &workingDir, const QString &file)
@@ -893,7 +902,7 @@ void ClearCasePluginPrivate::updateStatusActions()
     FileStatus fileStatus = FileStatus::Unknown;
     bool hasFile = currentState().hasFile();
     if (hasFile) {
-        const QString absoluteFileName = currentState().currentFile().toString();
+        const FilePath absoluteFileName = currentState().currentFile();
         checkAndReIndexUnknownFile(absoluteFileName);
         fileStatus = vcsStatus(absoluteFileName);
 
@@ -917,7 +926,7 @@ void ClearCasePluginPrivate::updateStatusActions()
     m_diffActivityAction->setEnabled(m_viewData.isUcm);
 }
 
-void ClearCasePluginPrivate::updateActions(VcsBasePluginPrivate::ActionState as)
+void ClearCasePluginPrivate::updateActions(VersionControlBase::ActionState as)
 {
     if (!enableMenuAction(as, m_menuAction)) {
         m_commandLocator->setEnabled(false);
@@ -988,12 +997,12 @@ void ClearCasePluginPrivate::addCurrentFile()
 }
 
 // Set the FileStatus of file given in absolute path
-void ClearCasePluginPrivate::setStatus(const QString &file, FileStatus::Status status, bool update)
+void ClearCasePluginPrivate::setStatus(const FilePath &file, FileStatus::Status status, bool update)
 {
     QTC_CHECK(!file.isEmpty());
-    m_statusMap->insert(file, FileStatus(status, QFileInfo(file).permissions()));
+    m_statusMap->insert(file.path(), FileStatus(status, file.permissions()));
 
-    if (update && currentState().currentFile().toString() == file)
+    if (update && currentState().currentFile() == file)
         QMetaObject::invokeMethod(this, &ClearCasePluginPrivate::updateStatusActions);
 }
 
@@ -1086,10 +1095,10 @@ bool ClearCasePluginPrivate::vcsUndoCheckOut(const FilePath &workingDir, const Q
     if (result.result() != ProcessResult::FinishedWithSuccess)
         return false;
 
-    const QString absPath = workingDir.pathAppended(fileName).toString();
+    const FilePath absPath = workingDir.pathAppended(fileName);
     if (!m_settings.disableIndexer)
         setStatus(absPath, FileStatus::CheckedIn);
-    emit filesChanged(QStringList(absPath));
+    emit filesChanged(QStringList(absPath.path()));
     return true;
 }
 
@@ -1119,7 +1128,7 @@ bool ClearCasePluginPrivate::vcsUndoHijack(const FilePath &workingDir, const QSt
     if (m_settings.disableIndexer)
         return true;
 
-    const QString absPath = workingDir.pathAppended(fileName).toString();
+    const FilePath absPath = workingDir.pathAppended(fileName);
     setStatus(absPath, FileStatus::CheckedIn);
     return true;
 }
@@ -1151,7 +1160,7 @@ void ClearCasePluginPrivate::undoHijackCurrent()
 
     // revert
     if (vcsUndoHijack(state.currentFileTopLevel(), fileName, keep))
-        emit filesChanged(QStringList(state.currentFile().toString()));
+        emit filesChanged(QStringList(state.currentFile().path()));
 }
 
 QString ClearCasePluginPrivate::ccGetFileVersion(const FilePath &workingDir, const QString &file) const
@@ -1169,7 +1178,7 @@ void ClearCasePluginPrivate::ccDiffWithPred(const FilePath &workingDir, const QS
 
     if ((m_settings.diffType == GraphicalDiff) && (files.count() == 1)) {
         const QString file = files.first();
-        const QString absFilePath = workingDir.pathAppended(file).toString();
+        const FilePath absFilePath = workingDir.pathAppended(file);
         if (vcsStatus(absFilePath).status == FileStatus::Hijacked)
             diffGraphical(ccGetFileVersion(workingDir, file), file);
         else
@@ -1182,8 +1191,8 @@ void ClearCasePluginPrivate::ccDiffWithPred(const FilePath &workingDir, const QS
     }
     QString result;
     for (const QString &file : files) {
-        const QString absFilePath = workingDir.pathAppended(file).toString();
-        if (vcsStatus(QDir::fromNativeSeparators(absFilePath)).status == FileStatus::Hijacked)
+        const FilePath absFilePath = workingDir.pathAppended(file);
+        if (vcsStatus(absFilePath).status == FileStatus::Hijacked)
             result += diffExternal(ccGetFileVersion(workingDir, file), file);
         else
             result += diffExternal(file);
@@ -1205,7 +1214,7 @@ void ClearCasePluginPrivate::ccDiffWithPred(const FilePath &workingDir, const QS
         diffname = QDir::toNativeSeparators(files.first());
     }
     const QString title = QString::fromLatin1("cc diff %1").arg(diffname);
-    IEditor *editor = showOutputInEditor(title, result, diffEditorParameters.id, source, codec);
+    IEditor *editor = showOutputInEditor(title, result, DIFF_EDITOR_ID, source, codec);
     setWorkingDirectory(editor, workingDir);
     VcsBaseEditor::tagEditor(editor, tag);
     auto diffEditorWidget = qobject_cast<ClearCaseEditorWidget *>(editor->widget());
@@ -1247,7 +1256,7 @@ void ClearCasePluginPrivate::diffActivity()
     QString result;
     // map from fileName to (first, latest) pair
     QMap<QString, QStringPair> filever;
-    int topLevelLen = topLevel.toString().length();
+    int topLevelLen = topLevel.path().length();
     for (const QString &version : versions) {
         QString shortver = version.mid(topLevelLen + 1);
         int atatpos = shortver.indexOf(QLatin1String("@@"));
@@ -1286,7 +1295,7 @@ void ClearCasePluginPrivate::diffActivity()
     }
     m_diffPrefix.clear();
     const QString title = QString::fromLatin1("%1.patch").arg(activity);
-    IEditor *editor = showOutputInEditor(title, result, diffEditorParameters.id,
+    IEditor *editor = showOutputInEditor(title, result, DIFF_EDITOR_ID,
                                          FilePath::fromString(activity), nullptr);
     setWorkingDirectory(editor, topLevel);
 }
@@ -1342,7 +1351,7 @@ void ClearCasePluginPrivate::startCheckInActivity()
         return;
 
     FilePath topLevel = state.topLevel();
-    int topLevelLen = topLevel.toString().length();
+    int topLevelLen = topLevel.path().length();
     const QStringList versions = ccGetActivityVersions(topLevel, actSelector->activity());
     QStringList files;
     QString last;
@@ -1448,7 +1457,7 @@ void ClearCasePluginPrivate::history(const FilePath &workingDir,
     const QString title = QString::fromLatin1("cc history %1").arg(id);
     const FilePath source = VcsBaseEditor::getSource(workingDir, files);
     IEditor *newEditor = showOutputInEditor(title, result.cleanedStdOut(),
-                                            logEditorParameters.id, source, codec);
+                                            LOG_EDITOR_ID, source, codec);
     VcsBaseEditor::tagEditor(newEditor, tag);
     if (enableAnnotationContextMenu)
         VcsBaseEditor::getVcsBaseEditor(newEditor)->setFileLogAnnotateEnabled(true);
@@ -1551,7 +1560,7 @@ void ClearCasePluginPrivate::vcsAnnotateHelper(const FilePath &workingDir, const
         EditorManager::activateEditor(editor);
     } else {
         const QString title = QString::fromLatin1("cc annotate %1").arg(id);
-        IEditor *newEditor = showOutputInEditor(title, res, annotateEditorParameters.id, source, codec);
+        IEditor *newEditor = showOutputInEditor(title, res, ANNOTATION_EDITOR_ID, source, codec);
         VcsBaseEditor::tagEditor(newEditor, tag);
         VcsBaseEditor::gotoLineOfEditor(newEditor, lineNumber);
     }
@@ -1567,9 +1576,8 @@ void ClearCasePluginPrivate::vcsDescribe(const FilePath &source, const QString &
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << source << topLevel << changeNr;
     QString description;
-    const QString relPath = QDir::toNativeSeparators(QDir(topLevel.toString())
-                                                         .relativeFilePath(source.toString()));
-    const QString id = QString::fromLatin1("%1@@%2").arg(relPath, changeNr);
+    const FilePath relPath = source.relativePathFrom(topLevel);
+    const QString id = QString::fromLatin1("%1@@%2").arg(relPath.toUserOutput(), changeNr);
 
     QTextCodec *codec = VcsBaseEditor::getCodec(source);
     const CommandResult result = runCleartool(topLevel, {"describe", id}, RunFlags::None, codec);
@@ -1585,7 +1593,7 @@ void ClearCasePluginPrivate::vcsDescribe(const FilePath &source, const QString &
         EditorManager::activateEditor(editor);
     } else {
         const QString title = QString::fromLatin1("cc describe %1").arg(id);
-        IEditor *newEditor = showOutputInEditor(title, description, diffEditorParameters.id, source, codec);
+        IEditor *newEditor = showOutputInEditor(title, description, DIFF_EDITOR_ID, source, codec);
         VcsBaseEditor::tagEditor(newEditor, tag);
     }
 }
@@ -1602,8 +1610,7 @@ CommandResult ClearCasePluginPrivate::runCleartoolProc(const FilePath &workingDi
     process.setEnvironment(env);
     process.setCommand({m_settings.ccBinaryPath, arguments});
     process.setWorkingDirectory(workingDir);
-    process.setTimeoutS(m_settings.timeOutS);
-    process.runBlocking();
+    process.runBlocking(seconds(m_settings.timeOutS));
     return CommandResult(process);
 }
 
@@ -1672,21 +1679,20 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << workingDir << fileName;
 
-    const QFileInfo fi(workingDir.toString(), fileName);
     const FilePath topLevel = currentState().topLevel();
-    const QString absPath = fi.absoluteFilePath();
+    const FilePath absPath = workingDir.pathAppended(fileName).absolutePath();
 
-    if (!m_settings.disableIndexer &&
-            (fi.isWritable() || vcsStatus(absPath).status == FileStatus::Unknown))
-        Utils::asyncRun(sync, QStringList(absPath)).waitForFinished();
+    if (!m_settings.disableIndexer
+        && (absPath.isWritableFile() || vcsStatus(absPath).status == FileStatus::Unknown))
+        Utils::asyncRun(sync, FilePaths{absPath}).waitForFinished();
     if (vcsStatus(absPath).status == FileStatus::CheckedOut) {
         QMessageBox::information(ICore::dialogParent(), Tr::tr("ClearCase Checkout"),
                                  Tr::tr("File is already checked out."));
         return true;
     }
 
-    const QString relFile = QDir(topLevel.toString()).relativeFilePath(absPath);
-    const QString file = QDir::toNativeSeparators(relFile);
+    const FilePath relFile = absPath.relativePathFrom(topLevel);
+    const QString file = relFile.nativePath();
     const QString title = QString::fromLatin1("Checkout %1").arg(file);
     CheckOutDialog coDialog(title, m_viewData.isUcm, !m_settings.noComment);
 
@@ -1700,7 +1706,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
     if (m_viewData.isUcm && !vcsSetActivity(topLevel, title, coDialog.activity()))
         return false;
 
-    FileChangeBlocker fcb(FilePath::fromString(absPath));
+    FileChangeBlocker fcb(absPath);
     QStringList args(QLatin1String("checkout"));
 
     const QString comment = coDialog.comment();
@@ -1712,6 +1718,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
     args << QLatin1String("-query");
     const bool reserved = coDialog.isReserved();
     const bool unreserved = !reserved || coDialog.isUnreserved();
+    const FilePath hijackedPath = absPath.stringAppended(QLatin1String(".hijack"));
     if (reserved)
         args << QLatin1String("-reserved");
     if (unreserved)
@@ -1730,8 +1737,8 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
         // -usehijack not supported in old cleartool versions...
         // args << QLatin1String("-usehijack");
         if (coDialog.isUseHijacked())
-            QFile::rename(absPath, absPath + QLatin1String(".hijack"));
-        vcsUndoHijack(topLevel, relFile, false); // don't keep, we've already kept a copy
+            absPath.renameFile(hijackedPath);
+        vcsUndoHijack(topLevel, relFile.path(), false); // don't keep, we've already kept a copy
     }
     args << file;
     CommandResult result = runCleartool(topLevel, args,
@@ -1754,8 +1761,8 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
 
     const bool success = result.result() == ProcessResult::FinishedWithSuccess;
     if (success && isHijacked && coDialog.isUseHijacked()) { // rename back
-        QFile::remove(absPath);
-        QFile::rename(absPath + QLatin1String(".hijack"), absPath);
+        absPath.removeFile();
+        hijackedPath.renameFile(absPath);
     }
 
     if ((success || result.cleanedStdErr().contains(QLatin1String("already checked out")))
@@ -1763,7 +1770,7 @@ bool ClearCasePluginPrivate::vcsOpen(const FilePath &workingDir, const QString &
         setStatus(absPath, FileStatus::CheckedOut);
     }
 
-    if (DocumentModel::Entry *e = DocumentModel::entryForFilePath(FilePath::fromString(absPath)))
+    if (DocumentModel::Entry *e = DocumentModel::entryForFilePath(absPath))
         e->document->checkPermissions();
 
     return success;
@@ -1792,22 +1799,20 @@ bool ClearCasePluginPrivate::vcsCheckIn(const FilePath &messageFile, const QStri
     if (files.isEmpty())
         return true;
     const QString title = QString::fromLatin1("Checkin %1").arg(files.join(QLatin1String("; ")));
-    using FCBPointer = QSharedPointer<FileChangeBlocker>;
+    using FCBPointer = std::shared_ptr<FileChangeBlocker>;
     replaceActivity &= (activity != QLatin1String(Constants::KEEP_ACTIVITY));
     if (replaceActivity && !vcsSetActivity(m_checkInView, title, activity))
         return false;
-    QString message;
-    QFile msgFile(messageFile.toString());
-    if (msgFile.open(QFile::ReadOnly | QFile::Text)) {
-        message = QString::fromLocal8Bit(msgFile.readAll().trimmed());
-        msgFile.close();
-    }
+    expected_str<QByteArray> messageFileContents = messageFile.fileContents();
+    const QString message = messageFileContents
+                                ? QString::fromLocal8Bit(*std::move(messageFileContents))
+                                : QString{};
     QStringList args;
     args << QLatin1String("checkin");
     if (message.isEmpty())
         args << QLatin1String("-nc");
     else
-        args << QLatin1String("-cfile") << messageFile.toString();
+        args << QLatin1String("-cfile") << messageFile.nativePath();
     if (isIdentical)
         args << QLatin1String("-identical");
     if (isPreserve)
@@ -1815,8 +1820,7 @@ bool ClearCasePluginPrivate::vcsCheckIn(const FilePath &messageFile, const QStri
     args << files;
     QList<FCBPointer> blockers;
     for (const QString &fileName : files) {
-        FCBPointer fcb(new FileChangeBlocker(
-            FilePath::fromString(QFileInfo(m_checkInView.toString(), fileName).canonicalFilePath())));
+        FCBPointer fcb(new FileChangeBlocker(m_checkInView.pathAppended(fileName).canonicalPath()));
         blockers.append(fcb);
     }
     const CommandResult result = runCleartool(m_checkInView, args, RunFlags::ShowStdOut, nullptr,
@@ -1827,11 +1831,10 @@ bool ClearCasePluginPrivate::vcsCheckIn(const FilePath &messageFile, const QStri
     int offset = match.capturedStart();
     while (match.hasMatch()) {
         const QString file = match.captured(1);
-        const QFileInfo fi(m_checkInView.toString(), file);
-        const QString absPath = fi.absoluteFilePath();
+        const FilePath absPath = m_checkInView.pathAppended(file).absolutePath();
 
         if (!m_settings.disableIndexer)
-            setStatus(QDir::fromNativeSeparators(absPath), FileStatus::CheckedIn);
+            setStatus(absPath, FileStatus::CheckedIn);
         emit filesChanged(files);
         anySucceeded = true;
         match = checkedIn.match(result.cleanedStdOut(), offset + 12);
@@ -1877,8 +1880,7 @@ bool ClearCasePluginPrivate::ccFileOp(const FilePath &workingDir, const QString 
     if (m_viewData.isUcm && actSelector->changed())
         vcsSetActivity(workingDir, fileOpDlg.windowTitle(), actSelector->activity());
 
-    const QString dirName = QDir::toNativeSeparators(QFileInfo(workingDir.toString(),
-                                                               fileName).absolutePath());
+    const QString dirName = workingDir.resolvePath(fileName).absolutePath().nativePath();
     QStringList commentArg;
     if (comment.isEmpty())
         commentArg << QLatin1String("-nc");
@@ -1954,13 +1956,13 @@ bool ClearCasePluginPrivate::managesDirectory(const FilePath &directory, FilePat
 {
 #ifdef WITH_TESTS
     // If running with tests and fake ClearTool is enabled, then pretend we manage every directory
-    const QString topLevelFound = m_fakeClearTool ? directory.toString() : findTopLevel(directory);
+    const FilePath topLevelFound = m_fakeClearTool ? directory : findTopLevel(directory);
 #else
-    const QString topLevelFound = findTopLevel(directory);
+    const FilePath topLevelFound = findTopLevel(directory);
 #endif
 
     if (topLevel)
-        *topLevel = FilePath::fromString(topLevelFound);
+        *topLevel = topLevelFound;
     return !topLevelFound.isEmpty();
 }
 
@@ -2066,7 +2068,7 @@ bool ClearCasePluginPrivate::ccCheckUcm(const QString &viewname, const FilePath 
 
 bool ClearCasePluginPrivate::managesFile(const FilePath &workingDirectory, const QString &fileName) const
 {
-    const QString absFile = QFileInfo(QDir(workingDirectory.toString()), fileName).absoluteFilePath();
+    const FilePath absFile = workingDirectory.pathAppended(fileName).absoluteFilePath();
     const FileStatus::Status status = getFileStatus(absFile);
     return status != FileStatus::NotManaged && status != FileStatus::Derived;
 }
@@ -2082,7 +2084,7 @@ ViewData ClearCasePluginPrivate::ccGetView(const FilePath &workingDir) const
         res.isDynamic = !data.isEmpty() && (data.at(0) == QLatin1Char('*'));
         res.name = data.mid(2, data.indexOf(QLatin1Char(' '), 2) - 2);
         res.isUcm = ccCheckUcm(res.name, workingDir);
-        res.root = ccViewRoot(workingDir);
+        res.root = ccViewRoot(workingDir).toUserOutput();
     }
 
     return res;
@@ -2117,9 +2119,8 @@ void ClearCasePluginPrivate::projectChanged(Project *project)
     ProgressManager::cancelTasks(ClearCase::Constants::TASK_INDEX);
     if (project) {
         const FilePath projDir = project->projectDirectory();
-        const QString topLevel = findTopLevel(projDir);
-        m_topLevel = FilePath::fromString(topLevel);
-        if (topLevel.isEmpty())
+        m_topLevel = findTopLevel(projDir);
+        if (m_topLevel.isEmpty())
             return;
         connect(qApp, &QApplication::applicationStateChanged,
                 this, [this](Qt::ApplicationState state) {
@@ -2150,8 +2151,7 @@ void ClearCasePluginPrivate::updateIndex()
         return;
     m_checkInAllAction->setEnabled(false);
     m_statusMap->clear();
-    QFuture<void> result = Utils::asyncRun(sync, transform(project->files(Project::SourceFiles),
-                                                           &FilePath::toString));
+    QFuture<void> result = Utils::asyncRun(sync, project->files(Project::SourceFiles));
     if (!m_settings.disableIndexer)
         ProgressManager::addTask(result, Tr::tr("Updating ClearCase Index"), ClearCase::Constants::TASK_INDEX);
 }
@@ -2180,7 +2180,7 @@ QString ClearCasePluginPrivate::getFile(const QString &nativeFile, const QString
     if (Constants::debug)
         qDebug() << Q_FUNC_INFO << nativeFile;
     if ((atatpos != -1) && (nativeFile.indexOf(QLatin1String("CHECKEDOUT"), atatpos) != -1)) {
-        bool res = QFile::copy(QDir(m_topLevel.toString()).absoluteFilePath(file), tempFile);
+        bool res = QFile::copy(QDir(m_topLevel.toFSPathString()).absoluteFilePath(file), tempFile);
         return res ? tempFile : QString();
     }
     const CommandResult result = runCleartoolProc(m_topLevel, {"get", "-to", tempFile, nativeFile});
@@ -2260,16 +2260,11 @@ void ClearCasePluginPrivate::diffGraphical(const QString &file1, const QString &
 QString ClearCasePluginPrivate::runExtDiff(const FilePath &workingDir, const QStringList &arguments,
                                            int timeOutS, QTextCodec *outputCodec)
 {
-    CommandLine diff("diff");
-    diff.addArgs(m_settings.diffArgs.split(' ', Qt::SkipEmptyParts));
-    diff.addArgs(arguments);
-
     Process process;
-    process.setTimeoutS(timeOutS);
     process.setWorkingDirectory(workingDir);
     process.setCodec(outputCodec ? outputCodec : QTextCodec::codecForName("UTF-8"));
-    process.setCommand(diff);
-    process.runBlocking(EventLoopMode::On);
+    process.setCommand({"diff", {m_settings.diffArgs.split(' ', Qt::SkipEmptyParts), arguments}});
+    process.runBlocking(seconds(timeOutS), EventLoopMode::On);
     if (process.result() != ProcessResult::FinishedWithSuccess)
         return {};
     return process.allOutput();
@@ -2283,7 +2278,7 @@ void ClearCasePluginPrivate::syncSlot()
     FilePath topLevel = state.topLevel();
     if (topLevel != state.currentProjectTopLevel())
         return;
-    Utils::asyncRun(sync, QStringList()); // TODO: make use of returned QFuture
+    Utils::asyncRun(sync, FilePaths{}); // TODO: make use of returned QFuture
 }
 
 void ClearCasePluginPrivate::closing()
@@ -2293,17 +2288,17 @@ void ClearCasePluginPrivate::closing()
     disconnect(qApp, &QApplication::applicationStateChanged, nullptr, nullptr);
 }
 
-void ClearCasePluginPrivate::sync(QPromise<void> &promise, QStringList files)
+void ClearCasePluginPrivate::sync(QPromise<void> &promise, FilePaths files)
 {
     ClearCasePluginPrivate *plugin = ClearCasePluginPrivate::instance();
     ClearCaseSync ccSync(plugin->m_statusMap);
-    connect(&ccSync, &ClearCaseSync::updateStreamAndView, plugin, &ClearCasePluginPrivate::updateStreamAndView);
-    ccSync.run(promise, files);
-}
-
-QString ClearCasePluginPrivate::displayName() const
-{
-    return QLatin1String("ClearCase");
+    connect(
+        &ccSync,
+        &ClearCaseSync::updateStreamAndView,
+        plugin,
+        &ClearCasePluginPrivate::updateStreamAndView);
+    QStringList transformed = transform(std::move(files), &FilePath::path);
+    ccSync.run(promise, transformed);
 }
 
 Id ClearCasePluginPrivate::id() const
@@ -2350,7 +2345,7 @@ IVersionControl::OpenSupportMode ClearCasePluginPrivate::openSupportMode(const F
         // NB! Has to use managesFile() and not vcsStatus() since the index can only be guaranteed
         // to be up to date if the file has been explicitly opened, which is not the case when
         // doing a search and replace as a part of a refactoring.
-        if (managesFile(FilePath::fromString(filePath.toFileInfo().absolutePath()), filePath.toString())) {
+        if (managesFile(FilePath::fromString(filePath.toFileInfo().absolutePath()), filePath.path())) {
             // Checkout is the only option for managed files in dynamic views
             return IVersionControl::OpenMandatory;
         } else {
@@ -2420,60 +2415,75 @@ bool ClearCasePluginPrivate::vcsCreateRepository(const FilePath &)
 
 // ClearCasePlugin
 
-ClearCasePlugin::~ClearCasePlugin()
-{
-    delete dd;
-    dd = nullptr;
-}
-
-bool ClearCasePlugin::newActivity()
+bool newActivity()
 {
     return dd->newActivity();
 }
 
-const QList<QStringPair> ClearCasePlugin::activities(int *current)
+const QList<QStringPair> activities(int *current)
 {
     return dd->activities(current);
 }
 
-QStringList ClearCasePlugin::ccGetActiveVobs()
+QStringList ccGetActiveVobs()
 {
     return dd->ccGetActiveVobs();
 }
 
-void ClearCasePlugin::refreshActivities()
+void refreshActivities()
 {
     dd->refreshActivities();
 }
 
-const ViewData ClearCasePlugin::viewData()
+const ViewData viewData()
 {
     return dd->m_viewData;
 }
 
-void ClearCasePlugin::setStatus(const QString &file, FileStatus::Status status, bool update)
+void setStatus(const QString &file, FileStatus::Status status, bool update)
 {
-    dd->setStatus(file, status, update);
+    dd->setStatus(FilePath::fromUserInput(file), status, update);
 }
 
-const ClearCaseSettings &ClearCasePlugin::settings()
+const ClearCaseSettings &settings()
 {
     return dd->m_settings;
 }
 
-void ClearCasePlugin::setSettings(const ClearCaseSettings &s)
+void setSettings(const ClearCaseSettings &s)
 {
     dd->setSettings(s);
 }
 
-QSharedPointer<StatusMap> ClearCasePlugin::statusMap()
+std::shared_ptr<StatusMap> statusMap()
 {
     return dd->m_statusMap;
 }
 
 #ifdef WITH_TESTS
 
-void ClearCasePlugin::testDiffFileResolving_data()
+class ClearCaseTest final : public QObject
+{
+    Q_OBJECT
+private slots:
+    void initTestCase();
+    void cleanupTestCase();
+    void testDiffFileResolving_data();
+    void testDiffFileResolving();
+    void testLogResolving();
+    void testFileStatusParsing_data();
+    void testFileStatusParsing();
+    void testFileNotManaged();
+    void testFileCheckedOutDynamicView();
+    void testFileCheckedInDynamicView();
+    void testFileNotManagedDynamicView();
+    void testStatusActions_data();
+    void testStatusActions();
+    void testVcsStatusDynamicReadonlyNotManaged();
+    void testVcsStatusDynamicNotManaged();
+};
+
+void ClearCaseTest::testDiffFileResolving_data()
 {
     QTest::addColumn<QByteArray>("header");
     QTest::addColumn<QByteArray>("fileName");
@@ -2485,12 +2495,12 @@ void ClearCasePlugin::testDiffFileResolving_data()
         << QByteArray("src/plugins/clearcase/clearcaseeditor.cpp");
 }
 
-void ClearCasePlugin::testDiffFileResolving()
+void ClearCaseTest::testDiffFileResolving()
 {
     VcsBaseEditorWidget::testDiffFileResolving(dd->diffEditorFactory);
 }
 
-void ClearCasePlugin::testLogResolving()
+void ClearCaseTest::testLogResolving()
 {
     QByteArray data(
                 "13-Sep.17:41   user1      create version \"src/plugins/clearcase/clearcaseeditor.h@@/main/branch1/branch2/9\" (baseline1, baseline2, ...)\n"
@@ -2501,7 +2511,7 @@ void ClearCasePlugin::testLogResolving()
                             "src/plugins/clearcase/clearcaseeditor.h@@/main/branch1/branch2/8");
 }
 
-void ClearCasePlugin::initTestCase()
+void ClearCaseTest::initTestCase()
 {
     dd->m_tempFile = FilePath::currentWorkingPath() / "cc_file.cpp";
     FileSaver srcSaver(dd->m_tempFile);
@@ -2509,12 +2519,12 @@ void ClearCasePlugin::initTestCase()
     srcSaver.finalize();
 }
 
-void ClearCasePlugin::cleanupTestCase()
+void ClearCaseTest::cleanupTestCase()
 {
     QVERIFY(dd->m_tempFile.removeFile());
 }
 
-void ClearCasePlugin::testFileStatusParsing_data()
+void ClearCaseTest::testFileStatusParsing_data()
 {
     QTest::addColumn<QString>("filename");
     QTest::addColumn<QString>("cleartoolLsLine");
@@ -2544,9 +2554,9 @@ void ClearCasePlugin::testFileStatusParsing_data()
             << static_cast<int>(FileStatus::Missing);
 }
 
-void ClearCasePlugin::testFileStatusParsing()
+void ClearCaseTest::testFileStatusParsing()
 {
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
 
     QFETCH(QString, filename);
     QFETCH(QString, cleartoolLsLine);
@@ -2556,31 +2566,31 @@ void ClearCasePlugin::testFileStatusParsing()
     ccSync.verifyParseStatus(filename, cleartoolLsLine, static_cast<FileStatus::Status>(status));
 }
 
-void ClearCasePlugin::testFileNotManaged()
+void ClearCaseTest::testFileNotManaged()
 {
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
     ClearCaseSync ccSync(dd->m_statusMap);
     ccSync.verifyFileNotManaged();
 }
 
-void ClearCasePlugin::testFileCheckedOutDynamicView()
+void ClearCaseTest::testFileCheckedOutDynamicView()
 {
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
 
     ClearCaseSync ccSync(dd->m_statusMap);
     ccSync.verifyFileCheckedOutDynamicView();
 }
 
-void ClearCasePlugin::testFileCheckedInDynamicView()
+void ClearCaseTest::testFileCheckedInDynamicView()
 {
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
     ClearCaseSync ccSync(dd->m_statusMap);
     ccSync.verifyFileCheckedInDynamicView();
 }
 
-void ClearCasePlugin::testFileNotManagedDynamicView()
+void ClearCaseTest::testFileNotManagedDynamicView()
 {
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
     ClearCaseSync ccSync(dd->m_statusMap);
     ccSync.verifyFileNotManagedDynamicView();
 }
@@ -2592,17 +2602,16 @@ namespace {
 class TestCase
 {
 public:
-    TestCase(const QString &fileName) :
-        m_fileName(fileName)
+    TestCase(const FilePath &fileName)
+        : m_fileName(fileName)
     {
         ClearCasePluginPrivate::instance()->setFakeCleartool(true);
         VcsManager::clearVersionControlCache();
 
-        const auto filePath = FilePath::fromString(fileName);
-        FileSaver srcSaver(filePath);
+        FileSaver srcSaver(fileName);
         srcSaver.write(QByteArray());
         srcSaver.finalize();
-        m_editor = EditorManager::openEditor(filePath);
+        m_editor = EditorManager::openEditor(fileName);
 
         QCoreApplication::processEvents(); // process any pending events
     }
@@ -2621,20 +2630,19 @@ public:
         EditorManager::closeDocuments({m_editor->document()}, false);
         QCoreApplication::processEvents(); // process any pending events
 
-        QFile file(m_fileName);
-        if (!file.isWritable()) // Windows can't delete read only files
-            file.setPermissions(file.permissions() | QFile::WriteUser);
-        QVERIFY(file.remove());
+        if (!m_fileName.isWritableFile())
+            m_fileName.setPermissions(m_fileName.permissions() | QFile::WriteUser);
+        QVERIFY(m_fileName.removeFile());
         ClearCasePluginPrivate::instance()->setFakeCleartool(false);
     }
 
 private:
-    QString m_fileName;
+    FilePath m_fileName;
     IEditor *m_editor;
 };
 }
 
-void ClearCasePlugin::testStatusActions_data()
+void ClearCaseTest::testStatusActions_data()
 {
     QTest::addColumn<int>("status");
     QTest::addColumn<bool>("checkOutAction");
@@ -2655,9 +2663,9 @@ void ClearCasePlugin::testStatusActions_data()
                                 << false << false << false << false << true  << false << false;
 }
 
-void ClearCasePlugin::testStatusActions()
+void ClearCaseTest::testStatusActions()
 {
-    const QString fileName = QDir::currentPath() + QLatin1String("/clearcase_file.cpp");
+    const auto fileName = FilePath::currentWorkingPath().pathAppended("clearcase_file.cpp");
     TestCase testCase(fileName);
 
     dd->m_viewData = testCase.dummyViewData();
@@ -2687,21 +2695,20 @@ void ClearCasePlugin::testStatusActions()
     QCOMPARE(dd->m_diffActivityAction->isEnabled(), diffActivityAction);
 }
 
-void ClearCasePlugin::testVcsStatusDynamicReadonlyNotManaged()
+void ClearCaseTest::testVcsStatusDynamicReadonlyNotManaged()
 {
     // File is not in map, and is read-only
     ClearCasePluginPrivate::instance();
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
 
-    const QString fileName = QDir::currentPath() + QLatin1String("/readonly_notmanaged_file.cpp");
+    const auto fileName = FilePath::currentWorkingPath().pathAppended(
+        "readonly_notmanaged_file.cpp");
 
     dd->m_viewData.isDynamic = true;
     TestCase testCase(fileName);
 
-    QFile::setPermissions(fileName, QFile::ReadOwner |
-                          QFile::ReadUser |
-                          QFile::ReadGroup |
-                          QFile::ReadOther);
+    fileName.setPermissions(
+        QFile::ReadOwner | QFile::ReadUser | QFile::ReadGroup | QFile::ReadOther);
 
     dd->m_viewData = testCase.dummyViewData();
     dd->m_viewData.isDynamic = true;
@@ -2710,12 +2717,12 @@ void ClearCasePlugin::testVcsStatusDynamicReadonlyNotManaged()
 
 }
 
-void ClearCasePlugin::testVcsStatusDynamicNotManaged()
+void ClearCaseTest::testVcsStatusDynamicNotManaged()
 {
     ClearCasePluginPrivate::instance();
-    dd->m_statusMap = QSharedPointer<StatusMap>(new StatusMap);
+    dd->m_statusMap = std::shared_ptr<StatusMap>(new StatusMap);
 
-    const QString fileName = QDir::currentPath() + QLatin1String("/notmanaged_file.cpp");
+    const auto fileName = FilePath::currentWorkingPath().pathAppended("notmanaged_file.cpp");
 
     dd->m_viewData.isDynamic = true;
     TestCase testCase(fileName);
@@ -2727,7 +2734,31 @@ void ClearCasePlugin::testVcsStatusDynamicNotManaged()
 }
 #endif
 
-} // namespace Internal
-} // namespace ClearCase
+
+class ClearCasePlugin final : public ExtensionSystem::IPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "ClearCase.json")
+
+    ~ClearCasePlugin() final
+    {
+        delete dd;
+        dd = nullptr;
+    }
+
+    void initialize() final
+    {
+        dd = new ClearCasePluginPrivate;
+#ifdef WITH_TESTS
+        addTest<ClearCaseTest>();
+#endif
+    }
+    void extensionsInitialized() final
+    {
+        dd->extensionsInitialized();
+    }
+};
+
+} // ClearCase::Internal
 
 #include "clearcaseplugin.moc"

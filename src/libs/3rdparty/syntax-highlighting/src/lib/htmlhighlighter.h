@@ -9,11 +9,13 @@
 
 #include "abstracthighlighter.h"
 #include "ksyntaxhighlighting_export.h"
+#include "theme.h"
 
-#include <QIODevice>
 #include <QString>
 
-#include <memory>
+QT_BEGIN_NAMESPACE
+class QIODevice;
+QT_END_NAMESPACE
 
 namespace KSyntaxHighlighting
 {
@@ -31,11 +33,13 @@ public:
     void setOutputFile(const QString &fileName);
     void setOutputFile(FILE *fileHandle);
 
+    void setBackgroundRole(Theme::EditorColorRole bgRole);
+
 protected:
     void applyFormat(int offset, int length, const Format &format) override;
 
 private:
-    std::unique_ptr<HtmlHighlighterPrivate> d;
+    Q_DECLARE_PRIVATE(HtmlHighlighter)
 };
 }
 

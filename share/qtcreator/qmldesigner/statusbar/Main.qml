@@ -3,12 +3,13 @@
 
 import QtQuick
 import QtQuick.Controls
-import StudioControls 1.0 as StudioControls
-import StudioTheme 1.0 as StudioTheme
-import "../toolbar"
-import HelperWidgets 2.0
 
-import ToolBar 1.0
+import StudioControls as StudioControls
+import StudioTheme as StudioTheme
+import "../toolbar"
+import HelperWidgets
+
+import ToolBar
 
 Item {
     id: toolbarContainer
@@ -25,8 +26,10 @@ Item {
         anchors.fill: parent
 
         Row {
-            anchors.fill: parent
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
             anchors.topMargin: 3
+            anchors.left: parent.left
             anchors.leftMargin: 4
             spacing: 29
 
@@ -34,8 +37,11 @@ Item {
                 id: settingButton
                 style: StudioTheme.Values.statusbarButtonStyle
                 buttonIcon: StudioTheme.Constants.settings_medium
-                onClicked: backend.triggerProjectSettings()
-                enabled: backend.isInDesignMode || (backend.isInEditMode && backend.projectOpened)
+                checkable: true
+                checkedInverted: true
+                checked: backend.isInSessionMode
+                onClicked: settingButton.checked ? backend.triggerProjectSettings() : backend.triggerModeChange()
+                enabled: backend.projectOpened
                 tooltip: qsTr("Set runtime configuration for the project.")
             }
 
@@ -47,6 +53,7 @@ Item {
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
+
                 ToolTipArea {
                     anchors.fill: parent
                     tooltip: qsTr("Choose a predefined kit for the runtime configuration of the project.")
@@ -60,7 +67,8 @@ Item {
                 model: backend.kits
                 onActivated: backend.setCurrentKit(kits.currentIndex)
                 openUpwards: true
-                enabled: (backend.isInDesignMode || (backend.isInEditMode && backend.projectOpened)) && backend.isQt6
+                enabled: (backend.isInDesignMode || (backend.isInEditMode && backend.projectOpened))
+                         && backend.isQt6 && !backend.isMCUs
                 property int kitIndex: backend.currentKit
                 onKitIndexChanged: kits.currentIndex = backend.currentKit
             }
@@ -73,6 +81,7 @@ Item {
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
+
                 ToolTipArea {
                     anchors.fill: parent
                     tooltip: qsTr("Choose a style for the Qt Quick Controls of the project.")
@@ -86,10 +95,67 @@ Item {
                 model: backend.styles
                 onActivated: backend.setCurrentStyle(styles.currentIndex)
                 openUpwards: true
-                enabled: backend.isInDesignMode
+                enabled: backend.isInDesignMode && !backend.isMCUs
                 property int currentStyleIndex: backend.currentStyle
-                onCurrentStyleIndexChanged: currentIndex = backend.currentStyle
+                onCurrentStyleIndexChanged: styles.currentIndex = backend.currentStyle
             }
         }
+
+        Row {
+            id: buttonRow
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 3
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            spacing: 10
+
+            NotificationButton {
+                id: issuesNotification
+                style: StudioTheme.Values.statusbarButtonStyle
+
+                warningCount: popupPanel.warningCount
+                errorCount: popupPanel.errorCount
+
+                checkable: true
+                checkedInverted: true
+                checked: popupPanel.issuesVisible
+
+                width: 136
+                enabled: backend.projectOpened
+                tooltip: qsTr("Show issues.")
+
+                onClicked: popupPanel.toggleShowIssuesPanel()
+            }
+
+            ToolbarButton {
+                id: outputButton
+                style: StudioTheme.Values.statusbarButtonStyle
+                buttonIcon: StudioTheme.Constants.import_medium
+                iconRotation: -90
+                checkable: true
+                checkedInverted: true
+                checked: popupPanel.outputVisible
+                enabled: backend.projectOpened
+                tooltip: qsTr("Show application output.")
+
+                onClicked: popupPanel.toggleShowOutputPanel()
+
+                Connections {
+                    target: popupPanel
+                    function onUnreadOutputChanged() {
+                        if (popupPanel.unreadOutput)
+                            outputButton.highlight()
+                    }
+                }
+            }
+        }
+    }
+
+    IssuesOutputPanel {
+        id: popupPanel
+        targetItem: buttonRow
+        edge: Qt.TopEdge
+        keepOpen: true
     }
 }

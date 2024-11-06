@@ -84,12 +84,13 @@ private:
 
     void onTabsMenuAboutToShow();
     void onCloseButtonClicked();
+    void onAutoHideCloseActionTriggered();
+    void minimizeAutoHideContainer();
     void onUndockButtonClicked();
     void onTabsMenuActionTriggered(QAction *action);
     void onCurrentTabChanged(int index);
     void onAutoHideButtonClicked();
     void onAutoHideDockAreaActionClicked();
-    void onAutoHideToActionClicked();
 
 protected:
     /**
@@ -190,6 +191,11 @@ public:
      * Moves the dock area into its own floating widget if the area DockWidgetFloatable flag is true.
      */
     void setAreaFloating();
+
+    /**
+     * Call this function, to create all the required auto hide controls
+     */
+    void showAutoHideControls(bool show);
 
 signals:
     /**

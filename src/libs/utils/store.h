@@ -41,6 +41,10 @@ QTCREATOR_UTILS_EXPORT QVariant mapEntryFromStoreEntry(const QVariant &value);
 // Don't use in new code.
 QTCREATOR_UTILS_EXPORT Store storeFromSettings(const Key &groupKey, QtcSettings *s);
 QTCREATOR_UTILS_EXPORT void storeToSettings(const Key &groupKey, QtcSettings *s, const Store &store);
+QTCREATOR_UTILS_EXPORT void storeToSettingsWithDefault(const Key &groupKey,
+                                                       QtcSettings *s,
+                                                       const Store &store,
+                                                       const Store &defaultStore);
 
 } // Utils
 

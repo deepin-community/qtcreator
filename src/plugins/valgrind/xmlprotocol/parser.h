@@ -45,13 +45,13 @@ signals:
     void errorCount(qint64 unique, qint64 count);
     void suppressionCount(const QString &name, qint64 count);
     void announceThread(const AnnounceThread &announceThread);
-    void done(bool success, const QString &errorString);
+    void done(Tasking::DoneResult result, const QString &errorString);
 
 private:
     std::unique_ptr<ParserPrivate> d;
 };
 
-class ParserTaskAdapter : public Tasking::TaskAdapter<Parser>
+class ParserTaskAdapter final : public Tasking::TaskAdapter<Parser>
 {
 public:
     ParserTaskAdapter() { connect(task(), &Parser::done, this, &Tasking::TaskInterface::done); }

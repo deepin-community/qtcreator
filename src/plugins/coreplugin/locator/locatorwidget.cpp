@@ -57,8 +57,8 @@ public:
 
     LocatorModel(QObject *parent = nullptr)
         : QAbstractListModel(parent)
-        , m_backgroundColor(Utils::creatorTheme()->color(Theme::TextColorHighlightBackground))
-        , m_foregroundColor(Utils::creatorTheme()->color(Theme::TextColorNormal))
+        , m_backgroundColor(Utils::creatorColor(Theme::TextColorHighlightBackground))
+        , m_foregroundColor(Utils::creatorColor(Theme::TextColorNormal))
     {}
 
     void clear();
@@ -162,8 +162,13 @@ QVariant LocatorModel::data(const QModelIndex &index, int role) const
     case Qt::DisplayRole:
         if (index.column() == DisplayNameColumn)
             return m_entries.at(index.row()).displayName;
-        else if (index.column() == ExtraInfoColumn)
-            return m_entries.at(index.row()).extraInfo;
+        if (index.column() == ExtraInfoColumn) {
+            if (Locator::instance()->relativePaths()) {
+                return ICore::pathRelativeToActiveProject(FilePath::fromUserInput(m_entries.at(index.row()).extraInfo)).toUserOutput();
+            } else {
+                return m_entries.at(index.row()).extraInfo;
+            }
+        }
         break;
     case Qt::ToolTipRole: {
         const LocatorFilterEntry &entry = m_entries.at(index.row());
@@ -612,7 +617,8 @@ LocatorWidget::LocatorWidget(Locator *locator)
     m_progressIndicator->raise();
     m_progressIndicator->hide();
     m_showProgressTimer.setSingleShot(true);
-    m_showProgressTimer.setInterval(50); // don't show progress for < 50ms tasks
+    using namespace std::chrono_literals;
+    m_showProgressTimer.setInterval(50ms); // don't show progress for < 50ms tasks
     connect(&m_showProgressTimer, &QTimer::timeout,
             this, [this] { setProgressIndicatorVisible(true); });
 

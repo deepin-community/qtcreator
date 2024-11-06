@@ -34,11 +34,11 @@ QByteArray FastPreprocessor::run(Document::Ptr newDoc,
         _merged.insert(filePath);
 
         for (Snapshot::const_iterator i = _snapshot.begin(), ei = _snapshot.end(); i != ei; ++i) {
-            if (isInjectedFile(i.key().toString()))
+            if (isInjectedFile(i.key().path()))
                 mergeEnvironment(i.key());
         }
 
-        const QList<Document::Include> includes = doc->resolvedIncludes();
+        const QList<Document::Include> &includes = doc->resolvedIncludes();
         for (const Document::Include &i : includes)
             mergeEnvironment(i.resolvedFileName());
 
@@ -69,7 +69,7 @@ void FastPreprocessor::mergeEnvironment(const FilePath &filePath)
 {
     if (Utils::insert(_merged, filePath)) {
         if (Document::Ptr doc = _snapshot.document(filePath)) {
-            const QList<Document::Include> includes = doc->resolvedIncludes();
+            const QList<Document::Include> &includes = doc->resolvedIncludes();
             for (const Document::Include &i : includes)
                 mergeEnvironment(i.resolvedFileName());
 
@@ -83,6 +83,12 @@ void FastPreprocessor::macroAdded(const Macro &macro)
     Q_ASSERT(_currentDoc);
 
     _currentDoc->appendMacro(macro);
+}
+
+void FastPreprocessor::pragmaAdded(const Pragma &pragma)
+{
+    Q_ASSERT(_currentDoc);
+    _currentDoc->appendPragma(pragma);
 }
 
 static const Macro revision(const Snapshot &s, const Macro &m)

@@ -28,7 +28,7 @@ public:
     void start();
 
 signals:
-    void done(bool success);
+    void done(Tasking::DoneResult result);
     void progressChanged(int progress, const QString &info); // progress in %
     void outputAdded(const QString &output, ProjectExplorer::BuildStep::OutputFormat format);
     void taskAdded(const ProjectExplorer::Task &task);
@@ -40,7 +40,7 @@ private:
     QbsRequestObject *m_requestObject = nullptr;
 };
 
-class QbsRequestTaskAdapter : public Tasking::TaskAdapter<QbsRequest>
+class QbsRequestTaskAdapter final : public Tasking::TaskAdapter<QbsRequest>
 {
 public:
     QbsRequestTaskAdapter() { connect(task(), &QbsRequest::done, this, &TaskInterface::done); }

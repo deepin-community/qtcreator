@@ -3,6 +3,7 @@
 
 #include "terminalsettings.h"
 
+#include "terminalicons.h"
 #include "terminaltr.h"
 
 #include <coreplugin/icore.h>
@@ -19,6 +20,7 @@
 #include <utils/theme/theme.h>
 
 #include <QFontComboBox>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -486,11 +488,33 @@ TerminalSettings::TerminalSettings()
                                            "instead of closing the terminal."));
     sendEscapeToTerminal.setDefaultValue(false);
 
+    static const QString escKey = QKeySequence(Qt::Key_Escape).toString(QKeySequence::NativeText);
+    static const QString shiftEsc = QKeySequence(QKeyCombination(Qt::ShiftModifier, Qt::Key_Escape))
+                                        .toString(QKeySequence::NativeText);
+    sendEscapeToTerminal.setOnText(escKey);
+    sendEscapeToTerminal.setOffText(shiftEsc);
+    sendEscapeToTerminal.setOnTooltip(Tr::tr("Sends Esc to terminal instead of %1.")
+                                          .arg(QGuiApplication::applicationDisplayName()));
+    sendEscapeToTerminal.setOffTooltip(Tr::tr("Press %1 to send Esc to terminal.").arg(shiftEsc));
+    QObject::connect(&sendEscapeToTerminal,
+                     &ToggleAspect::changed,
+                     this,
+                     &TerminalSettings::writeSettings);
+
     lockKeyboard.setSettingsKey("LockKeyboard");
     lockKeyboard.setLabelText(Tr::tr("Block shortcuts in terminal"));
     lockKeyboard.setToolTip(
         Tr::tr("Keeps Qt Creator shortcuts from interfering with the terminal."));
-    lockKeyboard.setDefaultValue(true);
+    lockKeyboard.setDefaultValue(false);
+
+    lockKeyboard.setIcon(LOCK_KEYBOARD_ICON.icon());
+    lockKeyboard.setOffIcon(UNLOCK_KEYBOARD_ICON.icon());
+    lockKeyboard.setOnTooltip(Tr::tr("%1 shortcuts are blocked when focus is inside the terminal.")
+                                  .arg(qApp->applicationDisplayName()));
+    lockKeyboard.setOffTooltip(
+        Tr::tr("%1 shortcuts take precedence.").arg(qApp->applicationDisplayName()));
+
+    QObject::connect(&lockKeyboard, &ToggleAspect::changed, this, &TerminalSettings::writeSettings);
 
     audibleBell.setSettingsKey("AudibleBell");
     audibleBell.setLabelText(Tr::tr("Audible bell"));
@@ -503,37 +527,35 @@ TerminalSettings::TerminalSettings()
     enableMouseTracking.setToolTip(Tr::tr("Enables mouse tracking in the terminal."));
     enableMouseTracking.setDefaultValue(true);
 
-    Theme *theme = Utils::creatorTheme();
+    setupColor(this, foregroundColor, "Foreground", creatorColor(Theme::TerminalForeground));
+    setupColor(this, backgroundColor, "Background", creatorColor(Theme::TerminalBackground));
+    setupColor(this, selectionColor, "Selection", creatorColor(Theme::TerminalSelection));
 
-    setupColor(this, foregroundColor, "Foreground", theme->color(Theme::TerminalForeground));
-    setupColor(this, backgroundColor, "Background", theme->color(Theme::TerminalBackground));
-    setupColor(this, selectionColor, "Selection", theme->color(Theme::TerminalSelection));
+    setupColor(this, findMatchColor, "Find matches", creatorColor(Theme::TerminalFindMatch));
 
-    setupColor(this, findMatchColor, "Find matches", theme->color(Theme::TerminalFindMatch));
+    setupColor(this, colors[0], "0", creatorColor(Theme::TerminalAnsi0), "black");
+    setupColor(this, colors[8], "8", creatorColor(Theme::TerminalAnsi8), "bright black");
 
-    setupColor(this, colors[0], "0", theme->color(Theme::TerminalAnsi0), "black");
-    setupColor(this, colors[8], "8", theme->color(Theme::TerminalAnsi8), "bright black");
+    setupColor(this, colors[1], "1", creatorColor(Theme::TerminalAnsi1), "red");
+    setupColor(this, colors[9], "9", creatorColor(Theme::TerminalAnsi9), "bright red");
 
-    setupColor(this, colors[1], "1", theme->color(Theme::TerminalAnsi1), "red");
-    setupColor(this, colors[9], "9", theme->color(Theme::TerminalAnsi9), "bright red");
+    setupColor(this, colors[2], "2", creatorColor(Theme::TerminalAnsi2), "green");
+    setupColor(this, colors[10], "10", creatorColor(Theme::TerminalAnsi10), "bright green");
 
-    setupColor(this, colors[2], "2", theme->color(Theme::TerminalAnsi2), "green");
-    setupColor(this, colors[10], "10", theme->color(Theme::TerminalAnsi10), "bright green");
+    setupColor(this, colors[3], "3", creatorColor(Theme::TerminalAnsi3), "yellow");
+    setupColor(this, colors[11], "11", creatorColor(Theme::TerminalAnsi11), "bright yellow");
 
-    setupColor(this, colors[3], "3", theme->color(Theme::TerminalAnsi3), "yellow");
-    setupColor(this, colors[11], "11", theme->color(Theme::TerminalAnsi11), "bright yellow");
+    setupColor(this, colors[4], "4", creatorColor(Theme::TerminalAnsi4), "blue");
+    setupColor(this, colors[12], "12", creatorColor(Theme::TerminalAnsi12), "bright blue");
 
-    setupColor(this, colors[4], "4", theme->color(Theme::TerminalAnsi4), "blue");
-    setupColor(this, colors[12], "12", theme->color(Theme::TerminalAnsi12), "bright blue");
+    setupColor(this, colors[5], "5", creatorColor(Theme::TerminalAnsi5), "magenta");
+    setupColor(this, colors[13], "13", creatorColor(Theme::TerminalAnsi13), "bright magenta");
 
-    setupColor(this, colors[5], "5", theme->color(Theme::TerminalAnsi5), "magenta");
-    setupColor(this, colors[13], "13", theme->color(Theme::TerminalAnsi13), "bright magenta");
+    setupColor(this, colors[6], "6", creatorColor(Theme::TerminalAnsi6), "cyan");
+    setupColor(this, colors[14], "14", creatorColor(Theme::TerminalAnsi14), "bright cyan");
 
-    setupColor(this, colors[6], "6", theme->color(Theme::TerminalAnsi6), "cyan");
-    setupColor(this, colors[14], "14", theme->color(Theme::TerminalAnsi14), "bright cyan");
-
-    setupColor(this, colors[7], "7", theme->color(Theme::TerminalAnsi7), "white");
-    setupColor(this, colors[15], "15", theme->color(Theme::TerminalAnsi15), "bright white");
+    setupColor(this, colors[7], "7", creatorColor(Theme::TerminalAnsi7), "white");
+    setupColor(this, colors[15], "15", creatorColor(Theme::TerminalAnsi15), "bright white");
 
     setLayouter([this] {
         using namespace Layouting;

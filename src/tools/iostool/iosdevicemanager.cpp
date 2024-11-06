@@ -21,7 +21,6 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVersionNumber>
-#include <QJsonDocument>
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -103,20 +102,6 @@ static bool findXcodePath(QString *xcodePath)
 
     *xcodePath = QString::fromLatin1(process.readAllStandardOutput()).trimmed();
     return (process.exitStatus() == QProcess::NormalExit && QFile::exists(*xcodePath));
-}
-
-static bool checkDevelopmentStatusViaDeviceCtl(const QString &deviceId)
-{
-    QProcess process;
-    process.start("/usr/bin/xcrun", QStringList({"devicectl",
-        "device", "info", "details", "--quiet", "--device", deviceId, "-j", "-"}));
-    if (!process.waitForFinished(3000)) {
-        qCWarning(loggingCategory) << "Failed to launch devicectl:" << process.errorString();
-        return false;
-    }
-
-    auto jsonOutput = QJsonDocument::fromJson(process.readAllStandardOutput());
-    return jsonOutput["result"]["deviceProperties"]["developerModeStatus"] == "enabled";
 }
 
 /*!
@@ -233,6 +218,7 @@ public:
     void startDeviceLookup(int timeout);
     bool connectToPort(quint16 port, ServiceSocket *fd) override;
     int qmljsDebugPort() const override;
+    void addMessage(const QString &msg);
     void addError(const QString &msg);
     bool writeAll(ServiceSocket fd, const char *cmd, qptrdiff len = -1);
     bool mountDeveloperDiskImage();
@@ -972,6 +958,11 @@ void CommandSession::startDeviceLookup(int timeout)
                                                       this);
 }
 
+void CommandSession::addMessage(const QString &msg)
+{
+    IosDeviceManager::instance()->message(msg);
+}
+
 void CommandSession::addError(const QString &msg)
 {
     qCCritical(loggingCategory) << "CommandSession ERROR:" << msg;
@@ -1318,7 +1309,7 @@ bool AppOpSession::installApp()
     bool success = false;
     if (device) {
         if (!installAppNew()) {
-            addError(QString::fromLatin1(
+            addMessage(QString::fromLatin1(
                 "Failed to transfer and install application, trying old way ..."));
 
             const CFUrl_t bundleUrl(QUrl::fromLocalFile(bundlePath).toCFURL());
@@ -1677,6 +1668,7 @@ void DevInfoSession::deviceCallbackReturned()
     const QString osVersionKey = "osVersion";
     const QString cpuArchitectureKey = "cpuArchitecture";
     const QString uniqueDeviceId = "uniqueDeviceId";
+    const QString productType = "productType";
     bool failure = !device;
     if (!failure) {
         failure = !connectDevice();
@@ -1684,18 +1676,12 @@ void DevInfoSession::deviceCallbackReturned()
             res[deviceConnectedKey] = QLatin1String("YES");
             res[deviceNameKey] = getStringValue(device, nullptr, CFSTR("DeviceName"));
             res[uniqueDeviceId] = getStringValue(device, nullptr, CFSTR("UniqueDeviceID"));
+            res[productType] = getStringValue(device, nullptr, CFSTR("ProductType"));
             const QString productVersion = getStringValue(device, nullptr, CFSTR("ProductVersion"));
-
-            if (productVersion.startsWith("17.")) {
-                res[developerStatusKey] = checkDevelopmentStatusViaDeviceCtl(res[uniqueDeviceId])
-                    ? QLatin1String("Development") : QLatin1String("*off*");
-            } else {
-                res[developerStatusKey] = getStringValue(device,
+            res[developerStatusKey] = getStringValue(device,
                                                      CFSTR("com.apple.xcode.developerdomain"),
                                                      CFSTR("DeveloperStatus"),
                                                      "*off*");
-            }
-
             res[cpuArchitectureKey] = getStringValue(device, nullptr, CFSTR("CPUArchitecture"));
             const QString buildVersion = getStringValue(device, nullptr, CFSTR("BuildVersion"));
             if (!productVersion.isEmpty() && !buildVersion.isEmpty())

@@ -13,12 +13,6 @@
 
 namespace Vcpkg::Internal {
 
-class VcpkgPluginPrivate
-{
-public:
-    VcpkgManifestEditorFactory vcpkgManifestEditorFactory;
-};
-
 class VcpkgPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
@@ -27,18 +21,17 @@ class VcpkgPlugin final : public ExtensionSystem::IPlugin
 public:
     void initialize() final
     {
-        ProjectExplorer::JsonWizardFactory::addWizardPath(":/vcpkg/wizards/");
-
-        d = std::make_unique<VcpkgPluginPrivate>();
+        setupVcpkgManifestEditor();
 
 #ifdef WITH_TESTS
-        addTest<VcpkgSearchTest>();
+        addTestCreator(createVcpkgSearchTest);
 #endif
     }
 
-    virtual void extensionsInitialized() final { settings().setVcpkgRootEnvironmentVariable(); }
-
-    std::unique_ptr<VcpkgPluginPrivate> d;
+    void extensionsInitialized() final
+    {
+        settings().setVcpkgRootEnvironmentVariable();
+    }
 };
 
 } // namespace Vcpkg::Internal

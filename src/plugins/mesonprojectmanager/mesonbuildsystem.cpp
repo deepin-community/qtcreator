@@ -5,16 +5,17 @@
 
 #include "kitdata.h"
 #include "mesonbuildconfiguration.h"
+#include "mesonpluginconstants.h"
 #include "mesonprojectmanagertr.h"
-#include "mesontoolkitaspect.h"
 #include "settings.h"
+#include "toolkitaspectwidget.h"
 
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
-#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectupdater.h>
 #include <projectexplorer/taskhub.h>
 #include <projectexplorer/toolchain.h>
 
@@ -23,8 +24,6 @@
 
 #include <utils/macroexpander.h>
 #include <utils/qtcassert.h>
-
-#include <optional>
 
 #include <QLoggingCategory>
 
@@ -68,9 +67,9 @@ static KitData createKitData(const Kit *kit)
     data.qmakePath = expander->expand(QString("%{Qt:qmakeExecutable}"));
     data.qtVersionStr = expander->expand(QString("%{Qt:Version}"));
     data.qtVersion = Utils::QtMajorVersion::None;
-    auto version = Version::fromString(data.qtVersionStr);
-    if (version.isValid) {
-        switch (version.major) {
+    auto version = QVersionNumber::fromString(data.qtVersionStr);
+    if (!version.isNull()) {
+        switch (version.majorVersion()) {
         case 4:
             data.qtVersion = Utils::QtMajorVersion::Qt4;
             break;
@@ -92,7 +91,7 @@ static FilePath machineFilesDir()
     return Core::ICore::userResourcePath("Meson-machine-files");
 }
 
-FilePath MachineFileManager::machineFile(const Kit *kit)
+static FilePath machineFile(const Kit *kit)
 {
     QTC_ASSERT(kit, return {});
     auto baseName
@@ -100,6 +99,20 @@ FilePath MachineFileManager::machineFile(const Kit *kit)
     baseName = baseName.remove('{').remove('}');
     return machineFilesDir().pathAppended(baseName);
 }
+
+// MachineFileManager
+
+class MachineFileManager final : public QObject
+{
+public:
+    MachineFileManager();
+
+private:
+    void addMachineFile(const Kit *kit);
+    void removeMachineFile(const Kit *kit);
+    void updateMachineFile(const Kit *kit);
+    void cleanupMachineFiles();
+};
 
 MachineFileManager::MachineFileManager()
 {
@@ -177,6 +190,7 @@ void MachineFileManager::cleanupMachineFiles()
 MesonBuildSystem::MesonBuildSystem(MesonBuildConfiguration *bc)
     : BuildSystem(bc)
     , m_parser(MesonToolKitAspect::mesonToolId(bc->kit()), bc->environment(), project())
+    , m_cppCodeModelUpdater(ProjectUpdaterFactory::createCppProjectUpdater())
 {
     qCDebug(mesonBuildSystemLog) << "Init";
     connect(bc->target(), &ProjectExplorer::Target::kitChanged, this, [this] {
@@ -239,12 +253,12 @@ void MesonBuildSystem::parsingCompleted(bool success)
     if (success) {
         setRootProjectNode(m_parser.takeProjectNode());
         if (kit() && buildConfiguration()) {
-            ProjectExplorer::KitInfo kitInfo{kit()};
-            m_cppCodeModelUpdater.update(
+            KitInfo kitInfo{kit()};
+            m_cppCodeModelUpdater->update(
                 {project(),
                  QtSupport::CppKitInfo(kit()),
                  buildConfiguration()->environment(),
-                 m_parser.buildProjectParts(kitInfo.cxxToolChain, kitInfo.cToolChain)});
+                 m_parser.buildProjectParts(kitInfo.cxxToolchain, kitInfo.cToolchain)});
         }
         setApplicationTargets(m_parser.appsTargets());
         UNLOCK(true);
@@ -267,8 +281,7 @@ QStringList MesonBuildSystem::configArgs(bool isSetup)
     if (!isSetup || params.contains("--cross-file") || params.contains("--native-file"))
         return m_pendingConfigArgs + bc->mesonConfigArgs();
 
-    return QStringList{
-               QString("--native-file=%1").arg(MachineFileManager::machineFile(kit()).toString())}
+    return QStringList{QString("--native-file=%1").arg(machineFile(kit()).toString())}
            + m_pendingConfigArgs + bc->mesonConfigArgs();
 }
 
@@ -329,6 +342,11 @@ void MesonBuildSystem::updateKit(ProjectExplorer::Kit *kit)
     QTC_ASSERT(kit, return );
     m_kitData = createKitData(kit);
     m_parser.setQtVersion(m_kitData.qtVersion);
+}
+
+void setupMesonBuildSystem()
+{
+    static MachineFileManager theMachineFileManager;
 }
 
 } // MesonProjectManager::Internal

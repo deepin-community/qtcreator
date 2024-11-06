@@ -78,126 +78,6 @@ QTCREATOR_UTILS_EXPORT QString commonPrefix(const QStringList &strings)
     return strings.at(0).left(commonLength);
 }
 
-static bool validateVarName(const QString &varName)
-{
-    return !varName.startsWith("JS:");
-}
-
-bool AbstractMacroExpander::expandNestedMacros(const QString &str, int *pos, QString *ret)
-{
-    QString varName;
-    QString pattern, replace;
-    QString defaultValue;
-    QString *currArg = &varName;
-    QChar prev;
-    QChar c;
-    QChar replacementChar;
-    bool replaceAll = false;
-
-    int i = *pos;
-    int strLen = str.length();
-    varName.reserve(strLen - i);
-    for (; i < strLen; prev = c) {
-        c = str.at(i++);
-        if (c == '\\' && i < strLen) {
-            c = str.at(i++);
-            // For the replacement, do not skip the escape sequence when followed by a digit.
-            // This is needed for enabling convenient capture group replacement,
-            // like %{var/(.)(.)/\2\1}, without escaping the placeholders.
-            if (currArg == &replace && c.isDigit())
-                *currArg += '\\';
-            *currArg += c;
-        } else if (c == '}') {
-            if (varName.isEmpty()) { // replace "%{}" with "%"
-                *ret = QString('%');
-                *pos = i;
-                return true;
-            }
-            QSet<AbstractMacroExpander*> seen;
-            if (resolveMacro(varName, ret, seen)) {
-                *pos = i;
-                if (!pattern.isEmpty() && currArg == &replace) {
-                    const QRegularExpression regexp(pattern);
-                    if (regexp.isValid()) {
-                        if (replaceAll) {
-                            ret->replace(regexp, replace);
-                        } else {
-                            // There isn't an API for replacing once...
-                            const QRegularExpressionMatch match = regexp.match(*ret);
-                            if (match.hasMatch()) {
-                                *ret = ret->left(match.capturedStart(0))
-                                        + match.captured(0).replace(regexp, replace)
-                                        + ret->mid(match.capturedEnd(0));
-                            }
-                        }
-                    }
-                }
-                return true;
-            }
-            if (!defaultValue.isEmpty()) {
-                *pos = i;
-                *ret = defaultValue;
-                return true;
-            }
-            return false;
-        } else if (c == '{' && prev == '%') {
-            if (!expandNestedMacros(str, &i, ret))
-                return false;
-            varName.chop(1);
-            varName += *ret;
-        } else if (currArg == &varName && c == '-' && prev == ':' && validateVarName(varName)) {
-            varName.chop(1);
-            currArg = &defaultValue;
-        } else if (currArg == &varName && (c == '/' || c == '#') && validateVarName(varName)) {
-            replacementChar = c;
-            currArg = &pattern;
-            if (i < strLen && str.at(i) == replacementChar) {
-                ++i;
-                replaceAll = true;
-            }
-        } else if (currArg == &pattern && c == replacementChar) {
-            currArg = &replace;
-        } else {
-            *currArg += c;
-        }
-    }
-    return false;
-}
-
-int AbstractMacroExpander::findMacro(const QString &str, int *pos, QString *ret)
-{
-    forever {
-        int openPos = str.indexOf("%{", *pos);
-        if (openPos < 0)
-            return 0;
-        int varPos = openPos + 2;
-        if (expandNestedMacros(str, &varPos, ret)) {
-            *pos = openPos;
-            return varPos - openPos;
-        }
-        // An actual expansion may be nested into a "false" one,
-        // so we continue right after the last %{.
-        *pos = openPos + 2;
-    }
-}
-
-QTCREATOR_UTILS_EXPORT void expandMacros(QString *str, AbstractMacroExpander *mx)
-{
-    QString rsts;
-
-    for (int pos = 0; int len = mx->findMacro(*str, &pos, &rsts); ) {
-        str->replace(pos, len, rsts);
-        pos += rsts.length();
-    }
-}
-
-QTCREATOR_UTILS_EXPORT QString expandMacros(const QString &str, AbstractMacroExpander *mx)
-{
-    QString ret = str;
-    expandMacros(&ret, mx);
-    return ret;
-}
-
 QTCREATOR_UTILS_EXPORT QString stripAccelerator(const QString &text)
 {
     QString res = text;
@@ -344,6 +224,18 @@ QString quoteAmpersands(const QString &text)
 {
     QString result = text;
     return result.replace("&", "&&");
+}
+
+QString asciify(const QString &input)
+{
+    QString result;
+    for (const QChar &c : input) {
+        if (c.isPrint() && c.unicode() < 128)
+            result.append(c);
+        else
+            result.append(QString::fromLatin1("u%1").arg(c.unicode(), 4, 16, QChar('0')));
+    }
+    return result;
 }
 
 QString formatElapsedTime(qint64 elapsed)
@@ -625,7 +517,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text)
                 image.fill(QColor(0, 0, 0, 0).rgba());
                 image.setPixel(0,
                                height - 1,
-                               Utils::creatorTheme()->color(Theme::TextColorDisabled).rgba());
+                               Utils::creatorColor(Theme::TextColorDisabled).rgba());
 
                 h2Brush = QBrush(image);
             }
@@ -658,6 +550,12 @@ void MarkdownHighlighter::highlightBlock(const QString &text)
             setFormat(fragment.position() - block.position(), fragment.length(), fmt);
         }
     }
+}
+
+QString ansiColoredText(const QString &text, const QColor &color)
+{
+    static const QString formatString("\033[38;2;%1;%2;%3m%4\033[0m");
+    return formatString.arg(color.red()).arg(color.green()).arg(color.blue()).arg(text);
 }
 
 } // namespace Utils

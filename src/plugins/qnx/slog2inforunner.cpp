@@ -8,7 +8,7 @@
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/runconfigurationaspects.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QRegularExpression>
@@ -22,7 +22,7 @@ Slog2InfoRunner::Slog2InfoRunner(RunControl *runControl)
     : RunWorker(runControl)
 {
     setId("Slog2InfoRunner");
-    m_applicationId = runControl->aspect<ExecutableAspect>()->executable.fileName();
+    m_applicationId = runControl->aspectData<ExecutableAspect>()->executable.fileName();
 
     // See QTCREATORBUG-10712 for details.
     // We need to limit length of ApplicationId to 63 otherwise it would not match one in slog2info.
@@ -32,29 +32,30 @@ Slog2InfoRunner::Slog2InfoRunner(RunControl *runControl)
 void Slog2InfoRunner::start()
 {
     using namespace Tasking;
-    QTC_CHECK(!m_taskTree);
+    QTC_CHECK(!m_taskTreeRunner.isRunning());
 
-    const auto testStartHandler = [this](Process &process) {
-        process.setCommand({device()->filePath("slog2info"), {}});
+    const auto onTestSetup = [this](Process &process) {
+        process.setCommand(CommandLine{device()->filePath("slog2info")});
     };
-    const auto testDoneHandler = [this](const Process &) {
-        m_found = true;
-    };
-    const auto testErrorHandler = [this](const Process &) {
+    const auto onTestDone = [this](DoneWith result) {
+        if (result == DoneWith::Success) {
+            m_found = true;
+            return;
+        }
         appendMessage(Tr::tr("Warning: \"slog2info\" is not found on the device, "
                              "debug output not available."), ErrorMessageFormat);
     };
 
-    const auto launchTimeStartHandler = [this](Process &process) {
+    const auto onLaunchTimeSetup = [this](Process &process) {
         process.setCommand({device()->filePath("date"), "+\"%d %H:%M:%S\"", CommandLine::Raw});
     };
-    const auto launchTimeDoneHandler = [this](const Process &process) {
+    const auto onLaunchTimeDone = [this](const Process &process) {
         QTC_CHECK(!m_applicationId.isEmpty());
         QTC_CHECK(m_found);
         m_launchDateTime = QDateTime::fromString(process.cleanedStdOut().trimmed(), "dd HH:mm:ss");
     };
 
-    const auto logStartHandler = [this](Process &process) {
+    const auto onLogSetup = [this](Process &process) {
         process.setCommand({device()->filePath("slog2info"), {"-w"}});
         connect(&process, &Process::readyReadStandardOutput, this, [&] {
             processLogInput(QString::fromLatin1(process.readAllRawStandardOutput()));
@@ -63,25 +64,24 @@ void Slog2InfoRunner::start()
             appendMessage(QString::fromLatin1(process.readAllRawStandardError()), StdErrFormat);
         });
     };
-    const auto logErrorHandler = [this](const Process &process) {
+    const auto onLogError = [this](const Process &process) {
         appendMessage(Tr::tr("Cannot show slog2info output. Error: %1").arg(process.errorString()),
                       StdErrFormat);
     };
 
     const Group root {
-        ProcessTask(testStartHandler, testDoneHandler, testErrorHandler),
-        ProcessTask(launchTimeStartHandler, launchTimeDoneHandler),
-        ProcessTask(logStartHandler, {}, logErrorHandler)
+        ProcessTask(onTestSetup, onTestDone),
+        ProcessTask(onLaunchTimeSetup, onLaunchTimeDone, CallDoneIf::Success),
+        ProcessTask(onLogSetup, onLogError, CallDoneIf::Error)
     };
 
-    m_taskTree.reset(new TaskTree(root));
-    m_taskTree->start();
+    m_taskTreeRunner.start(root);
     reportStarted();
 }
 
 void Slog2InfoRunner::stop()
 {
-    m_taskTree.reset();
+    m_taskTreeRunner.reset();
     processRemainingLogData();
     reportStopped();
 }

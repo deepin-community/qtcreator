@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include "copilothoverhandler.h"
 #include "requests/checkstatus.h"
 #include "requests/getcompletions.h"
 #include "requests/seteditorinfo.h"
@@ -56,14 +55,13 @@ public:
 private:
     void requestSetEditorInfo();
 
-    QMap<TextEditor::TextEditorWidget *, GetCompletionRequest> m_runningRequests;
+    QHash<TextEditor::TextEditorWidget *, GetCompletionRequest> m_runningRequests;
     struct ScheduleData
     {
         int cursorPosition = -1;
         QTimer *timer = nullptr;
     };
-    QMap<TextEditor::TextEditorWidget *, ScheduleData> m_scheduledRequests;
-    CopilotHoverHandler m_hoverHandler;
+    QHash<TextEditor::TextEditorWidget *, ScheduleData> m_scheduledRequests;
     bool m_isAskingForPassword{false};
 };
 

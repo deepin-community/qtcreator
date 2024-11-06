@@ -4,6 +4,7 @@ Product {
     Depends { name: "Qt.core"; versionAtLeast: minimumQtVersion }
     property string minimumQtVersion: "5.15.2"
     property bool install: true
+    property bool hasCMakeFile: true
     property string targetInstallDir
     cpp.defines: {
         var res = [
@@ -17,7 +18,15 @@ Product {
             res.push("QT_STRICT_ITERATORS");
         return res;
     }
-    cpp.cxxLanguageVersion: "c++17"
+    cpp.cxxLanguageVersion: "c++20"
     cpp.enableExceptions: true
     cpp.rpaths: qbsbuildconfig.libRPaths
+    cpp.minimumMacosVersion: "11.0"
+
+    Group {
+        name: "CMake"
+        condition: hasCMakeFile
+        prefix: product.sourceDirectory + '/'
+        files: "CMakeLists.txt"
+    }
 }

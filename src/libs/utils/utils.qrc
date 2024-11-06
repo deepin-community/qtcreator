@@ -168,6 +168,8 @@
         <file>images/eye_closed@2x.png</file>
         <file>images/eye_open.png</file>
         <file>images/eye_open@2x.png</file>
+        <file>images/eyeoverlay.png</file>
+        <file>images/eyeoverlay@2x.png</file>
         <file>images/desktopdevicesmall.png</file>
         <file>images/desktopdevicesmall@2x.png</file>
         <file>images/reset@2x.png</file>
@@ -248,7 +250,7 @@
         <file>images/message.png</file>
         <file>images/message@2x.png</file>
         <file>images/help.png</file>
-        <file alias="mimetypes/freedesktop.org.xml" compression-algorithm="best">../3rdparty/xdg/freedesktop.org.xml</file>
+        <file alias="mimetypes/tika-mimetypes.xml" compression-algorithm="best">../3rdparty/tika/tika-mimetypes.xml</file>
         <file>scripts/deviceshell.sh</file>
     </qresource>
     <qresource prefix="/codemodel">

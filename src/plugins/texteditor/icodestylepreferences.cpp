@@ -24,7 +24,8 @@ public:
     QString m_displayName;
     bool m_readOnly = false;
     bool m_temporarilyReadOnly = false;
-    bool m_isAdditionalTabDisabled = false;
+    bool m_isAdditionalTabVisible = false;
+    bool m_isAdditionalTabExist = false;
     Key m_settingsSuffix;
 };
 
@@ -82,14 +83,24 @@ bool ICodeStylePreferences::isTemporarilyReadOnly() const
     return d->m_temporarilyReadOnly;
 }
 
-bool ICodeStylePreferences::isAdditionalTabDisabled() const
+bool ICodeStylePreferences::isAdditionalTabVisible() const
 {
-    return d->m_isAdditionalTabDisabled;
+    return d->m_isAdditionalTabVisible;
 }
 
-void ICodeStylePreferences::setIsAdditionalTabDisabled(bool on)
+void ICodeStylePreferences::setIsAdditionalTabVisible(bool on)
 {
-    d->m_isAdditionalTabDisabled = on;
+    d->m_isAdditionalTabVisible = on;
+}
+
+bool ICodeStylePreferences::additionalTabExist() const
+{
+    return d->m_isAdditionalTabExist;
+}
+
+void ICodeStylePreferences::setAdditionalTabExist(bool on)
+{
+    d->m_isAdditionalTabExist = on;
 }
 
 void ICodeStylePreferences::setTabSettings(const TabSettings &settings)
@@ -241,6 +252,8 @@ void ICodeStylePreferences::fromMap(const Store &map)
 void ICodeStylePreferences::codeStyleRemoved(ICodeStylePreferences *preferences)
 {
     if (currentDelegate() == preferences) {
+        emit aboutToBeRemoved(preferences);
+
         CodeStylePool *pool = delegatingPool();
         QList<ICodeStylePreferences *> codeStyles = pool->codeStyles();
         const int idx = codeStyles.indexOf(preferences);

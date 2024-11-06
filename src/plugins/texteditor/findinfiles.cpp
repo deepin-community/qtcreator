@@ -23,12 +23,10 @@ using namespace Utils;
 
 namespace TextEditor {
 
-static FindInFiles *m_instance = nullptr;
 static const char HistoryKey[] = "FindInFiles.Directories.History";
 
 FindInFiles::FindInFiles()
 {
-    m_instance = this;
     connect(EditorManager::instance(), &EditorManager::findOnFileSystemRequest,
             this, &FindInFiles::findOnFileSystem);
 }
@@ -108,6 +106,11 @@ void FindInFiles::searchEnginesSelectionChanged(int index)
     m_searchEngineWidget->setCurrentIndex(index);
 }
 
+void FindInFiles::currentEditorChanged(Core::IEditor *editor)
+{
+    m_currentDirectory->setEnabled(editor && editor->document() && !editor->document()->filePath().isEmpty());
+}
+
 QWidget *FindInFiles::createConfigWidget()
 {
     if (!m_configWidget) {
@@ -149,6 +152,18 @@ QWidget *FindInFiles::createConfigWidget()
             for (const QString &dir: legacyHistory)
                 completer->addEntry(dir);
         }
+        m_directory->addButton("Current", this, [this] {
+            const IDocument *document = EditorManager::instance()->currentDocument();
+            if (!document)
+                return;
+            m_directory->setFilePath(document->filePath().parentDir());
+        });
+        m_currentDirectory = m_directory->buttonAtIndex(1);
+        auto editorManager = EditorManager::instance();
+        connect(editorManager, &EditorManager::currentEditorChanged,
+                this, &FindInFiles::currentEditorChanged);
+        currentEditorChanged(editorManager->currentEditor());
+
         dirLabel->setBuddy(m_directory);
         gridLayout->addWidget(m_directory, row++, 1, 1, 2);
 
@@ -173,18 +188,24 @@ QWidget *FindInFiles::createConfigWidget()
     return m_configWidget;
 }
 
-void FindInFiles::writeSettings(QtcSettings *settings)
+const char kDefaultInclusion[] = "*.cpp,*.h";
+const char kDefaultExclusion[] = "*/.git/*,*/.cvs/*,*/.svn/*,*.autosave,*/build/*";
+
+Store FindInFiles::save() const
 {
-    settings->beginGroup("FindInFiles");
-    writeCommonSettings(settings);
-    settings->endGroup();
+    Store s;
+    writeCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
+    return s;
 }
 
-void FindInFiles::readSettings(QtcSettings *settings)
+void FindInFiles::restore(const Utils::Store &s)
 {
-    settings->beginGroup("FindInFiles");
-    readCommonSettings(settings, "*.cpp,*.h", "*/.git/*,*/.cvs/*,*/.svn/*,*.autosave");
-    settings->endGroup();
+    readCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
+}
+
+QByteArray FindInFiles::settingsKey() const
+{
+    return "FindInFiles";
 }
 
 void FindInFiles::setBaseDirectory(const FilePath &directory)
@@ -192,18 +213,30 @@ void FindInFiles::setBaseDirectory(const FilePath &directory)
     m_directory->setBaseDirectory(directory);
 }
 
+static FindInFiles *s_instance;
+
+FindInFiles &findInFiles()
+{
+    return *s_instance;
+}
+
 void FindInFiles::findOnFileSystem(const QString &path)
 {
-    QTC_ASSERT(m_instance, return);
     const QFileInfo fi(path);
     const QString folder = fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath();
-    m_instance->setSearchDir(FilePath::fromString(folder));
-    Find::openFindDialog(m_instance);
+    findInFiles().setSearchDir(FilePath::fromString(folder));
+    Find::openFindDialog(&findInFiles());
 }
 
 FindInFiles *FindInFiles::instance()
 {
-    return m_instance;
+    return s_instance;
+}
+
+void Internal::setupFindInFiles(QObject *guard)
+{
+    s_instance = new FindInFiles;
+    s_instance->setParent(guard);
 }
 
 } // TextEditor

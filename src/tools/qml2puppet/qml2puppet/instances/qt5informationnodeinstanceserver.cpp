@@ -10,13 +10,10 @@
 #include <QMatrix4x4>
 
 #include "servernodeinstance.h"
-#include "childrenchangeeventfilter.h"
 #include "propertyabstractcontainer.h"
 #include "propertybindingcontainer.h"
 #include "propertyvaluecontainer.h"
 #include "instancecontainer.h"
-#include "createinstancescommand.h"
-#include "changefileurlcommand.h"
 #include "clearscenecommand.h"
 #include "reparentinstancescommand.h"
 #include "update3dviewstatecommand.h"
@@ -28,8 +25,7 @@
 #include "removepropertiescommand.h"
 #include "valueschangedcommand.h"
 #include "informationchangedcommand.h"
-#include "pixmapchangedcommand.h"
-#include "commondefines.h"
+#include "imagecontainer.h"
 #include "changestatecommand.h"
 #include "childrenchangedcommand.h"
 #include "completecomponentcommand.h"
@@ -44,15 +40,16 @@
 #include "requestmodelnodepreviewimagecommand.h"
 #include "changeauxiliarycommand.h"
 
-#include "dummycontextobject.h"
-#include "../editor3d/generalhelper.h"
-#include "../editor3d/mousearea3d.h"
+#include "../editor3d/boxgeometry.h"
 #include "../editor3d/camerageometry.h"
-#include "../editor3d/lightgeometry.h"
+#include "../editor3d/generalhelper.h"
 #include "../editor3d/gridgeometry.h"
-#include "../editor3d/selectionboxgeometry.h"
-#include "../editor3d/linegeometry.h"
 #include "../editor3d/icongizmoimageprovider.h"
+#include "../editor3d/lightgeometry.h"
+#include "../editor3d/linegeometry.h"
+#include "../editor3d/lookatgeometry.h"
+#include "../editor3d/mousearea3d.h"
+#include "../editor3d/selectionboxgeometry.h"
 
 #include <private/qquickdesignersupport_p.h>
 #include <qmlprivategate.h>
@@ -78,6 +75,7 @@
 #include <QtQuick3D/private/qquick3dscenerootnode_p.h>
 #include <QtQuick3D/private/qquick3drepeater_p.h>
 #include <QtQuick3D/private/qquick3dloader_p.h>
+#include <QtQuick3D/private/qquick3dreflectionprobe_p.h>
 #include <QtQuick3D/private/qquick3dsceneenvironment_p.h>
 #if defined(QUICK3D_ASSET_UTILS_MODULE)
 #include <private/qquick3druntimeloader_p.h>
@@ -213,7 +211,7 @@ void Qt5InformationNodeInstanceServer::handleInputEvents()
                     // Peek at next command. If that is also a wheel with same button/modifiers
                     // state, skip this event and add the angle delta to the next one.
                     auto nextCommand = m_pendingInputEventCommands[i + 1];
-                    if (nextCommand.type() == QEvent::MouseMove
+                    if (nextCommand.type() == QEvent::Wheel
                             && nextCommand.button() == command.button()
                             && nextCommand.buttons() == command.buttons()
                             && nextCommand.modifiers() == command.modifiers()) {
@@ -232,6 +230,12 @@ void Qt5InformationNodeInstanceServer::handleInputEvents()
                 QKeyEvent *ke = new QKeyEvent(command.type(), command.key(), command.modifiers(),
                                               QString(), command.autoRepeat(), command.count());
                 QGuiApplication::sendEvent(m_editView3DData.window, ke);
+            } else if (command.type() == QEvent::Enter) {
+                QEnterEvent *ee = new QEnterEvent(command.pos(), {}, {});
+                QGuiApplication::sendEvent(m_editView3DData.window, ee);
+            } else if (command.type() == QEvent::Leave) {
+                QEvent *e = new QEvent(command.type());
+                QGuiApplication::sendEvent(m_editView3DData.window, e);
             } else {
                 if (command.type() == QEvent::MouseMove && i < m_pendingInputEventCommands.size() - 1) {
                     // Peek at next command. If that is also a move with only difference being
@@ -252,8 +256,11 @@ void Qt5InformationNodeInstanceServer::handleInputEvents()
                 QGuiApplication::sendEvent(m_editView3DData.window, &me);
 
                 // Context menu requested
-                if (command.button() == Qt::RightButton && command.modifiers() == Qt::NoModifier)
+                if (command.type() == QEvent::MouseButtonPress
+                    && command.buttons() == Qt::RightButton
+                    && command.modifiers() == Qt::NoModifier) {
                     getNodeAtPos(command.pos());
+                }
             }
         }
 
@@ -290,6 +297,30 @@ void Qt5InformationNodeInstanceServer::resolveImportSupport()
     nodeInstanceClient()->handlePuppetToCreatorCommand(
                 {PuppetToCreatorCommand::Import3DSupport, QVariant(supportMap)});
 
+#endif
+}
+
+void Qt5InformationNodeInstanceServer::updateActiveScenePreferredCamera()
+{
+#ifdef QUICK3D_MODULE
+    auto preferredCamera = [&]() -> QQuick3DCamera * {
+        if (auto activeView = qobject_cast<QQuick3DViewport *>(m_active3DView)) {
+            if (auto camera = activeView->camera()) {
+                if (hasInstanceForObject(camera) && find3DSceneRoot(camera) == m_active3DScene)
+                    return camera;
+            }
+        }
+
+        const QList<ServerNodeInstance> allCameras = allCameraInstances();
+        for (const auto &camera : allCameras) {
+            if (find3DSceneRoot(camera) == m_active3DScene)
+                return qobject_cast<QQuick3DCamera *>(camera.internalObject());
+        }
+        return nullptr;
+    };
+
+    auto helper = qobject_cast<QmlDesigner::Internal::GeneralHelper *>(m_3dHelper);
+    helper->setActiveScenePreferredCamera(preferredCamera());
 #endif
 }
 
@@ -338,7 +369,7 @@ void Qt5InformationNodeInstanceServer::updateRotationBlocks(
 #endif
 }
 
-void Qt5InformationNodeInstanceServer::updateSnapSettings(
+void Qt5InformationNodeInstanceServer::updateSnapAndCameraSettings(
     [[maybe_unused]] const QVector<PropertyValueContainer> &valueChanges)
 {
 #ifdef QUICK3D_MODULE
@@ -367,6 +398,8 @@ void Qt5InformationNodeInstanceServer::updateSnapSettings(
             } else if (container.name() == "snapAbs3d") {
                 helper->setSnapAbsolute(container.value().toBool());
                 changed = true;
+            } else if (container.name() == "cameraTotalSpeed3d") {
+                helper->setCameraSpeed(container.value().toDouble());
             }
         }
         if (changed)
@@ -422,23 +455,26 @@ void Qt5InformationNodeInstanceServer::getNodeAtPos([[maybe_unused]] const QPoin
     if (!helper)
         return;
 
-    QQmlProperty editViewProp(m_editView3DData.rootItem, "editView", context());
-    QObject *obj = qvariant_cast<QObject *>(editViewProp.read());
-    QQuick3DViewport *editView = qobject_cast<QQuick3DViewport *>(obj);
-
-    // Non-model nodes with icon gizmos are also valid results
+    // Non-model nodes with icon gizmos are also valid results.
     QVariant gizmoVar;
     QMetaObject::invokeMethod(m_editView3DData.rootItem, "gizmoAt", Qt::DirectConnection,
                               Q_RETURN_ARG(QVariant, gizmoVar),
                               Q_ARG(QVariant, pos.x()),
                               Q_ARG(QVariant, pos.y()));
     QObject *gizmoObj = qvariant_cast<QObject *>(gizmoVar);
+
+    // gizmoAt() call above will update the activeEditView
+    QQmlProperty editViewProp(m_editView3DData.rootItem, "activeEditView", context());
+    QObject *obj = qvariant_cast<QObject *>(editViewProp.read());
+    QQuick3DViewport *editView = qobject_cast<QQuick3DViewport *>(obj);
+    QPointF mappedPos = m_editView3DData.rootItem->mapToItem(editView, pos);
+
     qint32 instanceId = -1;
 
     if (gizmoObj && hasInstanceForObject(gizmoObj)) {
         instanceId = instanceForObject(gizmoObj).instanceId();
     } else {
-        QQuick3DModel *hitModel = helper->pickViewAt(editView, pos.x(), pos.y()).objectHit();
+        QQuick3DModel *hitModel = helper->pickViewAt(editView, mappedPos.x(), mappedPos.y()).objectHit();
         QObject *resolvedPick = helper->resolvePick(hitModel);
         if (hasInstanceForObject(resolvedPick))
             instanceId = instanceForObject(resolvedPick).instanceId();
@@ -450,7 +486,7 @@ void Qt5InformationNodeInstanceServer::getNodeAtPos([[maybe_unused]] const QPoin
         Internal::MouseArea3D ma;
         ma.setView3D(editView);
         ma.setEulerRotation({90, 0, 0}); // Default grid plane (XZ plane)
-        QVector3D planePos = ma.getMousePosInPlane(nullptr, pos);
+        QVector3D planePos = ma.getMousePosInPlane(nullptr, mappedPos);
         const float limit = 10000000; // Remove extremes on nearly parallel plane
         if (!qFuzzyCompare(planePos.z(), -1.f) && qAbs(planePos.x()) < limit && qAbs(planePos.y()) < limit)
             pos3d = {planePos.x(), 0, planePos.y()};
@@ -466,6 +502,42 @@ void Qt5InformationNodeInstanceServer::getNodeAtPos([[maybe_unused]] const QPoin
 #endif
 }
 
+void Qt5InformationNodeInstanceServer::getNodeAtMainScenePos(
+    [[maybe_unused]] const QPointF &pos, [[maybe_unused]] qint32 viewId)
+{
+#ifdef QUICK3D_MODULE
+    // Pick a Quick3DModel at scene position in the main scene
+    auto helper = qobject_cast<QmlDesigner::Internal::GeneralHelper *>(m_3dHelper);
+
+    if (!helper || !hasInstanceForId(viewId))
+        return;
+
+    ServerNodeInstance view = instanceForId(viewId);
+    auto viewObj = qobject_cast<QQuick3DViewport *>(view.internalObject());
+
+    if (viewObj) {
+        // Render the target View3D to make sure everything is up to date
+        updateNodesRecursive(viewObj);
+        grabItem(viewObj);
+
+        QPointF viewPos = viewObj->mapFromScene(pos);
+
+        QQuick3DModel *hitModel = helper->pickViewAt(viewObj, viewPos.x(), viewPos.y()).objectHit();
+        QObject *resolvedPick = helper->resolvePick(hitModel);
+
+        qint32 instanceId = -1;
+        if (hasInstanceForObject(resolvedPick))
+            instanceId = instanceForObject(resolvedPick).instanceId();
+
+        QVariantList data;
+        data.append(instanceId);
+        data.append(QVector3D());
+        nodeInstanceClient()->handlePuppetToCreatorCommand({PuppetToCreatorCommand::NodeAtPos,
+                                                            QVariant::fromValue(data)});
+    }
+#endif
+}
+
 void Qt5InformationNodeInstanceServer::createEditView3D()
 {
 #ifdef QUICK3D_MODULE
@@ -478,10 +550,20 @@ void Qt5InformationNodeInstanceServer::createEditView3D()
     qmlRegisterType<QmlDesigner::Internal::GridGeometry>("GridGeometry", 1, 0, "GridGeometry");
     qmlRegisterType<QmlDesigner::Internal::SelectionBoxGeometry>("SelectionBoxGeometry", 1, 0, "SelectionBoxGeometry");
     qmlRegisterType<QmlDesigner::Internal::LineGeometry>("LineGeometry", 1, 0, "LineGeometry");
+    qmlRegisterType<QmlDesigner::Internal::BoxGeometry>("BoxGeometry", 1, 0, "BoxGeometry");
+    qmlRegisterType<QmlDesigner::Internal::LookAtGeometry>("LookAtGeometry", 1, 0, "LookAtGeometry");
 
     auto helper = new QmlDesigner::Internal::GeneralHelper();
     QObject::connect(helper, &QmlDesigner::Internal::GeneralHelper::toolStateChanged,
                      this, &Qt5InformationNodeInstanceServer::handleToolStateChanged);
+    QObject::connect(helper, &QmlDesigner::Internal::GeneralHelper::requestRender, this, [this]() {
+        render3DEditView(1);
+    });
+    QObject::connect(
+        helper,
+        &QmlDesigner::Internal::GeneralHelper::requestActiveScenePreferredCamera,
+        this,
+        &Qt5InformationNodeInstanceServer::updateActiveScenePreferredCamera);
     engine()->rootContext()->setContextProperty("_generalHelper", helper);
     engine()->addImageProvider(QLatin1String("IconGizmoImageProvider"),
                                new QmlDesigner::Internal::IconGizmoImageProvider);
@@ -872,6 +954,12 @@ void Qt5InformationNodeInstanceServer::handleActiveSceneChange()
 #endif
 }
 
+void Qt5InformationNodeInstanceServer::handleActiveSplitChange(int index)
+{
+    nodeInstanceClient()->handlePuppetToCreatorCommand({PuppetToCreatorCommand::ActiveSplitChanged,
+                                                        index});
+}
+
 void Qt5InformationNodeInstanceServer::handleToolStateChanged(const QString &sceneId,
                                                               const QString &tool,
                                                               const QVariant &toolState)
@@ -923,6 +1011,9 @@ void Qt5InformationNodeInstanceServer::handleNode3DDestroyed([[maybe_unused]] QO
         QMetaObject::invokeMethod(m_editView3DData.rootItem, "releaseParticleEmitterGizmo",
                                   Q_ARG(QVariant, objectToVariant(obj)));
 #endif
+    } else if (qobject_cast<QQuick3DReflectionProbe *>(obj)) {
+        QMetaObject::invokeMethod(m_editView3DData.rootItem, "releaseReflectionProbeGizmo",
+                                  Q_ARG(QVariant, objectToVariant(obj)));
     }
     removeNode3D(obj);
 #endif
@@ -972,6 +1063,8 @@ void Qt5InformationNodeInstanceServer::updateActiveSceneToEditView3D([[maybe_unu
         if (sceneRoot)
             activeSceneVar = objectToVariant(sceneRoot);
     }
+
+    updateActiveScenePreferredCamera();
 
     QMetaObject::invokeMethod(m_editView3DData.rootItem, "setActiveScene", Qt::QueuedConnection,
                               Q_ARG(QVariant, activeSceneVar),
@@ -1056,6 +1149,10 @@ void Qt5InformationNodeInstanceServer::resolveSceneRoots()
                                           Q_ARG(QVariant, objectToVariant(newRoot)),
                                           Q_ARG(QVariant, objectToVariant(node)));
 #endif
+            } else if (qobject_cast<QQuick3DReflectionProbe *>(node)) {
+                QMetaObject::invokeMethod(m_editView3DData.rootItem, "updateReflectionProbeGizmoScene",
+                                          Q_ARG(QVariant, objectToVariant(newRoot)),
+                                          Q_ARG(QVariant, objectToVariant(node)));
             }
         }
         ++it;
@@ -1311,6 +1408,7 @@ void Qt5InformationNodeInstanceServer::doRenderModelNode3DImageView(
         // Key number is selected so that it is unlikely to conflict other ImageContainer use.
         ImageContainer imgContainer(cmd.instanceId(), {}, 2100000001 + cmd.instanceId());
         imgContainer.setImage(renderImage);
+        imgContainer.setRequestId(cmd.requestId());
 
         // send the rendered image to creator process
         nodeInstanceClient()->handlePuppetToCreatorCommand(
@@ -1406,6 +1504,7 @@ void Qt5InformationNodeInstanceServer::doRenderModelNode2DImageView(const Reques
 
         if (!renderImage.isNull()) {
             imgContainer.setImage(renderImage);
+            imgContainer.setRequestId(cmd.requestId());
 
             // send the rendered image to creator process
             nodeInstanceClient()->handlePuppetToCreatorCommand({PuppetToCreatorCommand::RenderModelNodePreviewImage,
@@ -1543,7 +1642,7 @@ QList<ServerNodeInstance> Qt5InformationNodeInstanceServer::createInstances(
     if (m_editView3DSetupDone) {
         add3DViewPorts(createdInstances);
         add3DScenes(createdInstances);
-        createCameraAndLightGizmos(createdInstances);
+        createGizmos(createdInstances);
     }
 
     render3DEditView();
@@ -1596,13 +1695,14 @@ void Qt5InformationNodeInstanceServer::handleDynamicAddObjectTimeout()
     m_dynamicObjectConstructors.clear();
 }
 
-void Qt5InformationNodeInstanceServer::createCameraAndLightGizmos(
+void Qt5InformationNodeInstanceServer::createGizmos(
         const QList<ServerNodeInstance> &instanceList) const
 {
     QHash<QObject *, QObjectList> cameras;
     QHash<QObject *, QObjectList> lights;
     QHash<QObject *, QObjectList> particleSystems;
     QHash<QObject *, QObjectList> particleEmitters;
+    QHash<QObject *, QObjectList> reflectionProbes;
 
     for (const ServerNodeInstance &instance : instanceList) {
         if (instance.isSubclassOf("QQuick3DCamera")) {
@@ -1615,6 +1715,8 @@ void Qt5InformationNodeInstanceServer::createCameraAndLightGizmos(
                     || instance.isSubclassOf("QQuick3DParticleAttractor"))
                    && !instance.isSubclassOf("QQuick3DParticleTrailEmitter")) {
             particleEmitters[find3DSceneRoot(instance)] << instance.internalObject();
+        } else if (instance.isSubclassOf("QQuick3DReflectionProbe")) {
+            reflectionProbes[find3DSceneRoot(instance)] << instance.internalObject();
         }
     }
 
@@ -1658,6 +1760,17 @@ void Qt5InformationNodeInstanceServer::createCameraAndLightGizmos(
                                       Q_ARG(QVariant, objectToVariant(obj)));
         }
         ++emitterIt;
+    }
+
+    auto refProbeIt = reflectionProbes.constBegin();
+    while (refProbeIt != reflectionProbes.constEnd()) {
+        const auto refProbeObjs = refProbeIt.value();
+        for (auto &obj : refProbeObjs) {
+            QMetaObject::invokeMethod(m_editView3DData.rootItem, "addReflectionProbeGizmo",
+                                      Q_ARG(QVariant, objectToVariant(refProbeIt.key())),
+                                      Q_ARG(QVariant, objectToVariant(obj)));
+        }
+        ++refProbeIt;
     }
 }
 
@@ -1851,6 +1964,8 @@ void Qt5InformationNodeInstanceServer::setup3DEditView(
                      this, SLOT(handleObjectPropertyChange(QVariant, QVariant)));
     QObject::connect(m_editView3DData.rootItem, SIGNAL(notifyActiveSceneChange()),
                      this, SLOT(handleActiveSceneChange()));
+    QObject::connect(m_editView3DData.rootItem, SIGNAL(notifyActiveSplitChange(int)),
+                     this, SLOT(handleActiveSplitChange(int)));
     QObject::connect(&m_propertyChangeTimer, &QTimer::timeout,
                      this, &Qt5InformationNodeInstanceServer::handleObjectPropertyChangeTimeout);
     QObject::connect(&m_selectionChangeTimer, &QTimer::timeout,
@@ -1861,7 +1976,7 @@ void Qt5InformationNodeInstanceServer::setup3DEditView(
                      this, &Qt5InformationNodeInstanceServer::handleInputEvents);
     QObject::connect(&m_dynamicAddObjectTimer, &QTimer::timeout,
                      this, &Qt5InformationNodeInstanceServer::handleDynamicAddObjectTimeout);
-    QObject::connect(&m_activeSceneIdUpdateTimer, &QTimer::timeout, this, [this]() {
+    QObject::connect(&m_activeSceneIdUpdateTimer, &QTimer::timeout, this, [this] {
         Qt5InformationNodeInstanceServer::updateActiveSceneToEditView3D(true);
     });
 
@@ -1883,6 +1998,8 @@ void Qt5InformationNodeInstanceServer::setup3DEditView(
             if (toolStates[helper->globalStateId()].contains(helper->lastSceneIdKey()))
                 lastSceneId = toolStates[helper->globalStateId()][helper->lastSceneIdKey()].toString();
         }
+        if (toolStates.contains(helper->projectStateId()))
+            helper->setLastSceneEnvironmentData(toolStates[helper->projectStateId()][helper->lastSceneEnvKey()].toMap());
     }
 
     // Find a scene to show
@@ -1919,7 +2036,7 @@ void Qt5InformationNodeInstanceServer::setup3DEditView(
 
     updateActiveSceneToEditView3D();
 
-    createCameraAndLightGizmos(instanceList);
+    createGizmos(instanceList);
 
     // Queue two renders to make sure icon gizmos update properly
     render3DEditView(2);
@@ -2047,7 +2164,7 @@ void Qt5InformationNodeInstanceServer::createScene(const CreateSceneCommand &com
         setup3DEditView(instanceList, command);
         updateRotationBlocks(command.auxiliaryChanges);
         updateMaterialPreviewData(command.auxiliaryChanges);
-        updateSnapSettings(command.auxiliaryChanges);
+        updateSnapAndCameraSettings(command.auxiliaryChanges);
         updateColorSettings(command.auxiliaryChanges);
     }
 
@@ -2214,7 +2331,7 @@ void Qt5InformationNodeInstanceServer::changeSelection(const ChangeSelectionComm
     // Ensure the UI has enough selection box items. If it doesn't yet have them, which can be the
     // case when the first selection processed is a multiselection, we wait a bit as
     // using the new boxes immediately leads to visual glitches.
-    int boxCount = m_editView3DData.rootItem->property("selectionBoxes").value<QVariantList>().size();
+    int boxCount = m_editView3DData.rootItem->property("selectionBoxCount").toInt();
     if (boxCount < selectedObjs.size()) {
         QMetaObject::invokeMethod(m_editView3DData.rootItem, "ensureSelectionBoxes",
                                   Q_ARG(QVariant, QVariant::fromValue(selectedObjs.size())));
@@ -2263,14 +2380,15 @@ void Qt5InformationNodeInstanceServer::setSceneEnvironmentData(
 }
 
 // Returns list of camera objects to align
-// If m_selectedCameras contains cameras, return those
+// If m_selectedCameras contains cameras, return those, unless preferCurrentSceneCamera is true
 // If no cameras have been selected yet, return camera associated with current view3D, if any
 // If scene is not View3D scene, return first camera in the scene
-QVariantList Qt5InformationNodeInstanceServer::alignCameraList() const
+QVariantList Qt5InformationNodeInstanceServer::alignCameraList(
+    [[maybe_unused]] bool preferCurrentSceneCamera) const
 {
     QVariantList cameras;
 #ifdef QUICK3D_MODULE
-    if (m_selectedCameras.contains(m_active3DScene)) {
+    if (!preferCurrentSceneCamera && m_selectedCameras.contains(m_active3DScene)) {
         const QObjectList cameraList = m_selectedCameras[m_active3DScene];
         for (const auto camera : cameraList) {
             if (hasInstanceForObject(camera) && find3DSceneRoot(camera) == m_active3DScene)
@@ -2398,11 +2516,12 @@ void Qt5InformationNodeInstanceServer::inputEvent(const InputEventCommand &comma
     }
 }
 
-void Qt5InformationNodeInstanceServer::view3DAction(const View3DActionCommand &command)
+void Qt5InformationNodeInstanceServer::view3DAction([[maybe_unused]] const View3DActionCommand &command)
 {
     if (!m_editView3DSetupDone)
         return;
 
+#ifdef QUICK3D_MODULE
     QVariantMap updatedToolState;
     QVariantMap updatedViewState;
     int renderCount = 1;
@@ -2424,10 +2543,14 @@ void Qt5InformationNodeInstanceServer::view3DAction(const View3DActionCommand &c
         QMetaObject::invokeMethod(m_editView3DData.rootItem, "alignCamerasToView",
                                   Q_ARG(QVariant, alignCameraList()));
         break;
-    case View3DActionType::AlignViewToCamera:
+    case View3DActionType::AlignViewToCamera: {
+        bool preferCurrentSceneCamera = false;
+        if (!command.value().isNull())
+            preferCurrentSceneCamera = command.value().toBool();
         QMetaObject::invokeMethod(m_editView3DData.rootItem, "alignViewToCamera",
-                                  Q_ARG(QVariant, alignCameraList()));
+                                  Q_ARG(QVariant, alignCameraList(preferCurrentSceneCamera)));
         break;
+    }
     case View3DActionType::SelectionModeToggle:
         updatedToolState.insert("selectionMode", command.isEnabled() ? 1 : 0);
         break;
@@ -2445,6 +2568,9 @@ void Qt5InformationNodeInstanceServer::view3DAction(const View3DActionCommand &c
     case View3DActionType::ShowGrid:
         updatedToolState.insert("showGrid", command.isEnabled());
         break;
+    case View3DActionType::ShowLookAt:
+        updatedToolState.insert("showLookAt", command.isEnabled());
+        break;
     case View3DActionType::ShowSelectionBox:
         updatedToolState.insert("showSelectionBox", command.isEnabled());
         break;
@@ -2453,6 +2579,9 @@ void Qt5InformationNodeInstanceServer::view3DAction(const View3DActionCommand &c
         break;
     case View3DActionType::ShowCameraFrustum:
         updatedToolState.insert("showCameraFrustum", command.isEnabled());
+        break;
+    case View3DActionType::CameraViewMode:
+        updatedToolState.insert("cameraViewMode", command.value());
         break;
     case View3DActionType::SyncEnvBackground:
         updatedToolState.insert("syncEnvBackground", command.isEnabled());
@@ -2484,13 +2613,49 @@ void Qt5InformationNodeInstanceServer::view3DAction(const View3DActionCommand &c
     case View3DActionType::ParticlesSeek:
         m_particleAnimationDriver->setSeekerPosition(command.position());
         break;
-#endif
-#ifdef QUICK3D_MODULE
+#endif // QUICK3D_PARTICLES_MODULE
     case View3DActionType::GetNodeAtPos: {
         getNodeAtPos(command.value().toPointF());
         return;
     }
-#endif
+    case View3DActionType::GetNodeAtMainScenePos: {
+        QVariantList data = command.value().toList();
+        if (data.size() == 2)
+            getNodeAtMainScenePos(data[0].toPointF(), qint32(data[1].toInt()));
+        return;
+    }
+    case View3DActionType::SplitViewToggle:
+        updatedToolState.insert("splitView", command.isEnabled());
+        break;
+    case View3DActionType::FlyModeToggle:
+        updatedToolState.insert("flyMode", command.isEnabled());
+        break;
+    case View3DActionType::EditCameraRotation:
+        QMetaObject::invokeMethod(m_editView3DData.rootItem, "rotateEditCamera",
+                                  Q_ARG(QVariant, command.value()));
+        break;
+    case View3DActionType::EditCameraMove:
+        QMetaObject::invokeMethod(m_editView3DData.rootItem, "moveEditCamera",
+                                  Q_ARG(QVariant, command.value()));
+        break;
+    case View3DActionType::EditCameraStopAllMoves: {
+        auto helper = qobject_cast<QmlDesigner::Internal::GeneralHelper *>(m_3dHelper);
+        if (helper)
+            emit helper->stopAllCameraMoves();
+        break;
+    }
+    case View3DActionType::ShowWireframe:
+        updatedToolState.insert("showWireframe", command.value().toList());
+        break;
+    case View3DActionType::MaterialOverride:
+        updatedToolState.insert("matOverride", command.value().toList());
+        break;
+    case View3DActionType::SetLastSceneEnvData: {
+        auto helper = qobject_cast<QmlDesigner::Internal::GeneralHelper *>(m_3dHelper);
+        if (helper)
+            helper->setLastSceneEnvironmentData(command.value().toMap());
+        break;
+    }
 
     default:
         break;
@@ -2508,6 +2673,7 @@ void Qt5InformationNodeInstanceServer::view3DAction(const View3DActionCommand &c
     }
 
     render3DEditView(renderCount);
+#endif // QUICK3D_MODULE
 }
 
 void Qt5InformationNodeInstanceServer::requestModelNodePreviewImage(const RequestModelNodePreviewImageCommand &command)
@@ -2520,7 +2686,7 @@ void Qt5InformationNodeInstanceServer::changeAuxiliaryValues(const ChangeAuxilia
 {
     updateRotationBlocks(command.auxiliaryChanges);
     updateMaterialPreviewData(command.auxiliaryChanges);
-    updateSnapSettings(command.auxiliaryChanges);
+    updateSnapAndCameraSettings(command.auxiliaryChanges);
     updateColorSettings(command.auxiliaryChanges);
     Qt5NodeInstanceServer::changeAuxiliaryValues(command);
     render3DEditView();
@@ -2749,15 +2915,21 @@ void Qt5InformationNodeInstanceServer::handlePickTarget(
                         if (checkNode->property("_pickTarget").isNull()) {
                             if (checkRepeater) {
                                 QObject::connect(checkRepeater, &QQuick3DRepeater::objectAdded,
-                                                 this, &Qt5InformationNodeInstanceServer::handleDynamicAddObject);
+                                                 this, [this, checkNode] {
+                                    handleDynamicAddObject(checkNode);
+                                });
 #if defined(QUICK3D_ASSET_UTILS_MODULE)
                             } else if (checkRunLoader) {
                                 QObject::connect(checkRunLoader, &QQuick3DRuntimeLoader::statusChanged,
-                                                 this, &Qt5InformationNodeInstanceServer::handleDynamicAddObject);
+                                                 this, [this, checkNode] {
+                                    handleDynamicAddObject(checkNode);
+                                });
 #endif
                             } else {
                                 QObject::connect(checkLoader, &QQuick3DLoader::loaded,
-                                                 this, &Qt5InformationNodeInstanceServer::handleDynamicAddObject);
+                                                 this, [this, checkNode] {
+                                    handleDynamicAddObject(checkNode);
+                                });
                             }
                         }
                         checkNode->setProperty("_pickTarget", QVariant::fromValue(obj));
@@ -2778,9 +2950,9 @@ bool Qt5InformationNodeInstanceServer::isInformationServer() const
 
 // This method should be connected to signals indicating a new object has been constructed outside
 // normal scene creation. E.g. QQuick3DRepeater::objectAdded.
-void Qt5InformationNodeInstanceServer::handleDynamicAddObject()
+void Qt5InformationNodeInstanceServer::handleDynamicAddObject(QObject *object)
 {
-    m_dynamicObjectConstructors.insert(sender());
+    m_dynamicObjectConstructors.insert(object);
     m_dynamicAddObjectTimer.start();
 }
 

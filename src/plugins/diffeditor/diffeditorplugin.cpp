@@ -5,15 +5,13 @@
 #include "diffeditorconstants.h"
 #include "diffeditorcontroller.h"
 #include "diffeditordocument.h"
-#include "diffeditorfactory.h"
+#include "diffeditor.h"
 #include "diffeditortr.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/editormanager/editormanager.h>
-
-#include <extensionsystem/pluginmanager.h>
 
 #include <texteditor/textdocument.h>
 
@@ -108,52 +106,51 @@ DiffFilesController::DiffFilesController(IDocument *document)
     setDisplayName(Tr::tr("Diff"));
     using namespace Tasking;
 
-    const TreeStorage<QList<std::optional<FileData>>> storage;
-
-    const auto setupTree = [this, storage](TaskTree &taskTree) {
-        QList<std::optional<FileData>> *outputList = storage.activeStorage();
-
-        const auto setupDiff = [this](Async<FileData> &async, const ReloadInput &reloadInput) {
-            async.setConcurrentCallData(
-                DiffFile(ignoreWhitespace(), contextLineCount()), reloadInput);
-            async.setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
-        };
-        const auto onDiffDone = [outputList](const Async<FileData> &async, int i) {
-            if (async.isResultAvailable())
-                (*outputList)[i] = async.result();
-        };
-
-        const QList<ReloadInput> inputList = reloadInputList();
-        outputList->resize(inputList.size());
-
-        using namespace std::placeholders;
-        QList<GroupItem> tasks {parallel, finishAllAndDone};
-        for (int i = 0; i < inputList.size(); ++i) {
-            tasks.append(AsyncTask<FileData>(std::bind(setupDiff, _1, inputList.at(i)),
-                                         std::bind(onDiffDone, _1, i)));
-        }
-        taskTree.setRecipe(tasks);
+    struct StorageStruct
+    {
+        QList<ReloadInput> inputList;
+        QList<std::optional<FileData>> resultList;
     };
-    const auto onTreeDone = [this, storage] {
-        const QList<std::optional<FileData>> &results = *storage;
+    const Storage<StorageStruct> storage;
+
+    const auto onSetup = [this, storage] {
+        StorageStruct *activeStorage = storage.activeStorage();
+        activeStorage->inputList = reloadInputList();
+        activeStorage->resultList.resize(activeStorage->inputList.size());
+    };
+
+    const LoopUntil iterator([storage](int iteration) {
+        return iteration < storage->inputList.size();
+    });
+
+    const auto onDiffSetup = [this, storage, iterator](Async<FileData> &async) {
+        async.setConcurrentCallData(DiffFile(ignoreWhitespace(), contextLineCount()),
+                                    storage->inputList.at(iterator.iteration()));
+    };
+    const auto onDiffDone = [storage, iterator](const Async<FileData> &async) {
+        if (async.isResultAvailable())
+            storage->resultList[iterator.iteration()] = async.result();
+    };
+
+    const auto onDone = [this, storage] {
         QList<FileData> finalList;
+        const QList<std::optional<FileData>> &results = storage->resultList;
         for (const std::optional<FileData> &result : results) {
             if (result.has_value())
                 finalList.append(*result);
         }
         setDiffFiles(finalList);
     };
-    const auto onTreeError = [this, storage] {
-        setDiffFiles({});
-    };
 
-    const Group root = {
-        Storage(storage),
-        TaskTreeTask(setupTree),
-        onGroupDone(onTreeDone),
-        onGroupError(onTreeError)
+    const Group recipe = For (iterator) >> Do {
+        parallelIdealThreadCountLimit,
+        finishAllAndSuccess,
+        storage,
+        onGroupSetup(onSetup),
+        AsyncTask<FileData>(onDiffSetup, onDiffDone, CallDoneIf::Success),
+        onGroupDone(onDone)
     };
-    setReloadRecipe(root);
+    setReloadRecipe(recipe);
 }
 
 class DiffCurrentFileController : public DiffFilesController
@@ -414,12 +411,13 @@ public:
     QAction *m_diffCurrentFileAction = nullptr;
     QAction *m_diffOpenFilesAction = nullptr;
 
-    DiffEditorFactory m_editorFactory;
     DiffEditorServiceImpl m_service;
 };
 
 DiffEditorPluginPrivate::DiffEditorPluginPrivate()
 {
+    setupDiffEditorFactory();
+
     //register actions
     ActionContainer *toolsContainer = ActionManager::actionContainer(Core::Constants::M_TOOLS);
     toolsContainer->insertGroup(Core::Constants::G_TOOLS_DEBUG, Constants::G_TOOLS_DIFF);

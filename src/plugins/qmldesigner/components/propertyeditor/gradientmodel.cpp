@@ -22,58 +22,42 @@
 #include <QTimer>
 
 namespace {
-constexpr auto defaultValueLinearX1 = [](const QmlDesigner::QmlItemNode &) -> qreal { return 0.0; };
-constexpr auto defaultValueLinearY1 = [](const QmlDesigner::QmlItemNode &) -> qreal { return 0.0; };
-constexpr auto defaultValueLinearX2 = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return node.instanceValue("width").toReal();
+constexpr auto widthBinding = [](const QStringView nodeName) -> QString {
+    return QString("%1.width").arg(nodeName);
 };
-constexpr auto defaultValueLinearY2 = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return node.instanceValue("height").toReal();
+constexpr auto heightBinding = [](const QStringView nodeName) -> QString {
+    return QString("%1.height").arg(nodeName);
 };
-constexpr auto defaultValueRadialCenterRadius = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    const qreal width = node.instanceValue("width").toReal();
-    const qreal height = node.instanceValue("height").toReal();
-    return qMin(width, height) / 2.0;
+constexpr auto minBinding = [](const QStringView nodeName) -> QString {
+    return QString("Math.min(%1.width, %1.height)").arg(nodeName);
 };
-constexpr auto defaultValueRadialCenterX = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return (node.instanceValue("width").toReal() / 2.0);
-};
-constexpr auto defaultValueRadialCenterY = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return (node.instanceValue("height").toReal() / 2.0);
-};
-constexpr auto defaultValueRadialFocalRadius = [](const QmlDesigner::QmlItemNode &) -> qreal {
-    return 0.0;
-};
-constexpr auto defaultValueRadialFocalX = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return (node.instanceValue("width").toReal() / 2.0);
-};
-constexpr auto defaultValueRadialFocalY = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return (node.instanceValue("height").toReal() / 2.0);
-};
-constexpr auto defaultValueConicalAngle = [](const QmlDesigner::QmlItemNode &) -> qreal {
-    return 0.0;
-};
-constexpr auto defaultValueConicalCenterX = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return (node.instanceValue("width").toReal() / 2.0);
-};
-constexpr auto defaultValueConicalCenterY = [](const QmlDesigner::QmlItemNode &node) -> qreal {
-    return (node.instanceValue("height").toReal() / 2.0);
+constexpr auto emptyBinding = [](const QStringView) -> QString {
+    return {};
 };
 
-using DefaultValueFunctionVariant = std::variant<std::monostate,
-                                                 decltype(defaultValueLinearX1),
-                                                 decltype(defaultValueLinearY1),
-                                                 decltype(defaultValueLinearX2),
-                                                 decltype(defaultValueLinearY2),
-                                                 decltype(defaultValueRadialCenterRadius),
-                                                 decltype(defaultValueRadialCenterX),
-                                                 decltype(defaultValueRadialCenterY),
-                                                 decltype(defaultValueRadialFocalRadius),
-                                                 decltype(defaultValueRadialFocalX),
-                                                 decltype(defaultValueRadialFocalY),
-                                                 decltype(defaultValueConicalAngle),
-                                                 decltype(defaultValueConicalCenterX),
-                                                 decltype(defaultValueConicalCenterY)>;
+using BindingStringFunctionVariant = std::variant<std::monostate,
+                                                 decltype(widthBinding),
+                                                 decltype(heightBinding),
+                                                 decltype(minBinding),
+                                                 decltype(emptyBinding)>;
+
+constexpr auto widthBindingValue = [](const QmlDesigner::QmlItemNode &node) -> qreal {
+    return node.instanceValue("width").toReal();
+};
+constexpr auto heightBindingValue = [](const QmlDesigner::QmlItemNode &node) -> qreal {
+    return node.instanceValue("height").toReal();
+};
+constexpr auto minBindingValue = [](const QmlDesigner::QmlItemNode &node) -> qreal {
+    return qMin(node.instanceValue("width").toReal(), node.instanceValue("height").toReal());
+};
+constexpr auto emptyBindingValue = [](const QmlDesigner::QmlItemNode &) -> qreal { return 0.0; };
+
+using BindingValueFunctionVariant = std::variant<std::monostate,
+                                                  decltype(widthBindingValue),
+                                                  decltype(heightBindingValue),
+                                                  decltype(minBindingValue),
+                                                  decltype(emptyBindingValue)>;
+
 } // namespace
 
 class ShapeGradientPropertyData
@@ -84,82 +68,155 @@ public:
     constexpr ShapeGradientPropertyData() = default;
 
     constexpr ShapeGradientPropertyData(QmlDesigner::PropertyNameView name,
-                                        QmlDesigner::PropertyNameView bindingProperty,
                                         UsePercents canPercent,
-                                        DefaultValueFunctionVariant defVariant)
+                                        qreal defPercent,
+                                        BindingStringFunctionVariant binVariant,
+                                        BindingValueFunctionVariant binValueVariant)
         : name(name)
-        , bindingProperty(bindingProperty)
         , canUsePercentage(canPercent)
-        , m_defaultValue(defVariant)
+        , defaultPercent(defPercent)
+        , m_bindingString(binVariant)
+        , m_bindingValue(binValueVariant)
     {}
 
     QmlDesigner::PropertyNameView name;
-    QmlDesigner::PropertyNameView bindingProperty;
     UsePercents canUsePercentage = UsePercents::No;
+    qreal defaultPercent = 0.0;
 
 private:
-    DefaultValueFunctionVariant m_defaultValue;
+    BindingStringFunctionVariant m_bindingString;
+    BindingValueFunctionVariant m_bindingValue;
 
 public:
-    constexpr qreal getDefaultValue(const QmlDesigner::QmlItemNode &itemNode) const
+    QString getBindingString(const QStringView nodeId) const
     {
         return std::visit(
-            [&](auto &defValue) -> qreal {
-                using Type = std::decay_t<decltype(defValue)>;
+            [&](auto &func) -> QString {
+                using Type = std::decay_t<decltype(func)>;
                 if constexpr (std::is_same_v<Type, std::monostate>)
-                    return 0.0;
+                    return {};
                 else
-                    return defValue(itemNode);
+                    return func(nodeId);
             },
-            m_defaultValue);
+            m_bindingString);
+    }
+
+    qreal getBindingValue(const QmlDesigner::QmlItemNode &node) const
+    {
+        return std::visit(
+            [&](auto &func) -> qreal {
+                using Type = std::decay_t<decltype(func)>;
+                if constexpr (std::is_same_v<Type, std::monostate>)
+                    return {};
+                else
+                    return func(node);
+            },
+            m_bindingValue);
+    }
+
+    qreal getDefaultValue(const QmlDesigner::QmlItemNode &itemNode) const
+    {
+        return getBindingValue(itemNode) * defaultPercent;
+    }
+
+    QString getDefaultPercentString(const QStringView nodeId) const
+    {
+        return QString("%1 * %2").arg(getBindingString(nodeId), QString::number(defaultPercent));
     }
 };
 
-constexpr QmlDesigner::PropertyNameView linearX1Str = u8"x1";
-constexpr QmlDesigner::PropertyNameView linearX2Str = u8"x2";
-constexpr QmlDesigner::PropertyNameView linearY1Str = u8"y1";
-constexpr QmlDesigner::PropertyNameView linearY2Str = u8"y2";
+constexpr QmlDesigner::PropertyNameView linearX1Str = "x1";
+constexpr QmlDesigner::PropertyNameView linearX2Str = "x2";
+constexpr QmlDesigner::PropertyNameView linearY1Str = "y1";
+constexpr QmlDesigner::PropertyNameView linearY2Str = "y2";
 
-constexpr QmlDesigner::PropertyNameView radialCenterRadiusStr = u8"centerRadius";
-constexpr QmlDesigner::PropertyNameView radialCenterXStr = u8"centerX";
-constexpr QmlDesigner::PropertyNameView radialCenterYStr = u8"centerY";
-constexpr QmlDesigner::PropertyNameView radialFocalRadiusStr = u8"focalRadius";
-constexpr QmlDesigner::PropertyNameView radialFocalXStr = u8"focalX";
-constexpr QmlDesigner::PropertyNameView radialFocalYStr = u8"focalY";
+constexpr QmlDesigner::PropertyNameView radialCenterRadiusStr = "centerRadius";
+constexpr QmlDesigner::PropertyNameView radialCenterXStr = "centerX";
+constexpr QmlDesigner::PropertyNameView radialCenterYStr = "centerY";
+constexpr QmlDesigner::PropertyNameView radialFocalRadiusStr = "focalRadius";
+constexpr QmlDesigner::PropertyNameView radialFocalXStr = "focalX";
+constexpr QmlDesigner::PropertyNameView radialFocalYStr = "focalY";
 
-constexpr QmlDesigner::PropertyNameView conicalAngleStr = u8"angle";
-constexpr QmlDesigner::PropertyNameView conicalCenterXStr = u8"centerX";
-constexpr QmlDesigner::PropertyNameView conicalCenterYStr = u8"centerY";
+constexpr QmlDesigner::PropertyNameView conicalAngleStr = "angle";
+constexpr QmlDesigner::PropertyNameView conicalCenterXStr = "centerX";
+constexpr QmlDesigner::PropertyNameView conicalCenterYStr = "centerY";
 
 constexpr ShapeGradientPropertyData defaultLinearShapeGradients[] = {
-    {linearX1Str, u8"width", ShapeGradientPropertyData::UsePercents::Yes, defaultValueLinearX1},
-    {linearX2Str, u8"width", ShapeGradientPropertyData::UsePercents::Yes, defaultValueLinearX2},
-    {linearY1Str, u8"height", ShapeGradientPropertyData::UsePercents::Yes, defaultValueLinearY1},
-    {linearY2Str, u8"height", ShapeGradientPropertyData::UsePercents::Yes, defaultValueLinearY2}};
+    {linearX1Str,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.0,
+     widthBinding,
+     widthBindingValue},
+    {linearX2Str,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     1.0,
+     widthBinding,
+     widthBindingValue},
+    {linearY1Str,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.0,
+     heightBinding,
+     heightBindingValue},
+    {linearY2Str,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     1.0,
+     heightBinding,
+     heightBindingValue}};
 
 constexpr ShapeGradientPropertyData defaultRadialShapeGradients[] = {
-    {radialCenterRadiusStr, u8"", ShapeGradientPropertyData::UsePercents::No, defaultValueRadialCenterRadius},
-    {radialCenterXStr, u8"width", ShapeGradientPropertyData::UsePercents::Yes, defaultValueRadialCenterX},
-    {radialCenterYStr, u8"height", ShapeGradientPropertyData::UsePercents::Yes, defaultValueRadialCenterY},
-    {radialFocalRadiusStr, u8"", ShapeGradientPropertyData::UsePercents::No, defaultValueRadialFocalRadius},
-    {radialFocalXStr, u8"width", ShapeGradientPropertyData::UsePercents::Yes, defaultValueRadialFocalX},
-    {radialFocalYStr, u8"height", ShapeGradientPropertyData::UsePercents::Yes, defaultValueRadialFocalY}};
+    {radialCenterRadiusStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.5,
+     minBinding,
+     minBindingValue},
+    {radialCenterXStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.5,
+     widthBinding,
+     widthBindingValue},
+    {radialCenterYStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.5,
+     heightBinding,
+     heightBindingValue},
+    {radialFocalRadiusStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.0,
+     minBinding,
+     minBindingValue},
+    {radialFocalXStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.5,
+     widthBinding,
+     widthBindingValue},
+    {radialFocalYStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.5,
+     heightBinding,
+     heightBindingValue}};
 
 constexpr ShapeGradientPropertyData defaultConicalShapeGradients[] = {
-    {conicalAngleStr, u8"", ShapeGradientPropertyData::UsePercents::No, defaultValueConicalAngle},
-    {conicalCenterXStr, u8"width", ShapeGradientPropertyData::UsePercents::Yes, defaultValueConicalCenterX},
-    {conicalCenterYStr,
-     u8"height",
+    {conicalAngleStr,
+     ShapeGradientPropertyData::UsePercents::No,
+     0.0,
+     emptyBinding,
+     emptyBindingValue},
+    {conicalCenterXStr,
      ShapeGradientPropertyData::UsePercents::Yes,
-     defaultValueConicalCenterY}};
+     0.5,
+     widthBinding,
+     widthBindingValue},
+    {conicalCenterYStr,
+     ShapeGradientPropertyData::UsePercents::Yes,
+     0.5,
+     heightBinding,
+     heightBindingValue}};
 
 template<typename GradientArrayType>
 const ShapeGradientPropertyData *findGradientInArray(const GradientArrayType &array,
                                                      const QmlDesigner::PropertyNameView propName)
 {
-    const auto found = std::find_if(std::begin(array), std::end(array), [&](const auto &entry) {
-        return entry.name == propName;
-    });
+    const auto found = std::ranges::find(array, propName, &std::iter_value_t<GradientArrayType>::name);
     if (found != std::end(array))
         return std::addressof(*found);
 
@@ -183,10 +240,17 @@ const ShapeGradientPropertyData *getDefaultGradientData(const QmlDesigner::Prope
 template<typename T>
 void prepareGradient(const T &array,
                      const QmlDesigner::ModelNode &gradient,
-                     const QmlDesigner::QmlItemNode &node)
+                     const QmlDesigner::QmlItemNode &node,
+                     ShapeGradientPropertyData::UsePercents usePercents)
 {
-    std::for_each(std::begin(array), std::end(array), [&](auto &a) {
-        gradient.variantProperty(a.name.toByteArray()).setValue(a.getDefaultValue(node));
+    std::for_each(std::begin(array), std::end(array), [&](const ShapeGradientPropertyData &a) {
+        if (a.canUsePercentage == ShapeGradientPropertyData::UsePercents::Yes
+            && usePercents == ShapeGradientPropertyData::UsePercents::Yes) {
+            gradient.bindingProperty(a.name.toByteArray())
+                .setExpression(a.getDefaultPercentString(node.id()));
+        } else {
+            gradient.variantProperty(a.name.toByteArray()).setValue(a.getDefaultValue(node));
+        }
     });
 }
 
@@ -507,7 +571,7 @@ void GradientModel::setAnchorBackend(const QVariant &anchorBackend)
     auto anchorBackendObject = anchorBackend.value<QObject*>();
 
     const auto backendCasted =
-            qobject_cast<const QmlDesigner::Internal::QmlAnchorBindingProxy *>(anchorBackendObject);
+            qobject_cast<const QmlDesigner::QmlAnchorBindingProxy *>(anchorBackendObject);
 
     if (backendCasted)
         m_itemNode = backendCasted->getItemNode();
@@ -593,11 +657,20 @@ void GradientModel::setupGradientProperties(const QmlDesigner::ModelNode &gradie
     if (m_gradientTypeName == u"Gradient") {
         gradient.variantProperty("orientation").setEnumeration("Gradient.Vertical");
     } else if (m_gradientTypeName == u"LinearGradient") {
-        prepareGradient(defaultLinearShapeGradients, gradient, m_itemNode);
+        prepareGradient(defaultLinearShapeGradients,
+                        gradient,
+                        m_itemNode,
+                        ShapeGradientPropertyData::UsePercents::Yes);
     } else if (m_gradientTypeName == u"RadialGradient") {
-        prepareGradient(defaultRadialShapeGradients, gradient, m_itemNode);
+        prepareGradient(defaultRadialShapeGradients,
+                        gradient,
+                        m_itemNode,
+                        ShapeGradientPropertyData::UsePercents::Yes);
     } else if (m_gradientTypeName == u"ConicalGradient") {
-        prepareGradient(defaultConicalShapeGradients, gradient, m_itemNode);
+        prepareGradient(defaultConicalShapeGradients,
+                        gradient,
+                        m_itemNode,
+                        ShapeGradientPropertyData::UsePercents::Yes);
     }
 }
 
@@ -620,6 +693,10 @@ void GradientModel::resetPuppet()
 
 QmlDesigner::ModelNode GradientModel::createGradientNode()
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+    QmlDesigner::TypeName typeName = m_gradientTypeName.toUtf8();
+    auto gradientNode = view()->createModelNode(typeName);
+#else
     QmlDesigner::TypeName fullTypeName = m_gradientTypeName.toUtf8();
 
     if (m_gradientTypeName == "Gradient") {
@@ -634,7 +711,7 @@ QmlDesigner::ModelNode GradientModel::createGradientNode()
     int majorVersion = metaInfo.majorVersion();
 
     auto gradientNode = view()->createModelNode(fullTypeName, majorVersion, minorVersion);
-
+#endif
     setupGradientProperties(gradientNode);
 
     return gradientNode;
@@ -642,6 +719,9 @@ QmlDesigner::ModelNode GradientModel::createGradientNode()
 
 QmlDesigner::ModelNode GradientModel::createGradientStopNode()
 {
+#ifdef QDS_USE_PROJECTSTORAGE
+    return view()->createModelNode("GradientStop");
+#else
     QByteArray fullTypeName = "QtQuick.GradientStop";
     auto metaInfo = model()->metaInfo(fullTypeName);
 
@@ -649,6 +729,7 @@ QmlDesigner::ModelNode GradientModel::createGradientStopNode()
     int majorVersion = metaInfo.majorVersion();
 
     return view()->createModelNode(fullTypeName, majorVersion, minorVersion);
+#endif
 }
 
 void GradientModel::deleteGradientNode(bool saveTransaction)
@@ -684,7 +765,10 @@ qreal GradientModel::getPercentageGradientProperty(const QmlDesigner::PropertyNa
     if (ok != nullptr)
         *ok = false;
 
-    if (!m_itemNode.isValid())
+    if (!m_itemNode.isValid() || !m_itemNode.hasModelNode())
+        return 0.;
+
+    if (!m_itemNode.modelNode().hasId())
         return 0.;
 
     //valid format is itemName1.property * 0.1
@@ -703,32 +787,19 @@ qreal GradientModel::getPercentageGradientProperty(const QmlDesigner::PropertyNa
 
     if (const auto bindingProperty = gradientModel.bindingProperty(propertyName.toByteArray())) {
         const auto defaultGradient = getDefaultGradientPropertyData(propertyName, m_gradientTypeName);
-        const auto expectedParentProperty = defaultGradient.bindingProperty;
+        const auto expectedBindingProperty = defaultGradient.getBindingString(m_itemNode.id());
 
         const QString expression = bindingProperty.expression();
         const QStringList splitExpression = expression.split("*", Qt::SkipEmptyParts);
-        if (splitExpression.length() == 2 && !expectedParentProperty.isEmpty()) {
+        if (splitExpression.length() == 2 && !expectedBindingProperty.isEmpty()) {
             const QString parentStr = splitExpression.at(0).trimmed();
             const QString percentageStr = splitExpression.at(1).trimmed();
 
-            bool validStatement = false;
-
-            if (!parentStr.isEmpty()) {
-                const QStringList splitParent = parentStr.split(".", Qt::SkipEmptyParts);
-                if (splitParent.length() == 2) {
-                    const QString itemId = splitParent.at(0).trimmed();
-                    const QString itemProp = splitParent.at(1).trimmed();
-                    const QString realParentId = m_itemNode.modelNode().hasId() ? m_itemNode.id() : "";
-                    if (!itemId.isEmpty() && !itemProp.isEmpty() && (itemId == realParentId)
-                        && (itemProp.toUtf8() == expectedParentProperty)) {
-                        validStatement = true;
-                    }
+            if (!parentStr.isEmpty() && !percentageStr.isEmpty()) {
+                if (parentStr == expectedBindingProperty) {
+                    const qreal percentage = percentageStr.toFloat(ok);
+                    return percentage;
                 }
-            }
-
-            if (!percentageStr.isEmpty() && validStatement) {
-                const qreal percentage = percentageStr.toFloat(ok);
-                return percentage;
             }
         }
     }
@@ -793,17 +864,15 @@ void GradientModel::setGradientPropertyPercentage(const QString &propertyName, q
     QTC_ASSERT(gradientDefaultData.canUsePercentage == ShapeGradientPropertyData::UsePercents::Yes,
                return);
 
-    const QmlDesigner::PropertyNameView parentPropertyStr = gradientDefaultData.bindingProperty;
-    QTC_ASSERT(!parentPropertyStr.isEmpty(), return);
+    const QString parentId = m_itemNode.validId();
+    const QString bindingPropertyStr = gradientDefaultData.getBindingString(parentId);
+    QTC_ASSERT(!bindingPropertyStr.isEmpty(), return);
 
-    if (parentPropertyStr.isEmpty()
+    if (bindingPropertyStr.isEmpty()
         || (gradientDefaultData.canUsePercentage == ShapeGradientPropertyData::UsePercents::No)) {
         return;
     }
-
-    const QString parentId = m_itemNode.validId();
-    const QString leftBinding = parentId + "." + parentPropertyStr;
-    const QString expression = leftBinding + " * " + QString::number(value);
+    const QString expression = bindingPropertyStr + " * " + QString::number(value);
 
     try {
         gradient.setBindingProperty(propertyName.toUtf8(), expression);
@@ -840,11 +909,11 @@ void GradientModel::setGradientPropertyUnits(const QString &propertyName,
     const auto defaultGradientData = getDefaultGradientPropertyData(propertyName.toUtf8(),
                                                                     m_gradientTypeName);
 
-    const QmlDesigner::PropertyNameView parentPropertyName = defaultGradientData.bindingProperty;
+    const QString parentPropertyName = defaultGradientData.getBindingString(m_itemNode.validId());
     if (parentPropertyName.isEmpty())
         return;
 
-    const qreal parentPropertyValue = m_itemNode.instanceValue(parentPropertyName.toByteArray()).toReal();
+    const qreal parentPropertyValue = defaultGradientData.getBindingValue(m_itemNode);
 
     if (toPixels) {
         bool ok = false;

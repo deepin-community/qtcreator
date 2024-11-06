@@ -3,21 +3,17 @@
 
 #include "cpptoolsreuse.h"
 
-#include "clangdiagnosticconfigsmodel.h"
+#include "clangdsettings.h"
 #include "cppautocompleter.h"
 #include "cppcanonicalsymbol.h"
 #include "cppcodemodelsettings.h"
 #include "cppcompletionassist.h"
-#include "cppeditorconstants.h"
-#include "cppeditorplugin.h"
 #include "cppeditorwidget.h"
 #include "cppeditortr.h"
 #include "cppfilesettingspage.h"
 #include "cpphighlighter.h"
 #include "cppqtstyleindenter.h"
-#include "cppquickfixassistant.h"
-#include "cpprefactoringchanges.h"
-#include "projectinfo.h"
+#include "quickfixes/cppquickfixassistant.h"
 
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/editormanager/editormanager.h>
@@ -144,51 +140,6 @@ void moveCursorToStartOfIdentifier(QTextCursor *tc)
     skipCharsBackward(tc, isValidIdentifierChar);
 }
 
-static bool isOwnershipRAIIName(const QString &name)
-{
-    static QSet<QString> knownNames;
-    if (knownNames.isEmpty()) {
-        // Qt
-        knownNames.insert(QLatin1String("QScopedPointer"));
-        knownNames.insert(QLatin1String("QScopedArrayPointer"));
-        knownNames.insert(QLatin1String("QMutexLocker"));
-        knownNames.insert(QLatin1String("QReadLocker"));
-        knownNames.insert(QLatin1String("QWriteLocker"));
-        // Standard C++
-        knownNames.insert(QLatin1String("auto_ptr"));
-        knownNames.insert(QLatin1String("unique_ptr"));
-        // Boost
-        knownNames.insert(QLatin1String("scoped_ptr"));
-        knownNames.insert(QLatin1String("scoped_array"));
-    }
-
-    return knownNames.contains(name);
-}
-
-bool isOwnershipRAIIType(Symbol *symbol, const LookupContext &context)
-{
-    if (!symbol)
-        return false;
-
-    // This is not a "real" comparison of types. What we do is to resolve the symbol
-    // in question and then try to match its name with already known ones.
-    if (symbol->asDeclaration()) {
-        Declaration *declaration = symbol->asDeclaration();
-        const NamedType *namedType = declaration->type()->asNamedType();
-        if (namedType) {
-            ClassOrNamespace *clazz = context.lookupType(namedType->name(),
-                                                         declaration->enclosingScope());
-            if (clazz && !clazz->symbols().isEmpty()) {
-                Overview overview;
-                Symbol *symbol = clazz->symbols().at(0);
-                return isOwnershipRAIIName(overview.prettyName(symbol->name()));
-            }
-        }
-    }
-
-    return false;
-}
-
 bool isValidAsciiIdentifierChar(const QChar &ch)
 {
     return ch.isLetterOrNumber() || ch == QLatin1Char('_');
@@ -218,6 +169,28 @@ bool isValidIdentifier(const QString &s)
         }
     }
     return true;
+}
+
+int activeArgumenForPrefix(const QString &prefix)
+{
+    int argnr = 0;
+    int parcount = 0;
+    SimpleLexer tokenize;
+    Tokens tokens = tokenize(prefix);
+    for (int i = 0; i < tokens.count(); ++i) {
+        const Token &tk = tokens.at(i);
+        if (tk.is(T_LPAREN))
+            ++parcount;
+        else if (tk.is(T_RPAREN))
+            --parcount;
+        else if (!parcount && tk.is(T_COMMA))
+            ++argnr;
+    }
+
+    if (parcount < 0)
+        return -1;
+
+    return argnr;
 }
 
 bool isQtKeyword(QStringView text)
@@ -293,29 +266,33 @@ bool isInCommentOrString(const TextEditor::AssistInterface *interface,
 {
     QTextCursor tc(interface->textDocument());
     tc.setPosition(interface->position());
+    return isInCommentOrString(tc, features);
+}
 
+bool isInCommentOrString(const QTextCursor &cursor, CPlusPlus::LanguageFeatures features)
+{
     SimpleLexer tokenize;
     features.qtMocRunEnabled = true;
     tokenize.setLanguageFeatures(features);
     tokenize.setSkipComments(false);
-    const Tokens &tokens = tokenize(tc.block().text(),
-                                    BackwardsScanner::previousBlockState(tc.block()));
-    const int tokenIdx = SimpleLexer::tokenBefore(tokens, qMax(0, tc.positionInBlock() - 1));
+    const Tokens &tokens = tokenize(cursor.block().text(),
+                                    BackwardsScanner::previousBlockState(cursor.block()));
+    const int tokenIdx = SimpleLexer::tokenBefore(tokens, qMax(0, cursor.positionInBlock() - 1));
     const Token tk = (tokenIdx == -1) ? Token() : tokens.at(tokenIdx);
 
     if (tk.isComment())
         return true;
-    if (!tk.isLiteral())
+    if (!tk.isStringLiteral())
         return false;
     if (tokens.size() == 3 && tokens.at(0).kind() == T_POUND
-            && tokens.at(1).kind() == T_IDENTIFIER) {
-        const QString &line = tc.block().text();
+        && tokens.at(1).kind() == T_IDENTIFIER) {
+        const QString &line = cursor.block().text();
         const Token &idToken = tokens.at(1);
         QStringView identifier = QStringView(line).mid(idToken.utf16charsBegin(),
                                                        idToken.utf16chars());
         if (identifier == QLatin1String("include")
-                || identifier == QLatin1String("include_next")
-                || (features.objCEnabled && identifier == QLatin1String("import"))) {
+            || identifier == QLatin1String("include_next")
+            || (features.objCEnabled && identifier == QLatin1String("import"))) {
             return false;
         }
     }
@@ -332,20 +309,9 @@ CppCompletionAssistProcessor *getCppCompletionAssistProcessor()
     return new Internal::InternalCppCompletionAssistProcessor();
 }
 
-CppCodeModelSettings *codeModelSettings()
+QString deriveHeaderGuard(const Utils::FilePath &filePath, ProjectExplorer::Project *project)
 {
-    return Internal::CppEditorPlugin::instance()->codeModelSettings();
-}
-
-int indexerFileSizeLimitInMb()
-{
-    const CppCodeModelSettings *settings = codeModelSettings();
-    QTC_ASSERT(settings, return -1);
-
-    if (settings->skipIndexingBigFiles())
-        return settings->indexerFileSizeLimitInMb();
-
-    return -1;
+    return Internal::cppFileSettingsForProject(project).headerGuard(filePath);
 }
 
 bool fileSizeExceedsLimit(const FilePath &filePath, int sizeLimitInMb)
@@ -355,263 +321,11 @@ bool fileSizeExceedsLimit(const FilePath &filePath, int sizeLimitInMb)
 
     const qint64 fileSizeInMB = filePath.fileSize() / (1000 * 1000);
     if (fileSizeInMB > sizeLimitInMb) {
-        const QString msg = Tr::tr("C++ Indexer: Skipping file \"%1\" because it is too big.")
-                        .arg(filePath.displayName());
-
-        QMetaObject::invokeMethod(Core::MessageManager::instance(),
-                                  [msg]() { Core::MessageManager::writeSilently(msg); });
-
+        Core::MessageManager::writeSilently(Tr::tr("C++ Indexer: Skipping file \"%1\" because "
+                                                   "it is too big.").arg(filePath.displayName()));
         return true;
     }
-
     return false;
-}
-
-UsePrecompiledHeaders getPchUsage()
-{
-    const CppCodeModelSettings *cms = codeModelSettings();
-    if (cms->pchUsage() == CppCodeModelSettings::PchUse_None)
-        return UsePrecompiledHeaders::No;
-    return UsePrecompiledHeaders::Yes;
-}
-
-static void addBuiltinConfigs(ClangDiagnosticConfigsModel &model)
-{
-    ClangDiagnosticConfig config;
-
-    // Questionable constructs
-    config = ClangDiagnosticConfig();
-    config.setId(Constants::CPP_CLANG_DIAG_CONFIG_QUESTIONABLE);
-    config.setDisplayName(Tr::tr("Checks for questionable constructs"));
-    config.setIsReadOnly(true);
-    config.setClangOptions({
-        "-Wall",
-        "-Wextra",
-    });
-    config.setClazyMode(ClangDiagnosticConfig::ClazyMode::UseCustomChecks);
-    config.setClangTidyMode(ClangDiagnosticConfig::TidyMode::UseCustomChecks);
-    model.appendOrUpdate(config);
-
-    // Warning flags from build system
-    config = ClangDiagnosticConfig();
-    config.setId(Constants::CPP_CLANG_DIAG_CONFIG_BUILDSYSTEM);
-    config.setDisplayName(Tr::tr("Build-system warnings"));
-    config.setIsReadOnly(true);
-    config.setClazyMode(ClangDiagnosticConfig::ClazyMode::UseCustomChecks);
-    config.setClangTidyMode(ClangDiagnosticConfig::TidyMode::UseCustomChecks);
-    config.setUseBuildSystemWarnings(true);
-    model.appendOrUpdate(config);
-}
-
-ClangDiagnosticConfigsModel diagnosticConfigsModel(const ClangDiagnosticConfigs &customConfigs)
-{
-    ClangDiagnosticConfigsModel model;
-    addBuiltinConfigs(model);
-    for (const ClangDiagnosticConfig &config : customConfigs)
-        model.appendOrUpdate(config);
-    return model;
-}
-
-ClangDiagnosticConfigsModel diagnosticConfigsModel()
-{
-    return diagnosticConfigsModel(ClangdSettings::instance().customDiagnosticConfigs());
-}
-
-NSVisitor::NSVisitor(const CppRefactoringFile *file, const QStringList &namespaces, int symbolPos)
-    : ASTVisitor(file->cppDocument()->translationUnit()),
-      m_file(file),
-      m_remainingNamespaces(namespaces),
-      m_symbolPos(symbolPos)
-{}
-
-bool NSVisitor::preVisit(AST *ast)
-{
-    if (!m_firstToken)
-        m_firstToken = ast;
-    if (m_file->startOf(ast) >= m_symbolPos)
-        m_done = true;
-    return !m_done;
-}
-
-bool NSVisitor::visit(NamespaceAST *ns)
-{
-    if (!m_firstNamespace)
-        m_firstNamespace = ns;
-    if (m_remainingNamespaces.isEmpty()) {
-        m_done = true;
-        return false;
-    }
-
-    QString name;
-    const Identifier * const id = translationUnit()->identifier(ns->identifier_token);
-    if (id)
-        name = QString::fromUtf8(id->chars(), id->size());
-    if (name != m_remainingNamespaces.first())
-        return false;
-
-    if (!ns->linkage_body) {
-        m_done = true;
-        return false;
-    }
-
-    m_enclosingNamespace = ns;
-    m_remainingNamespaces.removeFirst();
-    return !m_remainingNamespaces.isEmpty();
-}
-
-void NSVisitor::postVisit(AST *ast)
-{
-    if (ast == m_enclosingNamespace)
-        m_done = true;
-}
-
-/**
- * @brief The NSCheckerVisitor class checks which namespaces are missing for a given list
- * of enclosing namespaces at a given position
- */
-NSCheckerVisitor::NSCheckerVisitor(const CppRefactoringFile *file, const QStringList &namespaces,
-                                   int symbolPos)
-    : ASTVisitor(file->cppDocument()->translationUnit())
-    , m_file(file)
-    , m_remainingNamespaces(namespaces)
-    , m_symbolPos(symbolPos)
-{}
-
-bool NSCheckerVisitor::preVisit(AST *ast)
-{
-    if (m_file->startOf(ast) >= m_symbolPos)
-        m_done = true;
-    return !m_done;
-}
-
-void NSCheckerVisitor::postVisit(AST *ast)
-{
-    if (!m_done && m_file->endOf(ast) > m_symbolPos)
-        m_done = true;
-}
-
-bool NSCheckerVisitor::visit(NamespaceAST *ns)
-{
-    if (m_remainingNamespaces.isEmpty())
-        return false;
-
-    QString name = getName(ns);
-    if (name != m_remainingNamespaces.first())
-        return false;
-
-    m_enteredNamespaces.push_back(ns);
-    m_remainingNamespaces.removeFirst();
-    // if we reached the searched namespace we don't have to search deeper
-    return !m_remainingNamespaces.isEmpty();
-}
-
-bool NSCheckerVisitor::visit(UsingDirectiveAST *usingNS)
-{
-    // example: we search foo::bar and get 'using namespace foo;using namespace foo::bar;'
-    const QString fullName = Overview{}.prettyName(usingNS->name->name);
-    const QStringList namespaces = fullName.split("::");
-    if (namespaces.length() > m_remainingNamespaces.length())
-        return false;
-
-    // from other using namespace statements
-    const auto curList = m_usingsPerNamespace.find(currentNamespace());
-    const bool isCurListValid = curList != m_usingsPerNamespace.end();
-
-    const bool startEqual = std::equal(namespaces.cbegin(),
-                                       namespaces.cend(),
-                                       m_remainingNamespaces.cbegin());
-    if (startEqual) {
-        if (isCurListValid) {
-            if (namespaces.length() > curList->second.length()) {
-                // eg. we already have 'using namespace foo;' and
-                // now get 'using namespace foo::bar;'
-                curList->second = namespaces;
-            }
-            // the other case: first 'using namespace foo::bar;' and now 'using namespace foo;'
-        } else
-            m_usingsPerNamespace.emplace(currentNamespace(), namespaces);
-    } else if (isCurListValid) {
-        // ex: we have already 'using namespace foo;' and get 'using namespace bar;' now
-        QStringList newlist = curList->second;
-        newlist.append(namespaces);
-        if (newlist.length() <= m_remainingNamespaces.length()) {
-            const bool startEqual = std::equal(newlist.cbegin(),
-                                               newlist.cend(),
-                                               m_remainingNamespaces.cbegin());
-            if (startEqual)
-                curList->second.append(namespaces);
-        }
-    }
-    return false;
-}
-
-void NSCheckerVisitor::endVisit(NamespaceAST *ns)
-{
-    // if the symbolPos was in the namespace and the
-    // namespace has no children, m_done should be true
-    postVisit(ns);
-    if (!m_done && currentNamespace() == ns) {
-        // we were not succesfull in this namespace, so undo all changes
-        m_remainingNamespaces.push_front(getName(currentNamespace()));
-        m_usingsPerNamespace.erase(currentNamespace());
-        m_enteredNamespaces.pop_back();
-    }
-}
-
-void NSCheckerVisitor::endVisit(TranslationUnitAST *)
-{
-    // the last node, create the final result
-    // we must handle like the following: We search for foo::bar and have:
-    // using namespace foo::bar;
-    // namespace foo {
-    //    // cursor/symbolPos here
-    // }
-    if (m_remainingNamespaces.empty()) {
-        // we are already finished
-        return;
-    }
-    // find the longest combination of normal namespaces + using statements
-    int longestNamespaceList = 0;
-    int enteredNamespaceCount = 0;
-    // check 'using namespace ...;' statements in the global scope
-    const auto namespaces = m_usingsPerNamespace.find(nullptr);
-    if (namespaces != m_usingsPerNamespace.end())
-        longestNamespaceList = namespaces->second.length();
-
-    for (auto ns : m_enteredNamespaces) {
-        ++enteredNamespaceCount;
-        const auto namespaces = m_usingsPerNamespace.find(ns);
-        int newListLength = enteredNamespaceCount;
-        if (namespaces != m_usingsPerNamespace.end())
-            newListLength += namespaces->second.length();
-        longestNamespaceList = std::max(newListLength, longestNamespaceList);
-    }
-    m_remainingNamespaces.erase(m_remainingNamespaces.begin(),
-                                m_remainingNamespaces.begin() + longestNamespaceList
-                                - m_enteredNamespaces.size());
-}
-
-QString NSCheckerVisitor::getName(NamespaceAST *ns)
-{
-    const Identifier *const id = translationUnit()->identifier(ns->identifier_token);
-    if (id)
-        return QString::fromUtf8(id->chars(), id->size());
-    return {};
-}
-
-NamespaceAST *NSCheckerVisitor::currentNamespace()
-{
-    return m_enteredNamespaces.empty() ? nullptr : m_enteredNamespaces.back();
-}
-
-ProjectExplorer::Project *projectForProjectPart(const ProjectPart &part)
-{
-    return ProjectExplorer::ProjectManager::projectWithProjectFilePath(part.topLevelProject);
-}
-
-ProjectExplorer::Project *projectForProjectInfo(const ProjectInfo &info)
-{
-    return ProjectExplorer::ProjectManager::projectWithProjectFilePath(info.projectFilePath());
 }
 
 void openEditor(const Utils::FilePath &filePath, bool inNextSplit, Utils::Id editorId)
@@ -623,17 +337,17 @@ void openEditor(const Utils::FilePath &filePath, bool inNextSplit, Utils::Id edi
 
 bool preferLowerCaseFileNames(ProjectExplorer::Project *project)
 {
-    return Internal::CppEditorPlugin::fileSettings(project).lowerCaseFiles;
+    return Internal::cppFileSettingsForProject(project).lowerCaseFiles;
 }
 
 QString preferredCxxHeaderSuffix(ProjectExplorer::Project *project)
 {
-    return Internal::CppEditorPlugin::fileSettings(project).headerSuffix;
+    return Internal::cppFileSettingsForProject(project).headerSuffix;
 }
 
 QString preferredCxxSourceSuffix(ProjectExplorer::Project *project)
 {
-    return Internal::CppEditorPlugin::fileSettings(project).sourceSuffix;
+    return Internal::cppFileSettingsForProject(project).sourceSuffix;
 }
 
 SearchResultItems symbolOccurrencesInDeclarationComments(
@@ -782,6 +496,7 @@ SearchResultItems symbolOccurrencesInDeclarationComments(
 QList<Text::Range> symbolOccurrencesInText(const QTextDocument &doc, QStringView text, int offset,
                                            const QString &symbolName)
 {
+    QTC_ASSERT(!symbolName.isEmpty(), return QList<Text::Range>());
     QList<Text::Range> ranges;
     int index = 0;
     while (true) {
@@ -850,11 +565,10 @@ namespace Internal {
 
 void decorateCppEditor(TextEditor::TextEditorWidget *editor)
 {
-    editor->textDocument()->setSyntaxHighlighter(new CppHighlighter);
-    editor->textDocument()->setIndenter(
-                new CppQtStyleIndenter(editor->textDocument()->document()));
+    editor->textDocument()->resetSyntaxHighlighter([] { return new CppHighlighter(); });
+    editor->textDocument()->setIndenter(createCppQtStyleIndenter(editor->textDocument()->document()));
     editor->setAutoCompleter(new CppAutoCompleter);
 }
 
-} // namespace Internal
+} // Internal
 } // CppEditor

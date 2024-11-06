@@ -45,13 +45,28 @@
 #include <QtCore/qstring.h>
 #include <QtCore/qvariant.h>
 
+#include <functional>
 #include <vector>
 
 namespace qbs {
 namespace Internal {
 class Item;
 class ItemPool;
-class ValueHandler;
+class ItemValue;
+class JSSourceValue;
+class VariantValue;
+
+template<typename T>
+class ValueHandler
+{
+public:
+    T handle(Value *v);
+
+private:
+    virtual T doHandle(JSSourceValue *value) = 0;
+    virtual T doHandle(ItemValue *value) = 0;
+    virtual T doHandle(VariantValue *value) = 0;
+};
 
 class Value
 {
@@ -73,16 +88,20 @@ public:
         OriginPropertiesBlock = 0x40,
         OriginProfile = 0x80,
         OriginCommandLine = 0x100,
+        Fallback = 0x200,
     };
     Q_DECLARE_FLAGS(Flags, Flag)
 
     Value(Type t, bool createdByPropertiesBlock);
-    Value(const Value &other) = delete;
-    Value(const Value &other, ItemPool &pool);
+    Value(const Value &other) = default;
     virtual ~Value();
 
     Type type() const { return m_type; }
-    virtual void apply(ValueHandler *) = 0;
+    template<typename T>
+    T apply(ValueHandler<T> *handler)
+    {
+        return handler->handle(this);
+    };
     virtual ValuePtr clone(ItemPool &) const = 0;
     virtual CodeLocation location() const { return {}; }
 
@@ -92,14 +111,16 @@ public:
     int priority(const Item *productItem) const;
     virtual void resetPriority();
 
-    ValuePtr next() const;
-    void setNext(const ValuePtr &next);
+    void addCandidate(const ValuePtr &v) { m_candidates.push_back(v); }
 
-    virtual void addCandidate(const ValuePtr &v) { m_candidates.push_back(v); }
     const std::vector<ValuePtr> &candidates() const { return m_candidates; }
-    virtual void setCandidates(const std::vector<ValuePtr> &candidates) { m_candidates = candidates; }
+    void setCandidates(const std::vector<ValuePtr> &candidates) { m_candidates = candidates; }
+    void removeExpiredCandidates(const Item *productItem);
+    void sortCandidates(const std::function<bool(const ValuePtr &v1, const ValuePtr &v2)> &less);
 
     bool createdByPropertiesBlock() const { return m_flags & OriginPropertiesBlock; }
+    void setFallback() { m_flags |= Fallback; }
+    bool isFallback() const { return m_flags & Fallback; }
     void markAsSetByProfile() { m_flags |= OriginProfile; }
     bool setByProfile() const { return m_flags & OriginProfile; }
     void markAsSetByCommandLine() { m_flags |= OriginCommandLine; }
@@ -123,21 +144,12 @@ public:
 private:
     int calculatePriority(const Item *productItem) const;
 
-    Type m_type;
+    const Type m_type;
     Item *m_scope = nullptr;
     QString m_scopeName;
-    ValuePtr m_next;
     std::vector<ValuePtr> m_candidates;
     Flags m_flags;
     mutable int m_priority = -1;
-};
-
-class ValueHandler
-{
-public:
-    virtual void handle(JSSourceValue *value) = 0;
-    virtual void handle(ItemValue *value) = 0;
-    virtual void handle(VariantValue *value) = 0;
 };
 
 class JSSourceValue : public Value
@@ -151,7 +163,6 @@ public:
     static JSSourceValuePtr QBS_AUTOTEST_EXPORT create(bool createdByPropertiesBlock = false);
     ~JSSourceValue() override;
 
-    void apply(ValueHandler *handler) override { handler->handle(this); }
     ValuePtr clone(ItemPool &pool) const override;
 
     void setSourceCode(QStringView sourceCode) { m_sourceCode = sourceCode; }
@@ -195,13 +206,11 @@ public:
     using AltProperty = Alternative::PropertyData;
 
     const std::vector<Alternative> &alternatives() const { return m_alternatives; }
-    void addAlternative(const Alternative &alternative) { m_alternatives.push_back(alternative); }
+    void addAlternative(const Alternative &alternative);
     void clearAlternatives();
 
     void setScope(Item *scope, const QString &scopeName) override;
     void resetPriority() override;
-    void addCandidate(const ValuePtr &v) override;
-    void setCandidates(const std::vector<ValuePtr> &candidates) override;
 
 private:
     QStringView m_sourceCode;
@@ -223,7 +232,6 @@ public:
     void setItem(Item *item) { m_item = item; }
 
 private:
-    void apply(ValueHandler *handler) override { handler->handle(this); }
     ValuePtr clone(ItemPool &pool) const override;
 
     Item *m_item;
@@ -234,12 +242,11 @@ class VariantValue : public Value
 {
 public:
     explicit VariantValue(QVariant v);
-    VariantValue(const VariantValue &v, ItemPool &pool);
+    VariantValue(const VariantValue &v) = default;
     static VariantValuePtr create(const QVariant &v = QVariant());
     static VariantValuePtr createStored(const QVariant &v = QVariant());
 
-    void apply(ValueHandler *handler) override { handler->handle(this); }
-    ValuePtr clone(ItemPool &pool) const override;
+    ValuePtr clone(ItemPool &) const override;
 
     const QVariant &value() const { return m_value; }
     virtual quintptr id() const { return 0; }
@@ -251,6 +258,21 @@ public:
 private:
     QVariant m_value;
 };
+
+template<typename T>
+inline T ValueHandler<T>::handle(Value *v)
+{
+    switch (v->type()) {
+    case Value::JSSourceValueType:
+        return doHandle(static_cast<JSSourceValue *>(v));
+    case Value::ItemValueType:
+        return doHandle(static_cast<ItemValue *>(v));
+    case Value::VariantValueType:
+        return doHandle(static_cast<VariantValue *>(v));
+    }
+    if constexpr (!std::is_same_v<T, void>)
+        return {};
+}
 
 } // namespace Internal
 } // namespace qbs

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 #pragma once
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 #include <utils/treemodel.h>
 
 #include <QSortFilterProxyModel>
@@ -35,6 +35,7 @@ public:
 
     Qt::ItemFlags flags(int column) const override;
     QString displayName() const { return m_displayName; }
+    void setDisplayName(const QString &name) { m_displayName = name; }
     QString toolTip(int column) const;
     void setFilePath(const Utils::FilePath &filePath) { m_filePath = filePath; }
     Utils::FilePath filePath() const { return m_filePath; }
@@ -62,7 +63,7 @@ private:
 class SquishTestTreeModel : public Utils::TreeModel<SquishTestTreeItem>
 {
 public:
-    SquishTestTreeModel(QObject *parent = nullptr);
+    SquishTestTreeModel();
     ~SquishTestTreeModel() override;
 
     static SquishTestTreeModel *instance();

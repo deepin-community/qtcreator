@@ -5,19 +5,14 @@
 #pragma once
 
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/devicesupport/idevicefactory.h>
 
 namespace BareMetal::Internal {
-
-class IDebugServerProvider;
-
-// BareMetalDevice
 
 class BareMetalDevice final : public ProjectExplorer::IDevice
 {
 public:
-    using Ptr = QSharedPointer<BareMetalDevice>;
-    using ConstPtr = QSharedPointer<const BareMetalDevice>;
+    using Ptr = std::shared_ptr<BareMetalDevice>;
+    using ConstPtr = std::shared_ptr<const BareMetalDevice>;
 
     static Ptr create() { return Ptr(new BareMetalDevice); }
     ~BareMetalDevice() final;
@@ -28,23 +23,15 @@ public:
 
     QString debugServerProviderId() const;
     void setDebugServerProviderId(const QString &id);
-    void unregisterDebugServerProvider(IDebugServerProvider *provider);
-
-protected:
-    void fromMap(const Utils::Store &map) final;
-    Utils::Store toMap() const final;
+    void unregisterDebugServerProvider(class IDebugServerProvider *provider);
 
 private:
+    void fromMap(const Utils::Store &map) final;
+
     BareMetalDevice();
-    QString m_debugServerProviderId;
+    Utils::StringAspect m_debugServerProviderId{this};
 };
 
-// BareMetalDeviceFactory
-
-class BareMetalDeviceFactory final : public ProjectExplorer::IDeviceFactory
-{
-public:
-    BareMetalDeviceFactory();
-};
+void setupBareMetalDevice();
 
 } // BareMetal::Internal

@@ -14,7 +14,9 @@
 #include <coreplugin/fileutils.h>
 #include <coreplugin/find/textfindconstants.h>
 #include <coreplugin/icore.h>
+#include <coreplugin/iversioncontrol.h>
 #include <coreplugin/messagemanager.h>
+#include <coreplugin/vcsmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/async.h>
@@ -50,15 +52,13 @@ using namespace Utils::Terminal;
 using namespace Core;
 
 namespace Terminal {
+
 TerminalWidget::TerminalWidget(QWidget *parent, const OpenTerminalParameters &openParameters)
     : Core::SearchableTerminal(parent)
     , m_context(Utils::Id("TerminalWidget_").withSuffix(QString::number((uintptr_t) this)))
     , m_openParameters(openParameters)
 {
-    auto contextObj = new IContext(this);
-    contextObj->setWidget(this);
-    contextObj->setContext(m_context);
-    ICore::addContextObject(contextObj);
+    IContext::attach(this, m_context);
 
     setupFont();
     setupColors();
@@ -81,7 +81,7 @@ void TerminalWidget::setupPty()
 {
     m_process = std::make_unique<Process>();
 
-    CommandLine shellCommand = m_openParameters.shellCommand.value_or(
+    const CommandLine shellCommand = m_openParameters.shellCommand.value_or(
         CommandLine{settings().shell(), settings().shellArguments(), CommandLine::Raw});
 
     if (shellCommand.executable().isRootPath()) {
@@ -117,8 +117,12 @@ void TerminalWidget::setupPty()
     Environment env = m_openParameters.environment.value_or(Environment{})
                           .appliedToEnvironment(shellCommand.executable().deviceEnvironment());
 
+    // Some OS/Distros set a default value for TERM such as "dumb", which then breaks
+    // command line tools such as "clear" which try to figure out what terminal they are
+    // running in. Therefore we have to force-set our own TERM value here.
+    env.set("TERM", "xterm-256color");
+
     // Set some useful defaults
-    env.setFallback("TERM", "xterm-256color");
     env.setFallback("TERM_PROGRAM", QCoreApplication::applicationName());
     env.setFallback("COLORTERM", "truecolor");
     env.setFallback("COMMAND_MODE", "unix2003");
@@ -144,17 +148,17 @@ void TerminalWidget::setupPty()
     if (m_shellIntegration)
         m_shellIntegration->prepareProcess(*m_process.get());
 
-    connect(m_process.get(), &Process::readyReadStandardOutput, this, [this]() {
+    connect(m_process.get(), &Process::readyReadStandardOutput, this, [this] {
         onReadyRead(false);
     });
 
     connect(m_process.get(), &Process::done, this, [this] {
         QString errorMessage;
 
+        const int exitCode = QTC_GUARD(m_process) ? m_process->exitCode() : -1;
         if (m_process) {
-            if (m_process->exitCode() != 0) {
-                errorMessage
-                    = Tr::tr("Terminal process exited with code %1").arg(m_process->exitCode());
+            if (exitCode != 0) {
+                errorMessage = Tr::tr("Terminal process exited with code %1.").arg(exitCode);
 
                 if (!m_process->errorString().isEmpty())
                     errorMessage += QString(" (%1)").arg(m_process->errorString());
@@ -181,14 +185,14 @@ void TerminalWidget::setupPty()
 
                 writeToTerminal(msg, true);
             } else {
-                QString exitMsg = Tr::tr("Process exited with code: %1")
-                                      .arg(m_process ? m_process->exitCode() : -1);
+                QString exitMsg = Tr::tr("Process exited with code: %1.").arg(exitCode);
                 QByteArray msg = QString("\r\n%1").arg(exitMsg).toUtf8();
                 writeToTerminal(msg, true);
             }
         } else if (!errorMessage.isEmpty()) {
             Core::MessageManager::writeFlashing(errorMessage);
         }
+        emit finished(exitCode);
     });
 
     connect(m_process.get(), &Process::started, this, [this] {
@@ -256,42 +260,58 @@ void TerminalWidget::registerShortcut(Command *cmd)
     });
 }
 
-RegisteredAction TerminalWidget::registerAction(Id commandId, const Context &context)
-{
-    QAction *action = new QAction;
-    Command *cmd = ActionManager::registerAction(action, commandId, context);
-
-    registerShortcut(cmd);
-
-    return RegisteredAction(action, [commandId](QAction *a) {
-        ActionManager::unregisterAction(a, commandId);
-        delete a;
-    });
-}
-
 void TerminalWidget::setupActions()
 {
-    m_copy = registerAction(Constants::COPY, m_context);
-    m_paste = registerAction(Constants::PASTE, m_context);
-    m_close = registerAction(Core::Constants::CLOSE, m_context);
-    m_clearTerminal = registerAction(Constants::CLEAR_TERMINAL, m_context);
-    m_clearSelection = registerAction(Constants::CLEARSELECTION, m_context);
-    m_moveCursorWordLeft = registerAction(Constants::MOVECURSORWORDLEFT, m_context);
-    m_moveCursorWordRight = registerAction(Constants::MOVECURSORWORDRIGHT, m_context);
+    auto make_registered = [this](ActionBuilder &actionBuilder) {
+        registerShortcut(actionBuilder.command());
 
-    connect(m_copy.get(), &QAction::triggered, this, &TerminalWidget::copyToClipboard);
-    connect(m_paste.get(), &QAction::triggered, this, &TerminalWidget::pasteFromClipboard);
-    connect(m_close.get(), &QAction::triggered, this, &TerminalWidget::closeTerminal);
-    connect(m_clearTerminal.get(), &QAction::triggered, this, &TerminalWidget::clearContents);
-    connect(m_clearSelection.get(), &QAction::triggered, this, &TerminalWidget::clearSelection);
-    connect(m_moveCursorWordLeft.get(),
-            &QAction::triggered,
-            this,
-            &TerminalWidget::moveCursorWordLeft);
-    connect(m_moveCursorWordRight.get(),
-            &QAction::triggered,
-            this,
-            &TerminalWidget::moveCursorWordRight);
+        return RegisteredAction(actionBuilder.contextAction(),
+                                [cmdId = actionBuilder.command()->id()](QAction *a) {
+                                    ActionManager::unregisterAction(a, cmdId);
+                                    delete a;
+                                });
+    };
+
+    ActionBuilder copyAction(this, Constants::COPY);
+    copyAction.setContext(m_context);
+    copyAction.addOnTriggered(this, &TerminalWidget::copyToClipboard);
+    m_copy = make_registered(copyAction);
+
+    ActionBuilder pasteAction(this, Constants::PASTE);
+    pasteAction.setContext(m_context);
+    pasteAction.addOnTriggered(this, &TerminalWidget::pasteFromClipboard);
+    m_paste = make_registered(pasteAction);
+
+    ActionBuilder(this, Core::Constants::CLOSE)
+        .setContext(m_context)
+        .addOnTriggered(this, &TerminalWidget::closeTerminal)
+        .setText(Tr::tr("Close Terminal"));
+    // We do not register the close action, as we want it to be blocked if the keyboard is locked.
+
+    ActionBuilder clearTerminalAction(this, Constants::CLEAR_TERMINAL);
+    clearTerminalAction.setContext(m_context);
+    clearTerminalAction.addOnTriggered(this, &TerminalWidget::clearContents);
+    m_clearTerminal = make_registered(clearTerminalAction);
+
+    ActionBuilder clearSelectionAction(this, Constants::CLEARSELECTION);
+    clearSelectionAction.setContext(m_context);
+    clearSelectionAction.addOnTriggered(this, &TerminalWidget::clearSelection);
+    m_clearSelection = make_registered(clearSelectionAction);
+
+    ActionBuilder moveCursorWordLeftAction(this, Constants::MOVECURSORWORDLEFT);
+    moveCursorWordLeftAction.setContext(m_context);
+    moveCursorWordLeftAction.addOnTriggered(this, &TerminalWidget::moveCursorWordLeft);
+    m_moveCursorWordLeft = make_registered(moveCursorWordLeftAction);
+
+    ActionBuilder moveCursorWordRightAction(this, Constants::MOVECURSORWORDRIGHT);
+    moveCursorWordRightAction.setContext(m_context);
+    moveCursorWordRightAction.addOnTriggered(this, &TerminalWidget::moveCursorWordRight);
+    m_moveCursorWordRight = make_registered(moveCursorWordRightAction);
+
+    ActionBuilder selectAllAction(this, Constants::SELECTALL);
+    selectAllAction.setContext(m_context);
+    selectAllAction.addOnTriggered(this, &TerminalWidget::selectAll);
+    m_selectAll = make_registered(selectAllAction);
 
     // Ctrl+Q, the default "Quit" shortcut, is a useful key combination in a shell.
     // It can be used in combination with Ctrl+S to pause a program, and resume it with Ctrl+Q.
@@ -318,7 +338,7 @@ qint64 TerminalWidget::writeToPty(const QByteArray &data)
 
 void TerminalWidget::resizePty(QSize newSize)
 {
-    if (m_process && m_process->ptyData())
+    if (m_process && m_process->ptyData() && m_process->isRunning())
         m_process->ptyData()->resize(newSize);
 }
 
@@ -402,6 +422,13 @@ std::optional<TerminalSolution::TerminalView::Link> TerminalWidget::toLink(const
                 return Link{link.targetFilePath.toString(), link.targetLine, link.targetColumn};
             }
         }
+        if (!m_cwd.isEmpty() && Utils::allOf(text, [](QChar c) {
+                c = c.toLower();
+                return c.isDigit() || (c >= 'a' && c <= 'f');
+            })) {
+            Link link{QString("vcs:///%1").arg(text)};
+            return link;
+        }
     }
 
     return std::nullopt;
@@ -473,6 +500,18 @@ void TerminalWidget::selectionChanged(const std::optional<Selection> &newSelecti
 
 void TerminalWidget::linkActivated(const Link &link)
 {
+    if (link.text.startsWith("vcs:///")) {
+        QString reference = link.text.mid(7);
+        IVersionControl *vcs = VcsManager::findVersionControlForDirectory(m_cwd);
+
+        if (vcs) {
+            vcs->vcsDescribe(m_cwd, reference);
+            return;
+        }
+
+        return;
+    }
+
     FilePath filePath = FilePath::fromUserInput(link.text);
 
     if (filePath.scheme().toString().startsWith("http")) {
@@ -503,6 +542,7 @@ void TerminalWidget::contextMenuRequested(const QPoint &pos)
 
     contextMenu->addAction(ActionManager::command(Constants::COPY)->action());
     contextMenu->addAction(ActionManager::command(Constants::PASTE)->action());
+    contextMenu->addAction(ActionManager::command(Constants::SELECTALL)->action());
     contextMenu->addSeparator();
     contextMenu->addAction(ActionManager::command(Constants::CLEAR_TERMINAL)->action());
     contextMenu->addSeparator();
@@ -604,51 +644,54 @@ bool TerminalWidget::event(QEvent *event)
     return TerminalView::event(event);
 }
 
-void TerminalWidget::initActions()
+void TerminalWidget::initActions(QObject *parent)
 {
     Core::Context context(Utils::Id("TerminalWidget"));
 
-    static QAction copy;
-    static QAction paste;
-    static QAction clearSelection;
-    static QAction clearTerminal;
-    static QAction moveCursorWordLeft;
-    static QAction moveCursorWordRight;
-    static QAction close;
+    auto keySequence = [](const QChar &key) -> QList<QKeySequence> {
+        if (HostOsInfo::isMacHost()) {
+            return {QKeySequence(QLatin1String("Ctrl+") + key)};
+        } else if (HostOsInfo::isLinuxHost()) {
+            return {QKeySequence(QLatin1String("Ctrl+Shift+") + key)};
+        } else if (HostOsInfo::isWindowsHost()) {
+            return {QKeySequence(QLatin1String("Ctrl+") + key),
+                    QKeySequence(QLatin1String("Ctrl+Shift+") + key)};
+        }
+        return {};
+    };
 
-    copy.setText(Tr::tr("Copy"));
-    paste.setText(Tr::tr("Paste"));
-    clearSelection.setText(Tr::tr("Clear Selection"));
-    clearTerminal.setText(Tr::tr("Clear Terminal"));
-    moveCursorWordLeft.setText(Tr::tr("Move Cursor Word Left"));
-    moveCursorWordRight.setText(Tr::tr("Move Cursor Word Right"));
-    close.setText(Tr::tr("Close Terminal"));
+    ActionBuilder copyAction(parent, Constants::COPY);
+    copyAction.setText(Tr::tr("Copy"));
+    copyAction.setContext(context);
+    copyAction.setDefaultKeySequences(keySequence('C'));
 
-    auto copyCmd = ActionManager::registerAction(&copy, Constants::COPY, context);
-    auto pasteCmd = ActionManager::registerAction(&paste, Constants::PASTE, context);
+    ActionBuilder pasteAction(parent, Constants::PASTE);
+    pasteAction.setText(Tr::tr("Paste"));
+    pasteAction.setContext(context);
+    pasteAction.setDefaultKeySequences(keySequence('V'));
 
-    if (HostOsInfo::isMacHost()) {
-        copyCmd->setDefaultKeySequence(QKeySequence(QLatin1String("Ctrl+C")));
-        pasteCmd->setDefaultKeySequence(QKeySequence(QLatin1String("Ctrl+V")));
-    } else if (HostOsInfo::isLinuxHost()) {
-        copyCmd->setDefaultKeySequence(QKeySequence(QLatin1String("Ctrl+Shift+C")));
-        pasteCmd->setDefaultKeySequence(QKeySequence(QLatin1String("Ctrl+Shift+V")));
-    } else if (HostOsInfo::isWindowsHost()) {
-        copyCmd->setDefaultKeySequences(
-            {QKeySequence(QLatin1String("Ctrl+C")), QKeySequence(QLatin1String("Ctrl+Shift+C"))});
-        pasteCmd->setDefaultKeySequences(
-            {QKeySequence(QLatin1String("Ctrl+V")), QKeySequence(QLatin1String("Ctrl+Shift+V"))});
-    }
+    ActionBuilder clearTerminalAction(parent, Constants::CLEAR_TERMINAL);
+    clearTerminalAction.setText(Tr::tr("Clear Terminal"));
+    clearTerminalAction.setContext(context);
 
-    ActionManager::registerAction(&clearSelection, Constants::CLEARSELECTION, context);
+    ActionBuilder selectAllAction(parent, Constants::SELECTALL);
+    selectAllAction.setText(Tr::tr("Select All"));
+    selectAllAction.setContext(context);
+    selectAllAction.setDefaultKeySequences(keySequence('A'));
 
-    ActionManager::registerAction(&moveCursorWordLeft, Constants::MOVECURSORWORDLEFT, context)
-        ->setDefaultKeySequences({QKeySequence("Alt+Left")});
+    ActionBuilder clearSelectionAction(parent, Constants::CLEARSELECTION);
+    clearSelectionAction.setText(Tr::tr("Clear Selection"));
+    clearSelectionAction.setContext(context);
 
-    ActionManager::registerAction(&moveCursorWordRight, Constants::MOVECURSORWORDRIGHT, context)
-        ->setDefaultKeySequences({QKeySequence("Alt+Right")});
+    ActionBuilder moveCursorWordLeftAction(parent, Constants::MOVECURSORWORDLEFT);
+    moveCursorWordLeftAction.setText(Tr::tr("Move Cursor Word Left"));
+    moveCursorWordLeftAction.setContext(context);
+    moveCursorWordLeftAction.setDefaultKeySequence({QKeySequence("Alt+Left")});
 
-    ActionManager::registerAction(&clearTerminal, Constants::CLEAR_TERMINAL, context);
+    ActionBuilder moveCursorWordRightAction(parent, Constants::MOVECURSORWORDRIGHT);
+    moveCursorWordRightAction.setText(Tr::tr("Move Cursor Word Right"));
+    moveCursorWordRightAction.setContext(context);
+    moveCursorWordRightAction.setDefaultKeySequence({QKeySequence("Alt+Right")});
 }
 
 void TerminalWidget::unlockGlobalAction(const Utils::Id &commandId)

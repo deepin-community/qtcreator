@@ -7,8 +7,6 @@
 #include "debuggerkitaspect.h"
 #include "debuggertr.h"
 
-#include <utils/pathchooser.h>
-
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/kit.h>
 #include <projectexplorer/kitchooser.h>
@@ -20,11 +18,12 @@
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/target.h>
 
+#include <utils/fileutils.h>
+#include <utils/pathchooser.h>
 #include <utils/processinterface.h>
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -72,7 +71,7 @@ UnstartedAppWatcherDialog::UnstartedAppWatcherDialog(QWidget *parent)
 
     m_kitChooser = new KitChooser(this);
     m_kitChooser->setKitPredicate([](const Kit *k) {
-        return ToolChainKitAspect::targetAbi(k).os() == Abi::hostAbi().os();
+        return ToolchainKitAspect::targetAbi(k).os() == Abi::hostAbi().os();
     });
     m_kitChooser->setShowIcons(true);
     m_kitChooser->populate();

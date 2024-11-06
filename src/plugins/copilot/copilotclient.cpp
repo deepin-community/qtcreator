@@ -3,7 +3,6 @@
 
 #include "copilotclient.h"
 #include "copilotsettings.h"
-#include "copilotsuggestion.h"
 #include "copilottr.h"
 
 #include <languageclient/languageclientinterface.h>
@@ -98,13 +97,7 @@ CopilotClient::CopilotClient(const FilePath &nodePath, const FilePath &distPath)
         openDoc(doc);
 }
 
-CopilotClient::~CopilotClient()
-{
-    for (IEditor *editor : DocumentModel::editorsForOpenedDocuments()) {
-        if (auto textEditor = qobject_cast<BaseTextEditor *>(editor))
-            textEditor->editorWidget()->removeHoverHandler(&m_hoverHandler);
-    }
-}
+CopilotClient::~CopilotClient() = default;
 
 void CopilotClient::openDocument(TextDocument *document)
 {
@@ -142,7 +135,8 @@ void CopilotClient::scheduleRequest(TextEditorWidget *editor)
 {
     cancelRunningRequest(editor);
 
-    if (!m_scheduledRequests.contains(editor)) {
+    auto it = m_scheduledRequests.find(editor);
+    if (it == m_scheduledRequests.end()) {
         auto timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, editor]() {
@@ -156,11 +150,11 @@ void CopilotClient::scheduleRequest(TextEditorWidget *editor)
         connect(editor, &TextEditorWidget::cursorPositionChanged, this, [this, editor] {
             cancelRunningRequest(editor);
         });
-        m_scheduledRequests.insert(editor, {editor->textCursor().position(), timer});
+        it = m_scheduledRequests.insert(editor, {editor->textCursor().position(), timer});
     } else {
-        m_scheduledRequests[editor].cursorPosition = editor->textCursor().position();
+        it->cursorPosition = editor->textCursor().position();
     }
-    m_scheduledRequests[editor].timer->start(500);
+    it->timer->start(500);
 }
 
 void CopilotClient::requestCompletions(TextEditorWidget *editor)
@@ -170,11 +164,11 @@ void CopilotClient::requestCompletions(TextEditorWidget *editor)
     if (!isEnabled(project))
         return;
 
-    Utils::MultiTextCursor cursor = editor->multiTextCursor();
+    MultiTextCursor cursor = editor->multiTextCursor();
     if (cursor.hasMultipleCursors() || cursor.hasSelection() || editor->suggestionVisible())
         return;
 
-    const Utils::FilePath filePath = editor->textDocument()->filePath();
+    const FilePath filePath = editor->textDocument()->filePath();
     GetCompletionRequest request{
         {TextDocumentIdentifier(hostPathToServerUri(filePath)),
          documentVersion(filePath),
@@ -198,7 +192,7 @@ void CopilotClient::handleCompletions(const GetCompletionRequest::Response &resp
     if (const auto requestParams = m_runningRequests.take(editor).params())
         requestPosition = requestParams->position().toPositionInDocument(editor->document());
 
-    const Utils::MultiTextCursor cursors = editor->multiTextCursor();
+    const MultiTextCursor cursors = editor->multiTextCursor();
     if (cursors.hasMultipleCursors())
         return;
 
@@ -227,18 +221,26 @@ void CopilotClient::handleCompletions(const GetCompletionRequest::Response &resp
             if (delta > 0)
                 completion.setText(completionText.chopped(delta));
         }
+        auto suggestions = Utils::transform(completions, [](const Completion &c){
+            auto toTextPos = [](const LanguageServerProtocol::Position pos){
+                return Text::Position{pos.line() + 1, pos.character()};
+            };
+
+            Text::Range range{toTextPos(c.range().start()), toTextPos(c.range().end())};
+            Text::Position pos{toTextPos(c.position())};
+            return TextSuggestion::Data{range, pos, c.text()};
+        });
         if (completions.isEmpty())
             return;
         editor->insertSuggestion(
-            std::make_unique<CopilotSuggestion>(completions, editor->document()));
-        editor->addHoverHandler(&m_hoverHandler);
+            std::make_unique<TextEditor::CyclicSuggestion>(suggestions, editor->document()));
     }
 }
 
 void CopilotClient::cancelRunningRequest(TextEditor::TextEditorWidget *editor)
 {
-    auto it = m_runningRequests.find(editor);
-    if (it == m_runningRequests.end())
+    const auto it = m_runningRequests.constFind(editor);
+    if (it == m_runningRequests.constEnd())
         return;
     cancelRequest(it->id());
     m_runningRequests.erase(it);
@@ -331,7 +333,7 @@ void CopilotClient::proxyAuthenticationFailed()
 
     m_isAskingForPassword = true;
 
-    auto answer = Utils::PasswordDialog::getUserAndPassword(
+    auto answer = PasswordDialog::getUserAndPassword(
         Tr::tr("Copilot"),
         Tr::tr("Proxy username and password required:"),
         Tr::tr("Do not ask again. This will disable Copilot for now."),

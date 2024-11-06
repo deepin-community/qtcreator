@@ -3,6 +3,8 @@ add_qtc_plugin(Debugger
   PLUGIN_DEPENDS Core CppEditor ProjectExplorer QtSupport TextEditor
   PLUGIN_RECOMMENDS QmakeProjectManager
   PLUGIN_TEST_DEPENDS QmakeProjectManager
+  DEFINES
+    CLANG_BINDIR="${LLVM_TOOLS_BINARY_DIR}"
   SOURCES
     analyzer/analyzerbase.qrc
     analyzer/analyzerconstants.h
@@ -31,6 +33,7 @@ add_qtc_plugin(Debugger
     dap/dapclient.cpp dap/dapclient.h
     dap/dapengine.cpp dap/dapengine.h
     dap/gdbdapengine.cpp dap/gdbdapengine.h
+    dap/lldbdapengine.cpp dap/lldbdapengine.h
     dap/pydapengine.cpp dap/pydapengine.h
     debugger.qrc
     debugger_global.h
@@ -45,11 +48,12 @@ add_qtc_plugin(Debugger
     debuggeritemmanager.cpp debuggeritemmanager.h
     debuggerkitaspect.cpp debuggerkitaspect.h
     debuggermainwindow.cpp debuggermainwindow.h
-    debuggerplugin.cpp debuggerplugin.h
+    debuggerplugin.cpp
     debuggerprotocol.cpp debuggerprotocol.h
     debuggerrunconfigurationaspect.cpp debuggerrunconfigurationaspect.h
     debuggerruncontrol.cpp debuggerruncontrol.h
     debuggersourcepathmappingwidget.cpp debuggersourcepathmappingwidget.h
+    debuggertest.cpp debuggertest.h
     debuggertooltipmanager.cpp debuggertooltipmanager.h
     debuggertr.h
     disassembleragent.cpp disassembleragent.h
@@ -76,6 +80,7 @@ add_qtc_plugin(Debugger
     qml/qmlv8debuggerclientconstants.h
     registerhandler.cpp registerhandler.h
     shared/cdbsymbolpathlisteditor.cpp shared/cdbsymbolpathlisteditor.h
+    shared/coredumputils.cpp shared/coredumputils.h
     shared/hostutils.cpp shared/hostutils.h
     shared/peutils.cpp shared/peutils.h
     shared/symbolpathsdialog.cpp shared/symbolpathsdialog.h

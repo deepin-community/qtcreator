@@ -6,7 +6,6 @@
 #include "compilerexplorersettings.h"
 #include "compilerexplorertr.h"
 
-#include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/editormanager/editormanager.h>
@@ -16,48 +15,40 @@
 
 #include <extensionsystem/iplugin.h>
 
-#include <projectexplorer/jsonwizard/jsonwizardfactory.h>
-
 #include <utils/fsengine/fileiconprovider.h>
 
-#include <QMenu>
-
 using namespace Core;
+using namespace Utils;
 
 namespace CompilerExplorer::Internal {
 
-class CompilerExplorerPlugin : public ExtensionSystem::IPlugin
+class CompilerExplorerPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "CompilerExplorer.json")
 
 public:
-    void initialize() override
+    void initialize() final
     {
-        static CompilerExplorer::EditorFactory ceEditorFactory;
+        setupCompilerExplorerEditor();
 
-        auto action = new QAction(Tr::tr("Open Compiler Explorer"), this);
-        connect(action, &QAction::triggered, this, [] {
-            QString name("Compiler Explorer $");
-            Core::EditorManager::openEditorWithContents(Constants::CE_EDITOR_ID,
-                                                        &name,
-                                                        settings().defaultDocument().toUtf8());
-        });
+        FileIconProvider::registerIconForMimeType(QIcon(":/compilerexplorer/logos/ce.ico"),
+                                                  "application/compiler-explorer");
 
-        Utils::FileIconProvider::registerIconForMimeType(QIcon(":/compilerexplorer/logos/ce.ico"),
-                                                         "application/compiler-explorer");
+        const Id menuId = "Tools.CompilerExplorer";
+        MenuBuilder(menuId)
+            .setTitle(Tr::tr("Compiler Explorer"))
+            .addToContainer(Core::Constants::M_TOOLS);
 
-        ProjectExplorer::JsonWizardFactory::addWizardPath(":/compilerexplorer/wizard/");
-
-        ActionContainer *mtools = ActionManager::actionContainer(Core::Constants::M_TOOLS);
-        ActionContainer *mCompilerExplorer = ActionManager::createMenu("Tools.CompilerExplorer");
-        QMenu *menu = mCompilerExplorer->menu();
-        menu->setTitle(Tr::tr("Compiler Explorer"));
-        mtools->addMenu(mCompilerExplorer);
-
-        Command *cmd = ActionManager::registerAction(action,
-                                                     "CompilerExplorer.CompilerExplorerAction");
-        mCompilerExplorer->addAction(cmd);
+        ActionBuilder(this, "CompilerExplorer.CompilerExplorerAction")
+            .setText(Tr::tr("Open Compiler Explorer"))
+            .addToContainer(menuId)
+            .addOnTriggered(this, [] {
+                QString name = "Compiler Explorer $";
+                EditorManager::openEditorWithContents(Constants::CE_EDITOR_ID,
+                                                      &name,
+                                                      settings().defaultDocument().toUtf8());
+            });
     }
 };
 

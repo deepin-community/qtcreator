@@ -43,8 +43,8 @@ public:
     void fromMap(const Utils::Store &map) override;
     void toMap(Utils::Store &map) const override;
 
-    bool enabled() const;
-    void setEnabled(bool b);
+    bool stepEnabled() const;
+    void setStepEnabled(bool b);
 
     BuildStepList *stepList() const;
 
@@ -52,7 +52,6 @@ public:
 
     BuildSystem *buildSystem() const;
     BuildConfiguration::BuildType buildType() const;
-    Utils::MacroExpander *macroExpander() const;
 
     enum class OutputFormat {
         Stdout, Stderr, // These are for forwarded output from external tools
@@ -76,6 +75,8 @@ public:
     QString summaryText() const;
     QWidget *doCreateConfigWidget();
 
+    virtual void setBuildTargets(const QStringList &) {}
+
 signals:
     void updateSummary();
 
@@ -89,7 +90,7 @@ signals:
     void addOutput(const QString &string, OutputFormat format,
                    OutputNewlineSetting newlineSetting = DoAppendNewline);
 
-    void enabledChanged();
+    void stepEnabledChanged();
 
     void progress(int percentage, const QString &message);
 
@@ -97,7 +98,6 @@ protected:
     void setWidgetExpandedByDefault(bool widgetExpandedByDefault);
     void setImmutable(bool immutable) { m_immutable = immutable; }
     void setSummaryUpdater(const std::function<QString()> &summaryUpdater);
-    void addMacroExpander() { m_addMacroExpander = true; }
     void setSummaryText(const QString &summaryText);
 
     DeployConfiguration *deployConfiguration() const;
@@ -114,10 +114,9 @@ private:
     ProjectConfiguration *projectConfiguration() const;
 
     BuildStepList * const m_stepList;
-    bool m_enabled = true;
+    bool m_stepEnabled = true;
     bool m_immutable = false;
     bool m_widgetExpandedByDefault = true;
-    bool m_addMacroExpander = false;
     std::optional<bool> m_wasExpanded;
     std::function<QString()> m_summaryUpdater;
 
@@ -143,15 +142,22 @@ public:
 
     QString displayName() const;
 
-protected:
-    using BuildStepCreator = std::function<BuildStep *(BuildStepList *)>;
+    virtual void setBuildTargets(const QStringList &) const {}
 
-    template <class BuildStepType>
+protected:
+    using BuildStepCreator = std::function<BuildStep *(BuildStepFactory *bsf, BuildStepList *)>;
+
+    template <typename BuildStepType>
     void registerStep(Utils::Id id)
     {
         QTC_CHECK(!m_creator);
         m_stepId = id;
-        m_creator = [id](BuildStepList *bsl) { return new BuildStepType(bsl, id); };
+        m_creator = [](BuildStepFactory *bsf, BuildStepList *bsl) {
+            auto bs = new BuildStepType(bsl, bsf->m_stepId);
+            if (bsf->m_extraInit)
+                bsf->m_extraInit(bs);
+            return bs;
+        };
     }
     void cloneStepCreator(Utils::Id exitstingStepId, Utils::Id overrideNewStepId = {});
 
@@ -164,6 +170,7 @@ protected:
     void setRepeatable(bool on) { m_isRepeatable = on; }
     void setDisplayName(const QString &displayName);
     void setFlags(BuildStep::Flags flags);
+    void setExtraInit(const std::function<void(BuildStep *)> &extraInit);
 
 private:
     Utils::Id m_stepId;
@@ -176,6 +183,7 @@ private:
     QList<Utils::Id> m_supportedStepLists;
     Utils::Id m_supportedConfiguration;
     bool m_isRepeatable = true;
+    std::function<void(BuildStep *)> m_extraInit;
 };
 
 } // namespace ProjectExplorer

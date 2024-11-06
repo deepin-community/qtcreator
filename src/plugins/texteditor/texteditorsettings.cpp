@@ -10,18 +10,16 @@
 #include "completionsettingspage.h"
 #include "displaysettings.h"
 #include "displaysettingspage.h"
-#include "extraencodingsettings.h"
 #include "fontsettings.h"
 #include "fontsettingspage.h"
 #include "highlightersettingspage.h"
 #include "icodestylepreferences.h"
 #include "icodestylepreferencesfactory.h"
 #include "marginsettings.h"
-#include "storagesettings.h"
 #include "texteditortr.h"
-#include "typingsettings.h"
 #include "snippets/snippetssettingspage.h"
 
+#include <coreplugin/find/searchresultwindow.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
 
@@ -34,6 +32,7 @@
 
 using namespace TextEditor::Constants;
 using namespace TextEditor::Internal;
+using namespace Utils;
 
 namespace TextEditor {
 namespace Internal {
@@ -249,6 +248,8 @@ FormatDescriptions TextEditorSettingsPrivate::initialFormats()
                              Tr::tr("Macros."), functionFormat);
     formatDescr.emplace_back(C_LABEL, Tr::tr("Label"), Tr::tr("Labels for goto statements."),
                              Qt::darkRed);
+    formatDescr.emplace_back(C_ATTRIBUTE, Tr::tr("Attribute"), Tr::tr("Attributes."),
+                             Qt::darkYellow);
     formatDescr.emplace_back(C_COMMENT, Tr::tr("Comment"),
                              Tr::tr("All style of comments except Doxygen comments."),
                              Qt::darkGreen);
@@ -416,12 +417,9 @@ FormatDescriptions TextEditorSettingsPrivate::initialFormats()
 
 
 static TextEditorSettingsPrivate *d = nullptr;
-static TextEditorSettings *m_instance = nullptr;
 
 TextEditorSettings::TextEditorSettings()
 {
-    QTC_ASSERT(!m_instance, return);
-    m_instance = this;
     d = new Internal::TextEditorSettingsPrivate;
 
     // Note: default background colors are coming from FormatDescription::background()
@@ -432,52 +430,28 @@ TextEditorSettings::TextEditorSettings()
     connect(this, &TextEditorSettings::fontSettingsChanged,
             this, updateGeneralMessagesFontSettings);
     updateGeneralMessagesFontSettings();
-    auto updateGeneralMessagesBehaviorSettings = []() {
-        bool wheelZoom = d->m_behaviorSettingsPage.behaviorSettings().m_scrollWheelZooming;
-        Core::MessageManager::setWheelZoomEnabled(wheelZoom);
+    auto updateBehaviorSettings = [](const BehaviorSettings &bs) {
+        Core::MessageManager::setWheelZoomEnabled(bs.m_scrollWheelZooming);
+        FancyLineEdit::setCamelCaseNavigationEnabled(bs.m_camelCaseNavigation);
     };
     connect(this, &TextEditorSettings::behaviorSettingsChanged,
-            this, updateGeneralMessagesBehaviorSettings);
-    updateGeneralMessagesBehaviorSettings();
-
-    auto updateCamelCaseNavigation = [] {
-        Utils::FancyLineEdit::setCamelCaseNavigationEnabled(behaviorSettings().m_camelCaseNavigation);
-    };
-    connect(this, &TextEditorSettings::behaviorSettingsChanged,
-            this, updateCamelCaseNavigation);
-    updateCamelCaseNavigation();
+            this, updateBehaviorSettings);
+    updateBehaviorSettings(globalBehaviorSettings());
 }
 
 TextEditorSettings::~TextEditorSettings()
 {
     delete d;
-
-    m_instance = nullptr;
 }
 
 TextEditorSettings *TextEditorSettings::instance()
 {
-    return m_instance;
+    return &textEditorSettings();
 }
 
 const FontSettings &TextEditorSettings::fontSettings()
 {
     return d->m_fontSettings;
-}
-
-const TypingSettings &TextEditorSettings::typingSettings()
-{
-    return d->m_behaviorSettingsPage.typingSettings();
-}
-
-const StorageSettings &TextEditorSettings::storageSettings()
-{
-    return d->m_behaviorSettingsPage.storageSettings();
-}
-
-const BehaviorSettings &TextEditorSettings::behaviorSettings()
-{
-    return d->m_behaviorSettingsPage.behaviorSettings();
 }
 
 const MarginSettings &TextEditorSettings::marginSettings()
@@ -498,11 +472,6 @@ const CompletionSettings &TextEditorSettings::completionSettings()
 const HighlighterSettings &TextEditorSettings::highlighterSettings()
 {
     return d->m_highlighterSettingsPage.highlighterSettings();
-}
-
-const ExtraEncodingSettings &TextEditorSettings::extraEncodingSettings()
-{
-    return d->m_behaviorSettingsPage.extraEncodingSettings();
 }
 
 void TextEditorSettings::setCommentsSettingsRetriever(
@@ -592,25 +561,49 @@ Utils::Id TextEditorSettings::languageId(const QString &mimeType)
     return d->m_mimeTypeToLanguage.value(mimeType);
 }
 
-static void setFontZoom(int zoom)
+static int setFontZoom(int zoom)
 {
-    d->m_fontSettings.setFontZoom(zoom);
-    d->m_fontSettings.toSettings(Core::ICore::settings());
-    emit m_instance->fontSettingsChanged(d->m_fontSettings);
+    zoom = qMax(10, zoom);
+    if (d->m_fontSettings.fontZoom() != zoom) {
+        d->m_fontSettings.setFontZoom(zoom);
+        d->m_fontSettings.toSettings(Core::ICore::settings());
+        emit textEditorSettings().fontSettingsChanged(d->m_fontSettings);
+    }
+    return zoom;
+}
+
+int TextEditorSettings::increaseFontZoom()
+{
+    const int previousZoom = d->m_fontSettings.fontZoom();
+    return setFontZoom(previousZoom + 10 - previousZoom % 10);
+}
+
+int TextEditorSettings::decreaseFontZoom()
+{
+    const int previousZoom = d->m_fontSettings.fontZoom();
+    const int delta = previousZoom % 10;
+    return setFontZoom(previousZoom - (delta == 0 ? 10 : delta));
 }
 
 int TextEditorSettings::increaseFontZoom(int step)
 {
-    const int previousZoom = d->m_fontSettings.fontZoom();
-    const int newZoom = qMax(10, previousZoom + step);
-    if (newZoom != previousZoom)
-        setFontZoom(newZoom);
-    return newZoom;
+    return setFontZoom(d->m_fontSettings.fontZoom() + step);
 }
 
 void TextEditorSettings::resetFontZoom()
 {
     setFontZoom(100);
+}
+
+TextEditorSettings &Internal::textEditorSettings()
+{
+    static TextEditorSettings theTextEditorSettings;
+    return theTextEditorSettings;
+}
+
+void Internal::setupTextEditorSettings()
+{
+    (void) textEditorSettings(); // Trigger instantiation.
 }
 
 } // TextEditor

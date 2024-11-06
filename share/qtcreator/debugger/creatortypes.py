@@ -12,7 +12,7 @@ def typeTarget(type):
 
 
 def stripTypeName(value):
-    return typeTarget(value.type).unqualified().name
+    return typeTarget(value.type).name
 
 
 def extractPointerType(d, value):
@@ -53,7 +53,7 @@ def readTemplateName(d, value):
 def readLiteral(d, value):
     if not value.integer():
         return "<null>"
-    type = typeTarget(value.type.unqualified())
+    type = typeTarget(value.type)
     if type and (type.name == "CPlusPlus::TemplateNameId"):
         return readTemplateName(d, value)
     elif type and (type.name == "CPlusPlus::QualifiedNameId"):
@@ -204,7 +204,7 @@ def qdump__CPlusPlus__Internal__Value(d, value):
 
 def qdump__Utils__FilePath(d, value):
     data, path_len, scheme_len, host_len = d.split("{@QString}IHH", value)
-    elided, enc = d.encodeStringHelper(data, d.displayStringLimit)
+    length, enc = d.encodeStringHelper(data, d.displayStringLimit)
     # enc is concatenated  path + scheme + host
     if scheme_len:
         scheme_pos = path_len * 4
@@ -221,7 +221,7 @@ def qdump__Utils__FilePath(d, value):
         val += path_enc
     else:
         val = enc
-    d.putValue(val, "utf16", elided=elided)
+    d.putValue(val, "utf16", length=length)
     d.putPlainChildren(value)
 
 

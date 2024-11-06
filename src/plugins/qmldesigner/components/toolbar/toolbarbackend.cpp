@@ -3,15 +3,19 @@
 
 #include "toolbarbackend.h"
 
+#include "messagemodel.h"
+#include "appoutputmodel.h"
+
 #include <changestyleaction.h>
 #include <crumblebar.h>
 #include <designeractionmanager.h>
 #include <designmodewidget.h>
-#include <viewmanager.h>
-#include <zoomaction.h>
+#include <dynamiclicensecheck.h>
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
 #include <qmleditormenu.h>
+#include <viewmanager.h>
+#include <zoomaction.h>
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreconstants.h>
@@ -20,6 +24,10 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/modemanager.h>
+
+#include <texteditor/textdocument.h>
+
+#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
@@ -139,7 +147,7 @@ WorkspaceModel::WorkspaceModel(QObject *)
         if (!dockManager)
             return false;
 
-        connect(dockManager, &ADS::DockManager::workspaceListChanged, this, [this]() {
+        connect(dockManager, &ADS::DockManager::workspaceListChanged, this, [this] {
             beginResetModel();
             endResetModel();
         });
@@ -149,6 +157,14 @@ WorkspaceModel::WorkspaceModel(QObject *)
     };
     if (!connectDockManager())
         connect(designModeWidget(), &Internal::DesignModeWidget::initialized, this, connectDockManager);
+
+    connect(ProjectExplorer::ProjectManager::instance(),
+            &ProjectExplorer::ProjectManager::projectFinishedParsing,
+            this,
+            [this]() {
+                beginResetModel();
+                endResetModel();
+            });
 }
 
 int WorkspaceModel::rowCount(const QModelIndex &) const
@@ -162,7 +178,8 @@ int WorkspaceModel::rowCount(const QModelIndex &) const
 QHash<int, QByteArray> WorkspaceModel::roleNames() const
 {
     static QHash<int, QByteArray> roleNames{{DisplayNameRole, "displayName"},
-                                            {FileNameRole, "fileName"}};
+                                            {FileNameRole, "fileName"},
+                                            {Enabled, "enabled"}};
 
     return roleNames;
 }
@@ -176,6 +193,9 @@ QVariant WorkspaceModel::data(const QModelIndex &index, int role) const
             return workspace.name();
         } else if (role == FileNameRole) {
             return workspace.fileName();
+        } else if (role == Enabled) {
+            if (QmlProjectManager::QmlProject::isMCUs())
+                return workspace.isMcusEnabled();
         } else {
             qWarning() << Q_FUNC_INFO << "invalid role";
         }
@@ -289,6 +309,20 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
             this,
             &ToolBarBackend::documentIndexChanged);
 
+    connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged, this, [this]() {
+        static QMetaObject::Connection *lastConnection = nullptr;
+        delete lastConnection;
+
+        if (auto textDocument = qobject_cast<TextEditor::TextDocument *>(
+                Core::EditorManager::currentDocument())) {
+            connect(textDocument->document(),
+                    &QTextDocument::modificationChanged,
+                    this,
+                    &ToolBarBackend::isDocumentDirtyChanged);
+            emit isDocumentDirtyChanged();
+        }
+    });
+
     connect(Core::EditorManager::instance(),
             &Core::EditorManager::currentEditorChanged,
             this,
@@ -308,6 +342,13 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
                 this,
                 &ToolBarBackend::currentWorkspaceChanged);
         emit currentWorkspaceChanged();
+
+        connect(dockManager,
+                &ADS::DockManager::lockWorkspaceChanged,
+                this,
+                &ToolBarBackend::lockWorkspaceChanged);
+        emit lockWorkspaceChanged();
+
         return true;
     };
 
@@ -316,7 +357,7 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
 
     auto editorManager = Core::EditorManager::instance();
 
-    connect(editorManager, &Core::EditorManager::documentClosed, this, [this]() {
+    connect(editorManager, &Core::EditorManager::documentClosed, this, [this] {
         if (isInDesignMode() && Core::DocumentModel::entryCount() == 0) {
             QTimer::singleShot(0,
                                Core::ModeManager::instance(),
@@ -333,9 +374,10 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
         });
     });
 
-    connect(Core::ModeManager::instance(), &Core::ModeManager::currentModeChanged, this, [this]() {
+    connect(Core::ModeManager::instance(), &Core::ModeManager::currentModeChanged, this, [this] {
         emit isInDesignModeChanged();
         emit isInEditModeChanged();
+        emit isInSessionModeChanged();
         emit isDesignModeEnabledChanged();
     });
 
@@ -346,6 +388,8 @@ ToolBarBackend::ToolBarBackend(QObject *parent)
                 disconnect(m_kitConnection);
                 emit isQt6Changed();
                 emit projectOpenedChanged();
+                emit stylesChanged();
+                emit isMCUsChanged();
                 if (project) {
                     m_kitConnection = connect(project,
                                               &ProjectExplorer::Project::activeTargetChanged,
@@ -367,12 +411,16 @@ void ToolBarBackend::registerDeclarativeType()
     qmlRegisterType<ActionSubscriber>("ToolBar", 1, 0, "ActionSubscriber");
     qmlRegisterType<CrumbleBarModel>("ToolBar", 1, 0, "CrumbleBarModel");
     qmlRegisterType<WorkspaceModel>("ToolBar", 1, 0, "WorkspaceModel");
+
+    qmlRegisterType<MessageModel>("OutputPane", 1, 0, "MessageModel");
+    qmlRegisterType<AppOutputParentModel>("OutputPane", 1, 0, "AppOutputParentModel");
+    qmlRegisterType<AppOutputChildModel>("OutputPane", 1, 0, "AppOutputChildModel");
 }
 
 void ToolBarBackend::triggerModeChange()
 {
     QmlDesignerPlugin::emitUsageStatistics(Constants::EVENT_TOOLBAR_MODE_CHANGE);
-    QTimer::singleShot(0, this, [this]() { //Do not trigger mode change directly from QML
+    QTimer::singleShot(0, this, [this] { //Do not trigger mode change directly from QML
         bool qmlFileOpen = false;
 
         if (!projectOpened()) {
@@ -453,6 +501,11 @@ void ToolBarBackend::setCurrentWorkspace(const QString &workspace)
     designModeWidget()->dockManager()->openWorkspace(workspace);
 }
 
+void ToolBarBackend::setLockWorkspace(bool value)
+{
+    designModeWidget()->dockManager()->lockWorkspace(value);
+}
+
 void ToolBarBackend::editGlobalAnnoation()
 {
     launchGlobalAnnotations();
@@ -489,7 +542,7 @@ void ToolBarBackend::setCurrentStyle(int index)
     const QList<StyleWidgetEntry> items = ChangeStyleWidgetAction::getAllStyleItems();
 
     QTC_ASSERT(items.size() > index, return);
-    QTC_ASSERT(index > 0, return );
+    QTC_ASSERT(index >= 0, return );
 
     QTC_ASSERT(currentDesignDocument(), return );
 
@@ -499,7 +552,7 @@ void ToolBarBackend::setCurrentStyle(int index)
 
     const QString qmlFile = view->model()->fileUrl().toLocalFile();
 
-    ChangeStyleWidgetAction::changeCurrentStyle(item.styleName, qmlFile);
+    ChangeStyleWidgetAction::changeCurrentStyle(item.displayName, qmlFile);
 
     view->resetPuppet();
 }
@@ -588,6 +641,14 @@ QString ToolBarBackend::currentWorkspace() const
     return {};
 }
 
+bool ToolBarBackend::lockWorkspace() const
+{
+    if (designModeWidget() && designModeWidget()->dockManager())
+        return designModeWidget()->dockManager()->isWorkspaceLocked();
+
+    return false;
+}
+
 QStringList ToolBarBackend::styles() const
 {
     const QList<StyleWidgetEntry> items = ChangeStyleWidgetAction::getAllStyleItems();
@@ -612,6 +673,14 @@ bool ToolBarBackend::isInEditMode() const
         return false;
 
     return Core::ModeManager::currentModeId() == Core::Constants::MODE_EDIT;
+}
+
+bool ToolBarBackend::isInSessionMode() const
+{
+    if (!Core::ModeManager::instance())
+        return false;
+
+    return Core::ModeManager::currentModeId() == ProjectExplorer::Constants::MODE_SESSION;
 }
 
 bool ToolBarBackend::isDesignModeEnabled() const
@@ -645,7 +714,7 @@ QStringList ToolBarBackend::kits() const
             /*&& kit->isAutoDetected() */;
     });
 
-    return Utils::transform(kits, [](ProjectExplorer::Kit *kit) { return kit->displayName(); });
+    return Utils::transform(kits, &ProjectExplorer::Kit::displayName);
 }
 
 int ToolBarBackend::currentKit() const
@@ -672,9 +741,39 @@ bool ToolBarBackend::isQt6() const
     return isQt6Project;
 }
 
+bool ToolBarBackend::isMCUs() const
+{
+    if (!ProjectExplorer::ProjectManager::startupTarget())
+        return false;
+
+    const QmlProjectManager::QmlBuildSystem *buildSystem = qobject_cast<QmlProjectManager::QmlBuildSystem *>(
+        ProjectExplorer::ProjectManager::startupTarget()->buildSystem());
+    QTC_ASSERT(buildSystem, return false);
+
+    const bool isQtForMCUsProject = buildSystem && buildSystem->qtForMCUs();
+
+    return isQtForMCUsProject;
+}
+
 bool ToolBarBackend::projectOpened() const
 {
     return ProjectExplorer::ProjectManager::instance()->startupProject();
+}
+
+bool ToolBarBackend::isSharingEnabled()
+{
+    return QmlDesigner::checkEnterpriseLicense();
+}
+
+bool ToolBarBackend::isDocumentDirty() const
+{
+    return Core::EditorManager::currentDocument()
+           && Core::EditorManager::currentDocument()->isModified();
+}
+
+bool ToolBarBackend::isLiteModeEnabled() const
+{
+    return QmlDesignerBasePlugin::isLiteModeEnabled();
 }
 
 void ToolBarBackend::launchGlobalAnnotations()

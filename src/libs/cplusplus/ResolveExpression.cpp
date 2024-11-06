@@ -730,7 +730,7 @@ bool ResolveExpression::visit(SimpleNameAST *ast)
                            QSet<const Declaration* >(_autoDeclarationsBeingResolved) << decl);
 
             const ExpressionDocumentHelper exprHelper(exprTyper.preprocessedExpression(initializer),
-                                                      _context.bindings()->control().data());
+                                                      _context.bindings()->control().get());
             const Document::Ptr exprDoc = exprHelper.document;
 
             DeduceAutoCheck deduceAuto(ast->name->identifier(), exprDoc->translationUnit());
@@ -742,7 +742,7 @@ bool ResolveExpression::visit(SimpleNameAST *ast)
             if (typeItems.empty())
                 continue;
 
-            Clone cloner(_context.bindings()->control().data());
+            Clone cloner(_context.bindings()->control().get());
 
             for (int n = 0; n < typeItems.size(); ++ n) {
                 FullySpecifiedType newType = cloner.type(typeItems[n].type(), nullptr);
@@ -1062,6 +1062,8 @@ ClassOrNamespace *ResolveExpression::baseExpression(const QList<LookupItem> &bas
         }
 
         typedefsResolver.resolve(&ty, &scope, r.binding());
+        if (auto ref = ty->asReferenceType()) // deref if needed
+            ty = ref->elementType();
 
         if (Q_UNLIKELY(debug))
             qDebug() << "-  after typedef resolving:" << oo.prettyType(ty);
@@ -1080,6 +1082,9 @@ ClassOrNamespace *ResolveExpression::baseExpression(const QList<LookupItem> &bas
                     return binding;
                 }
                 if (ClassOrNamespace *binding = findClass(type, scope))
+                    return binding;
+
+                if (ClassOrNamespace *binding = findClass(type, r.scope())) // local classes and structs
                     return binding;
 
             } else {
@@ -1175,6 +1180,9 @@ ClassOrNamespace *ResolveExpression::baseExpression(const QList<LookupItem> &bas
             }
 
             if (ClassOrNamespace *binding = findClass(ty, scope, enclosingBinding))
+                return binding;
+
+            if (ClassOrNamespace *binding = findClass(ty, r.scope())) // local classes and structs
                 return binding;
         }
     }

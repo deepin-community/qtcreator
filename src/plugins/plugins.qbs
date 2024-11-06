@@ -5,6 +5,7 @@ Project {
 
     references: [
         "android/android.qbs",
+        "appstatisticsmonitor/appstatisticsmonitor.qbs",
         "autotest/autotest.qbs",
         "autotoolsprojectmanager/autotoolsprojectmanager.qbs",
         "axivion/axivion.qbs",
@@ -37,6 +38,7 @@ Project {
         "designer/designer.qbs",
         "diffeditor/diffeditor.qbs",
         "docker/docker.qbs",
+        "extensionmanager/extensionmanager.qbs",
         "fakevim/fakevim.qbs",
         "fossil/fossil.qbs",
         "emacskeys/emacskeys.qbs",
@@ -51,6 +53,8 @@ Project {
         "incredibuild/incredibuild.qbs",
         "ios/ios.qbs",
         "languageclient/languageclient.qbs",
+        "languageclient/lualanguageclient/lualanguageclient.qbs",
+        "lua/lua.qbs",
         "macros/macros.qbs",
         "marketplace/marketplace.qbs",
         "mcusupport/mcusupport.qbs",
@@ -71,6 +75,7 @@ Project {
         "qnx/qnx.qbs",
         "qmakeprojectmanager/qmakeprojectmanager.qbs",
         "qmldesignerbase/qmldesignerbase.qbs",
+        "qtapplicationmanager/qtapplicationmanager.qbs",
         "qtsupport/qtsupport.qbs",
         "remotelinux/remotelinux.qbs",
         "resourceeditor/resourceeditor.qbs",

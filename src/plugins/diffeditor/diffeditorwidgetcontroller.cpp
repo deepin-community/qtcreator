@@ -191,8 +191,7 @@ void DiffEditorWidgetController::patch(PatchAction patchAction, int fileIndex, i
 
         if (PatchTool::runPatch(EditorManager::defaultTextCodec()->fromUnicode(patch),
                                 FilePath::fromString(contentsCopyDir), 0, patchAction)) {
-            QString errorString;
-            if (textDocument->reload(&errorString, FilePath::fromString(contentsCopyFileName)))
+            if (textDocument->reload(FilePath::fromString(contentsCopyFileName)))
                 m_document->reload();
         }
     }
@@ -267,9 +266,12 @@ void DiffEditorWidgetController::addPatchAction(QMenu *menu, int fileIndex, int 
     const QString actionName = patchAction == PatchAction::Apply ? Tr::tr("Apply Chunk...")
                                                                  : Tr::tr("Revert Chunk...");
     QAction *action = menu->addAction(actionName);
-    connect(action, &QAction::triggered, this, [this, fileIndex, chunkIndex, patchAction] {
-        patch(patchAction, fileIndex, chunkIndex);
-    });
+    connect(
+        action,
+        &QAction::triggered,
+        this,
+        [this, fileIndex, chunkIndex, patchAction] { patch(patchAction, fileIndex, chunkIndex); },
+        Qt::QueuedConnection);
     const bool enabled = chunkExists(fileIndex, chunkIndex)
             && (patchAction == PatchAction::Revert || fileNamesAreDifferent(fileIndex));
     action->setEnabled(enabled);

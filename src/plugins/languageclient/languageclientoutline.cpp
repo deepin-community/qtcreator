@@ -5,6 +5,7 @@
 
 #include "documentsymbolcache.h"
 #include "languageclientmanager.h"
+#include "languageclienttr.h"
 #include "languageclientutils.h"
 
 #include <coreplugin/editormanager/ieditor.h>
@@ -23,6 +24,7 @@
 
 #include <QAction>
 #include <QBoxLayout>
+#include <QMenu>
 #include <QSortFilterProxyModel>
 
 using namespace LanguageServerProtocol;
@@ -112,6 +114,8 @@ public:
     bool isSorted() const override;
     void restoreSettings(const QVariantMap &map) override;
     QVariantMap settings() const override;
+
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     void handleResponse(const DocumentUri &uri, const DocumentSymbolsResult &response);
@@ -204,15 +208,30 @@ QVariantMap LanguageClientOutlineWidget::settings() const
     return {{QString("LspOutline.Sort"), m_sorted}};
 }
 
+void LanguageClientOutlineWidget::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!event)
+        return;
+
+    QMenu contextMenu;
+    QAction *action = contextMenu.addAction(Tr::tr("Expand All"));
+    connect(action, &QAction::triggered, &m_view, &QTreeView::expandAll);
+    action = contextMenu.addAction(Tr::tr("Collapse All"));
+    connect(action, &QAction::triggered, &m_view, &QTreeView::collapseAll);
+
+    contextMenu.exec(event->globalPos());
+    event->accept();
+}
+
 void LanguageClientOutlineWidget::handleResponse(const DocumentUri &uri,
                                                  const DocumentSymbolsResult &result)
 {
     if (uri != m_uri)
         return;
-    if (std::holds_alternative<QList<SymbolInformation>>(result))
-        m_model.setInfo(std::get<QList<SymbolInformation>>(result));
-    else if (std::holds_alternative<QList<DocumentSymbol>>(result))
-        m_model.setInfo(std::get<QList<DocumentSymbol>>(result));
+    if (const auto i = std::get_if<QList<SymbolInformation>>(&result))
+        m_model.setInfo(*i);
+    else if (const auto s = std::get_if<QList<DocumentSymbol>>(&result))
+        m_model.setInfo(*s);
     else
         m_model.clear();
 
@@ -350,10 +369,10 @@ void OutlineComboBox::updateModel(const DocumentUri &resultUri, const DocumentSy
 {
     if (m_uri != resultUri)
         return;
-    if (std::holds_alternative<QList<SymbolInformation>>(result))
-        m_model.setInfo(std::get<QList<SymbolInformation>>(result));
-    else if (std::holds_alternative<QList<DocumentSymbol>>(result))
-        m_model.setInfo(std::get<QList<DocumentSymbol>>(result));
+    if (const auto i = std::get_if<QList<SymbolInformation>>(&result))
+        m_model.setInfo(*i);
+    else if (const auto s = std::get_if<QList<DocumentSymbol>>(&result))
+        m_model.setInfo(*s);
     else
         m_model.clear();
 

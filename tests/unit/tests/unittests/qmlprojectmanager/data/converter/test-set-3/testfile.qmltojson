@@ -1,5 +1,6 @@
 {
     "deployment": {
+        "enableCMakeGeneration": false,
         "targetDirectory": "/opt/UntitledProject13"
     },
     "environment": {
@@ -9,96 +10,208 @@
         "QT_LOGGING_RULES": "qt.qml.connections=false",
         "QT_QUICK_CONTROLS_CONF": "qtquickcontrols2.conf"
     },
-    "fileGroups": {
-        "config": {
-            "directories": [
-                "."
-            ],
+    "fileGroups": [
+        {
+            "directory": "content",
             "files": [
-                {
-                    "name": "qtquickcontrols2.conf"
-                }
+            ],
+            "filters": [
+                "*.qml"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": "Qml"
+        },
+        {
+            "directory": "imports",
+            "files": [
+            ],
+            "filters": [
+                "*.qml"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": "Qml"
+        },
+        {
+            "directory": "content",
+            "files": [
+            ],
+            "filters": [
+                "*.js",
+                "*.ts"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": "JavaScript"
+        },
+        {
+            "directory": "imports",
+            "files": [
+            ],
+            "filters": [
+                "*.js",
+                "*.ts"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": "JavaScript"
+        },
+        {
+            "directory": "content",
+            "files": [
+            ],
+            "filters": [
+                "*.bmp",
+                "*.dae",
+                "*.gif",
+                "*.hdr",
+                "*.ico",
+                "*.jpeg",
+                "*.jpg",
+                "*.ktx",
+                "*.pbm",
+                "*.pgm",
+                "*.png",
+                "*.ppm",
+                "*.svg",
+                "*.svgz",
+                "*.tif",
+                "*.tiff",
+                "*.ttf",
+                "*.webp",
+                "*.xbm",
+                "*.xpm"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": "Image"
+        },
+        {
+            "directory": "asset_imports",
+            "files": [
+            ],
+            "filters": [
+                "*.bmp",
+                "*.dae",
+                "*.gif",
+                "*.hdr",
+                "*.ico",
+                "*.jpeg",
+                "*.jpg",
+                "*.ktx",
+                "*.pbm",
+                "*.pgm",
+                "*.png",
+                "*.ppm",
+                "*.svg",
+                "*.svgz",
+                "*.tif",
+                "*.tiff",
+                "*.ttf",
+                "*.webp",
+                "*.xbm",
+                "*.xpm"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": "Image"
+        },
+        {
+            "directory": "",
+            "files": [
+                "qtquickcontrols2.conf"
+            ],
+            "filters": [
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": "",
+            "files": [
             ],
             "filters": [
                 "*.conf"
-            ]
-        },
-        "font": {
-            "directories": [
-                "."
             ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": ".",
+            "files": [
+            ],
+            "filters": [
+                "qmldir"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": "",
             "files": [
             ],
             "filters": [
                 "*.ttf",
                 "*.otf",
                 "*.ctf"
-            ]
-        },
-        "image": {
-            "directories": [
-                "content",
-                "asset_imports"
             ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": "",
             "files": [
             ],
             "filters": [
-                "*.jpeg",
-                "*.jpg",
-                "*.png",
-                "*.svg",
-                "*.hdr",
-                ".ktx"
-            ]
-        },
-        "javaScript": {
-            "directories": [
-                "content",
-                "imports"
+                "*.wav",
+                "*.mp3"
             ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": "",
             "files": [
             ],
             "filters": [
-                "*.js",
-                "*.ts"
-            ]
+                "*.mp4"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
         },
-        "meshes": {
-            "directories": [
-                "asset_imports"
-            ],
-            "files": [
-            ],
-            "filters": [
-                "*.mesh"
-            ]
-        },
-        "qml": {
-            "directories": [
-                "content",
-                "imports",
-                "asset_imports"
-            ],
-            "files": [
-            ],
-            "filters": [
-                "*.qml"
-            ]
-        },
-        "qmldir": {
-            "directories": [
-                "."
-            ],
-            "files": [
-            ],
-            "filters": [
-                "qmldir"
-            ]
-        },
-        "shader": {
-            "directories": [
-                "."
-            ],
+        {
+            "directory": "",
             "files": [
             ],
             "filters": [
@@ -110,30 +223,40 @@
                 "*.vert",
                 "*.frag",
                 "*.trag"
-            ]
-        },
-        "sound": {
-            "directories": [
-                "."
             ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": "asset_imports",
             "files": [
             ],
             "filters": [
-                "*.mp3",
-                "*.wav"
-            ]
-        },
-        "video": {
-            "directories": [
-                "."
+                "*.mesh"
             ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
+        },
+        {
+            "directory": "asset_imports",
             "files": [
             ],
             "filters": [
-                "*.mp4"
-            ]
+                "*.qml"
+            ],
+            "mcuProperties": {
+            },
+            "otherProperties": {
+            },
+            "type": ""
         }
-    },
+    ],
     "fileVersion": 1,
     "importPaths": [
         "imports",
@@ -146,9 +269,17 @@
             "en"
         ]
     },
-    "mcuConfig": {
-        "mcuEnabled": true
+    "mcu": {
+        "config": {
+        },
+        "enabled": true,
+        "module": {
+        }
     },
+    "otherProperties": {
+    },
+    "qmlprojectDependencies": [
+    ],
     "runConfig": {
         "fileSelectors": [
         ],

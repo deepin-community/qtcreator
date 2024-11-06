@@ -15,8 +15,8 @@ QtcPlugin {
     cpp.frameworks: base.concat(qbs.targetOS.contains("macos") ? ["CoreFoundation", "IOKit"] : [])
 
     files: [
-        "createsimulatordialog.cpp",
-        "createsimulatordialog.h",
+        "devicectlutils.cpp",
+        "devicectlutils.h",
         "ios.qrc",
         "iosbuildconfiguration.cpp",
         "iosbuildconfiguration.h",
@@ -32,7 +32,6 @@ QtcPlugin {
         "iosdsymbuildstep.cpp",
         "iosdsymbuildstep.h",
         "iosplugin.cpp",
-        "iosplugin.h",
         "iosprobe.cpp",
         "iosprobe.h",
         "iosqtversion.cpp",
@@ -50,9 +49,5 @@ QtcPlugin {
         "iostr.h",
         "simulatorcontrol.cpp",
         "simulatorcontrol.h",
-        "simulatorinfomodel.cpp",
-        "simulatorinfomodel.h",
-        "simulatoroperationdialog.cpp",
-        "simulatoroperationdialog.h",
     ]
 }

@@ -33,6 +33,7 @@
 #include <tools/fileinfo.h>
 #include <tools/hostosinfo.h>
 #include <pkgconfig.h>
+#include <pcparser.h>
 #include <jsextensions/pkgconfigjs.h>
 
 #include <QJsonArray>
@@ -58,6 +59,48 @@ void TestPkgConfig::initTestCase()
              qPrintable(errorMessage));
 }
 
+void TestPkgConfig::fileName()
+{
+    QCOMPARE(qbs::Internal::fileName(""), "");
+    QCOMPARE(qbs::Internal::fileName("file.txt"), "file.txt");
+    QCOMPARE(qbs::Internal::fileName("/home/user/file.txt"), "file.txt");
+    QCOMPARE(qbs::Internal::fileName("/"), "");
+#if defined(Q_OS_WIN)
+    QCOMPARE(qbs::Internal::fileName("c:file.txt"), "file.txt");
+    QCOMPARE(qbs::Internal::fileName("c:"), "");
+#endif
+}
+
+void TestPkgConfig::completeBaseName()
+{
+    QCOMPARE(qbs::Internal::completeBaseName(""), "");
+    QCOMPARE(qbs::Internal::completeBaseName("file.txt"), "file");
+    QCOMPARE(qbs::Internal::completeBaseName("archive.tar.gz"), "archive.tar");
+    QCOMPARE(qbs::Internal::completeBaseName("/home/user/file.txt"), "file");
+#if defined(Q_OS_WIN)
+    QCOMPARE(qbs::Internal::completeBaseName("c:file.txt"), "file");
+    QCOMPARE(qbs::Internal::completeBaseName("c:archive.tar.gz"), "archive.tar");
+    QCOMPARE(qbs::Internal::completeBaseName("c:"), "");
+#endif
+}
+
+void TestPkgConfig::parentPath()
+{
+    QCOMPARE(qbs::Internal::parentPath(""), "");
+    QCOMPARE(qbs::Internal::parentPath("file.txt"), ".");
+    QCOMPARE(qbs::Internal::parentPath("/home/user/file.txt"), "/home/user");
+    QCOMPARE(qbs::Internal::parentPath("/home/user/"), "/home/user");
+    QCOMPARE(qbs::Internal::parentPath("/home"), "/");
+    QCOMPARE(qbs::Internal::parentPath("/"), "/");
+#if defined(Q_OS_WIN)
+    QCOMPARE(qbs::Internal::parentPath("c:/folder/file.txt"), "c:/folder");
+    QCOMPARE(qbs::Internal::parentPath("c:/folder/"), "c:/folder");
+    QCOMPARE(qbs::Internal::parentPath("c:/folder"), "c:/");
+    QCOMPARE(qbs::Internal::parentPath("c:/"), "c:/");
+    QCOMPARE(qbs::Internal::parentPath("c:"), "c:");
+#endif
+}
+
 void TestPkgConfig::pkgConfig()
 {
     QFETCH(QString, pcFileName);
@@ -66,9 +109,6 @@ void TestPkgConfig::pkgConfig()
 
     if (jsonFileName.isEmpty())
         jsonFileName = pcFileName;
-
-    if (!optionsMap.contains("mergeDependencies"))
-        optionsMap["mergeDependencies"] = false;
 
     Options options = qbs::Internal::PkgConfigJs::convertOptions(
             QProcessEnvironment::systemEnvironment(), optionsMap);
@@ -176,14 +216,6 @@ void TestPkgConfig::pkgConfig_data()
             << QStringLiteral("simple") << QString() << QVariantMap();
     QTest::newRow("requires-test")
             << QStringLiteral("requires-test") << QString() << QVariantMap();
-    QTest::newRow("requires-test-merged")
-            << QStringLiteral("requires-test")
-            << QStringLiteral("requires-test-merged")
-            << QVariantMap({{"mergeDependencies", true}});
-    QTest::newRow("requires-test-merged-static")
-            << QStringLiteral("requires-test")
-            << QStringLiteral("requires-test-merged-static")
-            << QVariantMap({{"mergeDependencies", true}, {"staticMode", true}});
     QTest::newRow("special-flags")
             << QStringLiteral("special-flags") << QString() << QVariantMap();
     QTest::newRow("system")
@@ -194,10 +226,6 @@ void TestPkgConfig::pkgConfig_data()
             << QStringLiteral("tilde") << QString() << QVariantMap();
     QTest::newRow("variables")
             << QStringLiteral("variables") << QString() << QVariantMap();
-    QTest::newRow("variables-merged")
-            << QStringLiteral("variables")
-            << QString()
-            << QVariantMap({{"mergeDependencies", true}});
     QTest::newRow("whitespace")
             << QStringLiteral("whitespace") << QString() << QVariantMap();
     QTest::newRow("base.name")
@@ -212,6 +240,27 @@ void TestPkgConfig::benchSystem()
         PkgConfig pkgConfig;
         QVERIFY(!pkgConfig.packages().empty());
     }
+}
+
+void TestPkgConfig::prefix()
+{
+    const auto prefixDir = m_workingDataDir;
+    const auto libDir = m_workingDataDir + "/lib";
+    const auto includeDir = m_workingDataDir + "/include";
+    const auto pkgconfigDir = libDir + "/pkgconfig";
+    Options options = qbs::Internal::PkgConfigJs::convertOptions(
+            QProcessEnvironment::systemEnvironment(), {});
+    options.definePrefix = true;
+    options.libDirs.push_back(pkgconfigDir.toStdString());
+    PkgConfig pkgConfig(std::move(options));
+    const auto &packageOr = pkgConfig.getPackage("prefix");
+    QVERIFY(packageOr.isValid());
+    const auto &package = packageOr.asPackage();
+    QCOMPARE(package.variables.at("prefix"), prefixDir.toStdString());
+    QCOMPARE(package.variables.at("exec_prefix"), prefixDir.toStdString());
+    QCOMPARE(package.variables.at("libdir"), libDir.toStdString());
+    QCOMPARE(package.variables.at("includedir"), includeDir.toStdString());
+    QCOMPARE(package.variables.at("usrdir"), "/usrdir");
 }
 
 QTEST_MAIN(TestPkgConfig)

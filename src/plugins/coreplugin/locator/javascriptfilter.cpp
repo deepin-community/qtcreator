@@ -23,6 +23,7 @@ using namespace Core::Internal;
 using namespace Tasking;
 using namespace Utils;
 
+using namespace std::chrono;
 using namespace std::chrono_literals;
 
 static const char s_initData[] = R"(
@@ -291,7 +292,7 @@ public:
         QTC_ASSERT(!isRunning(), return);
         m_input.m_input = input;
     }
-    void setTimeout(std::chrono::milliseconds timeout) {
+    void setTimeout(milliseconds timeout) {
         QTC_ASSERT(!isRunning(), return);
         m_timeout = timeout;
     }
@@ -305,7 +306,7 @@ public:
             m_timer.reset();
             m_output = output;
             m_id = {};
-            emit done(output.m_result == JavaScriptResult::FinishedWithSuccess);
+            emit done(toDoneResult(output.m_result == JavaScriptResult::FinishedWithSuccess));
         };
         m_id = m_engine->addRequest(input);
         if (m_timeout > 0ms) {
@@ -318,7 +319,7 @@ public:
                 m_timer.release()->deleteLater();
                 m_id = {};
                 m_output = {Tr::tr("Engine aborted after timeout."), JavaScriptResult::Canceled};
-                emit done(false);
+                emit done(DoneResult::Error);
             });
             m_timer->start();
         }
@@ -328,12 +329,12 @@ public:
     JavaScriptOutput output() const { return m_output; }
 
 signals:
-    void done(bool success);
+    void done(DoneResult result);
 
 private:
     QPointer<JavaScriptEngine> m_engine;
     JavaScriptInput m_input;
-    std::chrono::milliseconds m_timeout = 1000ms;
+    milliseconds m_timeout = 1000ms;
 
     std::unique_ptr<QTimer> m_timer;
 
@@ -365,15 +366,15 @@ JavaScriptFilter::~JavaScriptFilter() = default;
 
 LocatorMatcherTasks JavaScriptFilter::matchers()
 {
-    TreeStorage<LocatorStorage> storage;
     if (!m_javaScriptEngine)
         m_javaScriptEngine.reset(new JavaScriptEngine);
     QPointer<JavaScriptEngine> engine = m_javaScriptEngine.get();
 
-    const auto onSetup = [storage, engine] {
+    const auto onSetup = [engine] {
+        const LocatorStorage &storage = *LocatorStorage::storage();
         if (!engine)
             return SetupResult::StopWithError;
-        if (storage->input().trimmed().isEmpty()) {
+        if (storage.input().trimmed().isEmpty()) {
             LocatorFilterEntry entry;
             entry.displayName = Tr::tr("Reset Engine");
             entry.acceptor = [engine] {
@@ -384,52 +385,54 @@ LocatorMatcherTasks JavaScriptFilter::matchers()
                 }
                 return AcceptResult();
             };
-            storage->reportOutput({entry});
-            return SetupResult::StopWithDone;
+            storage.reportOutput({entry});
+            return SetupResult::StopWithSuccess;
         }
         return SetupResult::Continue;
     };
 
-    const auto onJavaScriptSetup = [storage, engine](JavaScriptRequest &request) {
+    const auto onJavaScriptSetup = [engine](JavaScriptRequest &request) {
         request.setEngine(engine);
-        request.setEvaluateData(storage->input());
+        request.setEvaluateData(LocatorStorage::storage()->input());
     };
-    const auto onJavaScriptDone = [storage](const JavaScriptRequest &request) {
+    const auto onJavaScriptDone = [](const JavaScriptRequest &request, DoneWith result) {
+        const LocatorStorage &storage = *LocatorStorage::storage();
+        if (result != DoneWith::Success) {
+            LocatorFilterEntry entry;
+            entry.displayName = request.output().m_output;
+            storage.reportOutput({entry});
+            return;
+        }
         const auto acceptor = [](const QString &clipboardContents) {
             return [clipboardContents] {
                 QGuiApplication::clipboard()->setText(clipboardContents);
                 return AcceptResult();
             };
         };
-        const QString input = storage->input();
-        const QString result = request.output().m_output;
-        const QString expression = input + " = " + result;
+        const QString input = storage.input();
+        const QString output = request.output().m_output;
+        const QString expression = input + " = " + output;
 
         LocatorFilterEntry entry;
         entry.displayName = expression;
 
         LocatorFilterEntry copyResultEntry;
-        copyResultEntry.displayName = Tr::tr("Copy to clipboard: %1").arg(result);
-        copyResultEntry.acceptor = acceptor(result);
+        copyResultEntry.displayName = Tr::tr("Copy to clipboard: %1").arg(output);
+        copyResultEntry.acceptor = acceptor(output);
 
         LocatorFilterEntry copyExpressionEntry;
         copyExpressionEntry.displayName = Tr::tr("Copy to clipboard: %1").arg(expression);
         copyExpressionEntry.acceptor = acceptor(expression);
 
-        storage->reportOutput({entry, copyResultEntry, copyExpressionEntry});
-    };
-    const auto onJavaScriptError = [storage](const JavaScriptRequest &request) {
-        LocatorFilterEntry entry;
-        entry.displayName = request.output().m_output;
-        storage->reportOutput({entry});
+        storage.reportOutput({entry, copyResultEntry, copyExpressionEntry});
     };
 
     const Group root {
         onGroupSetup(onSetup),
-        JavaScriptRequestTask(onJavaScriptSetup, onJavaScriptDone, onJavaScriptError)
+        JavaScriptRequestTask(onJavaScriptSetup, onJavaScriptDone)
     };
 
-    return {{root, storage}};
+    return {root};
 }
 
 } // namespace Core::Internal

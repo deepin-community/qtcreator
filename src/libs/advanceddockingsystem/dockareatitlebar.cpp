@@ -35,8 +35,6 @@
 
 namespace ADS {
 
-static const char *const g_locationProperty = "Location";
-
 /**
  * Private data class of DockAreaTitleBar class (pimpl)
  */
@@ -48,10 +46,11 @@ public:
     QPointer<TitleBarButton> m_autoHideButton;
     QPointer<TitleBarButton> m_undockButton;
     QPointer<TitleBarButton> m_closeButton;
+    QPointer<TitleBarButton> m_minimizeButton;
     QBoxLayout *m_layout = nullptr;
     DockAreaWidget *m_dockArea = nullptr;
     DockAreaTabBar *m_tabBar = nullptr;
-    ElidingLabel *m_autoHideTitleLabel;
+    ElidingLabel *m_autoHideTitleLabel = nullptr;
     bool m_menuOutdated = true;
     QMenu *m_tabsMenu;
     QList<TitleBarButtonType *> m_dockWidgetActionsButtons;
@@ -125,11 +124,9 @@ public:
     QAction *createAutoHideToAction(const QString &title, SideBarLocation location, QMenu *menu)
     {
         auto action = menu->addAction(title);
-        action->setProperty("Location", location);
-        QObject::connect(action,
-                         &QAction::triggered,
-                         q,
-                         &DockAreaTitleBar::onAutoHideToActionClicked);
+        QObject::connect(action, &QAction::triggered, q, [this, location] {
+            m_dockArea->toggleAutoHide(location);
+        });
         return action;
     }
 }; // class DockAreaTitleBarPrivate
@@ -202,6 +199,23 @@ void DockAreaTitleBarPrivate::createButtons()
                      q,
                      &DockAreaTitleBar::onAutoHideButtonClicked);
 
+    // Minimize button
+    m_minimizeButton = new TitleBarButton(
+        testAutoHideConfigFlag(DockManager::AutoHideHasMinimizeButton));
+    m_minimizeButton->setObjectName("dockAreaMinimizeButton");
+    //m_minimizeButton->setAutoRaise(true);
+    m_minimizeButton->setVisible(false);
+    internal::setButtonIcon(m_minimizeButton,
+                            QStyle::SP_TitleBarMinButton,
+                            ADS::DockAreaMinimizeIcon);
+    internal::setToolTip(m_minimizeButton, QObject::tr("Minimize"));
+    m_minimizeButton->setSizePolicy(sizePolicy);
+    m_layout->addWidget(m_minimizeButton, 0);
+    QObject::connect(m_minimizeButton,
+                     &QToolButton::clicked,
+                     q,
+                     &DockAreaTitleBar::minimizeAutoHideContainer);
+
     // Close button
     m_closeButton = new TitleBarButton(testConfigFlag(DockManager::DockAreaHasCloseButton));
     m_closeButton->setObjectName("dockAreaCloseButton");
@@ -228,7 +242,10 @@ void DockAreaTitleBarPrivate::createAutoHideTitleLabel()
 {
     m_autoHideTitleLabel = new ElidingLabel("");
     m_autoHideTitleLabel->setObjectName("autoHideTitleLabel");
-    m_layout->addWidget(m_autoHideTitleLabel);
+    // At position 0 is the tab bar - insert behind tab bar
+    m_layout->insertWidget(1, m_autoHideTitleLabel);
+    m_autoHideTitleLabel->setVisible(false); // Default hidden
+    m_layout->insertWidget(2, new SpacerWidget(q));
 }
 void DockAreaTitleBarPrivate::createTabBar()
 {
@@ -313,6 +330,7 @@ TitleBarButton::TitleBarButton(bool showInTitleBar, QWidget *parent)
           DockAreaTitleBarPrivate::testConfigFlag(DockManager::DockAreaHideDisabledButtons))
 {
     setFocusPolicy(Qt::NoFocus);
+    setVisible(m_showInTitleBar);
 }
 
 void TitleBarButton::setVisible(bool visible)
@@ -370,10 +388,8 @@ DockAreaTitleBar::DockAreaTitleBar(DockAreaWidget *parent)
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     d->createTabBar();
-    d->createAutoHideTitleLabel();
-    d->m_autoHideTitleLabel->setVisible(false); // Default hidden
-    d->m_layout->addWidget(new SpacerWidget(this));
     d->createButtons();
+    d->createAutoHideTitleLabel();
     setFocusPolicy(Qt::NoFocus);
 }
 
@@ -452,6 +468,18 @@ void DockAreaTitleBar::onCloseButtonClicked()
         d->m_dockArea->closeArea();
 }
 
+void DockAreaTitleBar::onAutoHideCloseActionTriggered()
+{
+    d->m_dockArea->closeArea();
+}
+
+void DockAreaTitleBar::minimizeAutoHideContainer()
+{
+    auto autoHideContainer = d->m_dockArea->autoHideDockContainer();
+    if (autoHideContainer)
+        autoHideContainer->collapseView(true);
+}
+
 void DockAreaTitleBar::onUndockButtonClicked()
 {
     if (d->m_dockArea->features().testFlag(DockWidget::DockWidgetFloatable))
@@ -526,12 +554,6 @@ void DockAreaTitleBar::onAutoHideDockAreaActionClicked()
     d->m_dockArea->toggleAutoHide();
 }
 
-void DockAreaTitleBar::onAutoHideToActionClicked()
-{
-    int location = sender()->property(g_locationProperty).toInt();
-    d->m_dockArea->toggleAutoHide((SideBarLocation) location);
-}
-
 TitleBarButton *DockAreaTitleBar::button(eTitleBarButton which) const
 {
     switch (which) {
@@ -543,6 +565,8 @@ TitleBarButton *DockAreaTitleBar::button(eTitleBarButton which) const
         return d->m_closeButton;
     case TitleBarButtonAutoHide:
         return d->m_autoHideButton;
+    case TitleBarButtonMinimize:
+        return d->m_minimizeButton;
     }
     return nullptr;
 }
@@ -686,12 +710,28 @@ void DockAreaTitleBar::contextMenuEvent(QContextMenuEvent *event)
         }
         menu.addSeparator();
     }
-    QAction *closeAction = menu.addAction(isAutoHide ? Tr::tr("Close") : Tr::tr("Close Group"));
-    closeAction->connect(closeAction,
-                         &QAction::triggered,
-                         this,
-                         &DockAreaTitleBar::onCloseButtonClicked);
-    closeAction->setEnabled(d->m_dockArea->features().testFlag(DockWidget::DockWidgetClosable));
+
+    if (isAutoHide) {
+        QAction *minimizeAction = menu.addAction(Tr::tr("Minimize"));
+        minimizeAction->connect(minimizeAction,
+                                &QAction::triggered,
+                                this,
+                                &DockAreaTitleBar::minimizeAutoHideContainer);
+
+        QAction *closeAction = menu.addAction(Tr::tr("Close"));
+        closeAction->connect(closeAction,
+                             &QAction::triggered,
+                             this,
+                             &DockAreaTitleBar::onAutoHideCloseActionTriggered);
+        closeAction->setEnabled(d->m_dockArea->features().testFlag(DockWidget::DockWidgetClosable));
+    } else {
+        QAction *closeAction = menu.addAction(Tr::tr("Close Group"));
+        closeAction->connect(closeAction,
+                             &QAction::triggered,
+                             this,
+                             &DockAreaTitleBar::onCloseButtonClicked);
+        closeAction->setEnabled(d->m_dockArea->features().testFlag(DockWidget::DockWidgetClosable));
+    }
 
     if (!isAutoHide && !isTopLevelArea) {
         QAction *closeOthersAction = menu.addAction(Tr::tr("Close Other Groups"));
@@ -728,8 +768,11 @@ QString DockAreaTitleBar::titleBarButtonToolTip(eTitleBarButton button) const
         break;
 
     case TitleBarButtonClose:
-        if (d->m_dockArea->isAutoHide())
-            return Tr::tr("Close");
+        if (d->m_dockArea->isAutoHide()) {
+            bool minimize = DockManager::testAutoHideConfigFlag(
+                DockManager::AutoHideCloseButtonCollapsesDock);
+            return minimize ? Tr::tr("Minimize") : Tr::tr("Close");
+        }
 
         if (DockManager::testConfigFlag(DockManager::DockAreaCloseButtonClosesTab))
             return Tr::tr("Close Active Tab");
@@ -756,6 +799,13 @@ void DockAreaTitleBar::setAreaFloating()
         return;
 
     d->makeAreaFloating(mapFromGlobal(QCursor::pos()), DraggingInactive);
+}
+
+void DockAreaTitleBar::showAutoHideControls(bool show)
+{
+    d->m_tabBar->setVisible(!show); // Auto hide toolbar never has tabs
+    d->m_minimizeButton->setVisible(show);
+    d->m_autoHideTitleLabel->setVisible(show);
 }
 
 } // namespace ADS

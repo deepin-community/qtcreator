@@ -1,37 +1,39 @@
 // Copyright (C) 2020 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+#include "androidconfigurations.h"
 #include "androidconstants.h"
 #include "androidsdkdownloader.h"
 #include "androidtr.h"
 
+#include <coreplugin/icore.h>
+
+#include <solutions/tasking/barrier.h>
 #include <solutions/tasking/networkquery.h>
 
+#include <utils/async.h>
 #include <utils/filepath.h>
 #include <utils/networkaccessmanager.h>
 #include <utils/unarchiver.h>
 
-#include <coreplugin/icore.h>
-
 #include <QCryptographicHash>
 #include <QLoggingCategory>
+#include <QMessageBox>
 #include <QProgressDialog>
 #include <QStandardPaths>
 
+using namespace Tasking;
 using namespace Utils;
 
 namespace { Q_LOGGING_CATEGORY(sdkDownloaderLog, "qtc.android.sdkDownloader", QtWarningMsg) }
 
 namespace Android::Internal {
-/**
- * @class SdkDownloader
- * @brief Download Android SDK tools package from within Qt Creator.
- */
-AndroidSdkDownloader::AndroidSdkDownloader()
-    : m_androidConfig(AndroidConfigurations::currentConfig())
-{}
 
-AndroidSdkDownloader::~AndroidSdkDownloader() = default;
+static void logError(const QString &error)
+{
+    qCDebug(sdkDownloaderLog, "%s", error.toUtf8().data());
+    QMessageBox::warning(Core::ICore::dialogParent(), dialogTitle(), error);
+}
 
 static bool isHttpRedirect(QNetworkReply *reply)
 {
@@ -63,65 +65,72 @@ static FilePath sdkFromUrl(const QUrl &url)
 // TODO: Make it a separate async task in a chain?
 static std::optional<QString> saveToDisk(const FilePath &filename, QIODevice *data)
 {
-    QFile file(filename.toString());
-    if (!file.open(QIODevice::WriteOnly)) {
+    const expected_str<qint64> result = filename.writeFileContents(data->readAll());
+    if (!result) {
         return Tr::tr("Could not open \"%1\" for writing: %2.")
-            .arg(filename.toUserOutput(), file.errorString());
+            .arg(filename.toUserOutput(), result.error());
     }
-    file.write(data->readAll());
+
     return {};
 }
 
-// TODO: Make it a separate async task in a chain?
-static bool verifyFileIntegrity(const FilePath fileName, const QByteArray &sha256)
+static void validateFileIntegrity(QPromise<void> &promise, const FilePath &fileName,
+                                  const QByteArray &sha256)
 {
-    QFile file(fileName.toString());
-    if (file.open(QFile::ReadOnly)) {
+    const expected_str<QByteArray> result = fileName.fileContents();
+    if (result) {
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (hash.addData(&file))
-            return hash.result() == sha256;
+        hash.addData(*result);
+        if (hash.result() == sha256)
+            return;
     }
-    return false;
+    promise.future().cancel();
 }
 
-void AndroidSdkDownloader::downloadAndExtractSdk()
+GroupItem downloadSdkRecipe()
 {
-    if (m_androidConfig.sdkToolsUrl().isEmpty()) {
-        logError(Tr::tr("The SDK Tools download URL is empty."));
-        return;
-    }
+    struct StorageStruct
+    {
+        StorageStruct() {
+            progressDialog.reset(new QProgressDialog(Tr::tr("Downloading SDK Tools package..."),
+                                 Tr::tr("Cancel"), 0, 100, Core::ICore::dialogParent()));
+            progressDialog->setWindowModality(Qt::ApplicationModal);
+            progressDialog->setWindowTitle(dialogTitle());
+            progressDialog->setFixedSize(progressDialog->sizeHint());
+            progressDialog->setAutoClose(false);
+            progressDialog->show(); // TODO: Should not be needed. Investigate possible QT_BUG
+        }
+        std::unique_ptr<QProgressDialog> progressDialog;
+        std::optional<FilePath> sdkFileName;
+    };
 
-    m_progressDialog.reset(new QProgressDialog(Tr::tr("Downloading SDK Tools package..."),
-                                               Tr::tr("Cancel"), 0, 100, Core::ICore::dialogParent()));
-    m_progressDialog->setWindowModality(Qt::ApplicationModal);
-    m_progressDialog->setWindowTitle(dialogTitle());
-    m_progressDialog->setFixedSize(m_progressDialog->sizeHint());
-    m_progressDialog->setAutoClose(false);
-    connect(m_progressDialog.get(), &QProgressDialog::canceled, this, [this] {
-        m_progressDialog.release()->deleteLater();
-        m_taskTree.reset();
-    });
+    Storage<StorageStruct> storage;
 
-    using namespace Tasking;
+    const auto onSetup = [] {
+        if (AndroidConfig::sdkToolsUrl().isEmpty()) {
+            logError(Tr::tr("The SDK Tools download URL is empty."));
+            return SetupResult::StopWithError;
+        }
+        return SetupResult::Continue;
+    };
 
-    TreeStorage<std::optional<FilePath>> storage;
-
-    const auto onQuerySetup = [this](NetworkQuery &query) {
-        query.setRequest(QNetworkRequest(m_androidConfig.sdkToolsUrl()));
+    const auto onQuerySetup = [storage](NetworkQuery &query) {
+        query.setRequest(QNetworkRequest(AndroidConfig::sdkToolsUrl()));
         query.setNetworkAccessManager(NetworkAccessManager::instance());
         NetworkQuery *queryPtr = &query;
-        connect(queryPtr, &NetworkQuery::started, this, [this, queryPtr] {
+        QProgressDialog *progressDialog = storage->progressDialog.get();
+        QObject::connect(queryPtr, &NetworkQuery::started, progressDialog, [queryPtr, progressDialog] {
             QNetworkReply *reply = queryPtr->reply();
             if (!reply)
                 return;
-            connect(reply, &QNetworkReply::downloadProgress,
-                    this, [this](qint64 received, qint64 max) {
-                m_progressDialog->setRange(0, max);
-                m_progressDialog->setValue(received);
+            QObject::connect(reply, &QNetworkReply::downloadProgress,
+                             progressDialog, [progressDialog](qint64 received, qint64 max) {
+                progressDialog->setRange(0, max);
+                progressDialog->setValue(received);
             });
 #if QT_CONFIG(ssl)
-            connect(reply, &QNetworkReply::sslErrors,
-                    this, [this, reply](const QList<QSslError> &sslErrors) {
+            QObject::connect(reply, &QNetworkReply::sslErrors,
+                    reply, [reply](const QList<QSslError> &sslErrors) {
                 for (const QSslError &error : sslErrors)
                     qCDebug(sdkDownloaderLog, "SSL error: %s\n", qPrintable(error.errorString()));
                 logError(Tr::tr("Encountered SSL errors, download is aborted."));
@@ -130,10 +139,18 @@ void AndroidSdkDownloader::downloadAndExtractSdk()
 #endif
         });
     };
-    const auto onQueryDone = [this, storage](const NetworkQuery &query) {
+    const auto onQueryDone = [storage](const NetworkQuery &query, DoneWith result) {
+        if (result == DoneWith::Cancel)
+            return;
+
         QNetworkReply *reply = query.reply();
         QTC_ASSERT(reply, return);
         const QUrl url = reply->url();
+        if (result != DoneWith::Success) {
+            logError(Tr::tr("Downloading Android SDK Tools from URL %1 has failed: %2.")
+                         .arg(url.toString(), reply->errorString()));
+            return;
+        }
         if (isHttpRedirect(reply)) {
             logError(Tr::tr("Download from %1 was redirected.").arg(url.toString()));
             return;
@@ -144,26 +161,26 @@ void AndroidSdkDownloader::downloadAndExtractSdk()
             logError(*saveResult);
             return;
         }
-        *storage = sdkFileName;
+        storage->sdkFileName = sdkFileName;
     };
-    const auto onQueryError = [this](const NetworkQuery &query) {
-        QNetworkReply *reply = query.reply();
-        QTC_ASSERT(reply, return);
-        const QUrl url = reply->url();
-        logError(Tr::tr("Downloading Android SDK Tools from URL %1 has failed: %2.")
-                            .arg(url.toString(), reply->errorString()));
+    const auto onValidationSetup = [storage](Async<void> &async) {
+        if (!storage->sdkFileName)
+            return SetupResult::StopWithError;
+        async.setConcurrentCallData(validateFileIntegrity, *storage->sdkFileName,
+                                    AndroidConfig::getSdkToolsSha256());
+        storage->progressDialog->setRange(0, 0);
+        storage->progressDialog->setLabelText(Tr::tr("Verifying package integrity..."));
+        return SetupResult::Continue;
     };
-
-    const auto onUnarchiveSetup = [this, storage](Unarchiver &unarchiver) {
-        m_progressDialog->setRange(0, 0);
-        m_progressDialog->setLabelText(Tr::tr("Unarchiving SDK Tools package..."));
-        if (!*storage)
-            return SetupResult::StopWithError;
-        const FilePath sdkFileName = **storage;
-        if (!verifyFileIntegrity(sdkFileName, m_androidConfig.getSdkToolsSha256())) {
-            logError(Tr::tr("Verifying the integrity of the downloaded file has failed."));
-            return SetupResult::StopWithError;
-        }
+    const auto onValidationDone = [](DoneWith result) {
+        if (result != DoneWith::Error)
+            return;
+        logError(Tr::tr("Verifying the integrity of the downloaded file has failed."));
+    };
+    const auto onUnarchiveSetup = [storage](Unarchiver &unarchiver) {
+        storage->progressDialog->setRange(0, 0);
+        storage->progressDialog->setLabelText(Tr::tr("Unarchiving SDK Tools package..."));
+        const FilePath sdkFileName = *storage->sdkFileName;
         const auto sourceAndCommand = Unarchiver::sourceAndCommand(sdkFileName);
         if (!sourceAndCommand) {
             logError(sourceAndCommand.error());
@@ -173,41 +190,31 @@ void AndroidSdkDownloader::downloadAndExtractSdk()
         unarchiver.setDestDir(sdkFileName.parentDir());
         return SetupResult::Continue;
     };
-    const auto onUnarchiverDone = [this, storage](const Unarchiver &) {
-        m_androidConfig.setTemporarySdkToolsPath(
-            (*storage)->parentDir().pathAppended(Constants::cmdlineToolsName));
-        QMetaObject::invokeMethod(this, [this] { emit sdkExtracted(); }, Qt::QueuedConnection);
-    };
-    const auto onUnarchiverError = [this](const Unarchiver &) {
-        logError(Tr::tr("Unarchiving error."));
-    };
+    const auto onUnarchiverDone = [storage](DoneWith result) {
+        if (result == DoneWith::Cancel)
+            return;
 
-    const Group root {
-        Tasking::Storage(storage),
-        NetworkQueryTask(onQuerySetup, onQueryDone, onQueryError),
-        UnarchiverTask(onUnarchiveSetup, onUnarchiverDone, onUnarchiverError)
+        if (result != DoneWith::Success) {
+            logError(Tr::tr("Unarchiving error."));
+            return;
+        }
+        AndroidConfig::setTemporarySdkToolsPath(
+            storage->sdkFileName->parentDir().pathAppended(Constants::cmdlineToolsName));
     };
+    const auto onCancelSetup = [storage] { return std::make_pair(storage->progressDialog.get(),
+                                                                 &QProgressDialog::canceled); };
 
-    m_taskTree.reset(new TaskTree(root));
-    const auto onDone = [this] {
-        m_taskTree.release()->deleteLater();
-        m_progressDialog.reset();
+    return Group {
+        storage,
+        Group {
+            onGroupSetup(onSetup),
+            NetworkQueryTask(onQuerySetup, onQueryDone),
+            AsyncTask<void>(onValidationSetup, onValidationDone),
+            UnarchiverTask(onUnarchiveSetup, onUnarchiverDone)
+        }.withCancel(onCancelSetup)
     };
-    connect(m_taskTree.get(), &TaskTree::done, this, onDone);
-    connect(m_taskTree.get(), &TaskTree::errorOccurred, this, onDone);
-    m_taskTree->start();
 }
 
-QString AndroidSdkDownloader::dialogTitle()
-{
-    return Tr::tr("Download SDK Tools");
-}
-
-void AndroidSdkDownloader::logError(const QString &error)
-{
-    qCDebug(sdkDownloaderLog, "%s", error.toUtf8().data());
-    QMetaObject::invokeMethod(this, [this, error] { emit sdkDownloaderError(error); },
-        Qt::QueuedConnection);
-}
+QString dialogTitle() { return Tr::tr("Download SDK Tools"); }
 
 } // namespace Android::Internal

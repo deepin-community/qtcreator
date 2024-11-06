@@ -4,7 +4,9 @@
 #include "testcodeparser.h"
 
 #include "autotestconstants.h"
+#include "autotestplugin.h"
 #include "autotesttr.h"
+#include "testprojectsettings.h"
 #include "testsettings.h"
 #include "testtreemodel.h"
 
@@ -24,6 +26,7 @@
 #include <QLoggingCategory>
 
 using namespace Core;
+using namespace Tasking;
 using namespace Utils;
 
 namespace Autotest {
@@ -54,7 +57,19 @@ TestCodeParser::TestCodeParser()
             m_qmlEditorRev.remove(filePath);
     });
     m_reparseTimer.setSingleShot(true);
+    m_reparseTimer.setInterval(1000);
     connect(&m_reparseTimer, &QTimer::timeout, this, &TestCodeParser::parsePostponedFiles);
+    connect(&m_taskTreeRunner, &TaskTreeRunner::aboutToStart, this, [this](TaskTree *taskTree) {
+        if (m_withTaskProgress) {
+            auto progress = new TaskProgress(taskTree);
+            progress->setDisplayName(Tr::tr("Scanning for Tests"));
+            progress->setId(Constants::TASK_PARSE);
+        }
+        emit parsingStarted();
+    });
+    connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
+        onFinished(result == DoneWith::Success);
+    });
 }
 
 TestCodeParser::~TestCodeParser() = default;
@@ -213,7 +228,7 @@ void TestCodeParser::aboutToShutdown(bool isFinal)
     qCDebug(LOG) << "Disabling (immediately) -"
                  << (isFinal ? "shutting down" : "disabled temporarily");
     m_parserState = isFinal ? Shutdown : DisabledTemporarily;
-    m_taskTree.reset();
+    m_taskTreeRunner.reset();
     m_futureSynchronizer.waitForFinished();
     if (!isFinal)
         onFinished(false);
@@ -226,27 +241,10 @@ bool TestCodeParser::postponed(const QSet<FilePath> &filePaths)
         if (filePaths.size() == 1) {
             if (m_reparseTimerTimedOut)
                 return false;
-            const FilePath filePath = *filePaths.begin();
-            switch (m_postponedFiles.size()) {
-            case 0:
-                m_postponedFiles.insert(filePath);
-                m_reparseTimer.setInterval(1000);
-                m_reparseTimer.start();
-                return true;
-            case 1:
-                if (m_postponedFiles.contains(filePath)) {
-                    m_reparseTimer.start();
-                    return true;
-                }
-                Q_FALLTHROUGH();
-            default:
-                m_postponedFiles.insert(filePath);
-                m_reparseTimer.stop();
-                m_reparseTimer.setInterval(0);
-                m_reparseTimerTimedOut = false;
-                m_reparseTimer.start();
-                return true;
-            }
+
+            m_postponedFiles.insert(*filePaths.begin());
+            m_reparseTimer.start();
+            return true;
         }
         return false;
     case PartialParse:
@@ -340,6 +338,38 @@ void TestCodeParser::scanForTests(const QSet<FilePath> &filePaths,
         emit requestRemoval(files);
     }
 
+    const TestProjectSettings *settings = projectSettings(project);
+    if (settings->limitToFilters()) {
+        qCDebug(LOG) << "Applying project path filters - currently" << files.size() << "files";
+        const QStringList filters = settings->pathFilters();
+        if (!filters.isEmpty()) {
+            // we cannot rely on QRegularExpression::fromWildcard() as we want handle paths
+            const QList<QRegularExpression> regexes
+                    = Utils::transform(filters, [] (const QString &filter) {
+                return QRegularExpression(wildcardPatternFromString(filter));
+            });
+
+            files = Utils::filtered(files, [&regexes](const FilePath &fn) {
+                for (const QRegularExpression &regex : regexes) {
+                    if (!regex.isValid()) {
+                        qCDebug(LOG) << "Skipping invalid pattern? Pattern:" << regex.pattern();
+                        continue;
+                    }
+                    if (regex.match(fn.path()).hasMatch())
+                        return true;
+                }
+                return false;
+            });
+        }
+        qCDebug(LOG) << "After applying filters" << files.size() << "files";
+
+        if (files.isEmpty()) {
+            qCDebug(LOG) << "No filter matched a file - canceling scan immediately";
+            onFinished(true);
+            return;
+        }
+    }
+
     QTC_ASSERT(!(isFullParse && files.isEmpty()), onFinished(true); return);
 
     // use only a single parser or all current active?
@@ -365,42 +395,35 @@ void TestCodeParser::scanForTests(const QSet<FilePath> &filePaths,
                   return true;
               return cppSnapshot.contains(fn);
           });
+    m_withTaskProgress = isFullParse || filteredFiles.size() > 20;
 
     qCDebug(LOG) << "Starting scan of" << filteredFiles.size() << "(" << files.size() << ")"
                  << "files with" << codeParsers.size() << "parsers";
-
-    using namespace Tasking;
 
     int limit = testSettings().scanThreadLimit();
     if (limit == 0)
         limit = std::max(QThread::idealThreadCount() / 4, 1);
     qCDebug(LOG) << "Using" << limit << "threads for scan.";
-    QList<GroupItem> tasks{parallelLimit(limit)};
-    for (const FilePath &file : filteredFiles) {
-        const auto setup = [this, codeParsers, file](Async<TestParseResultPtr> &async) {
-            async.setConcurrentCallData(parseFileForTests, codeParsers, file);
-            async.setPriority(QThread::LowestPriority);
-            async.setFutureSynchronizer(&m_futureSynchronizer);
-        };
-        const auto onDone = [this](const Async<TestParseResultPtr> &async) {
-            const QList<TestParseResultPtr> results = async.results();
-            for (const TestParseResultPtr &result : results)
-                emit testParseResultReady(result);
-        };
-        tasks.append(AsyncTask<TestParseResultPtr>(setup, onDone));
-    }
-    m_taskTree.reset(new TaskTree{tasks});
-    const auto onDone = [this] { m_taskTree.release()->deleteLater(); onFinished(true); };
-    const auto onError = [this] { m_taskTree.release()->deleteLater(); onFinished(false); };
-    connect(m_taskTree.get(), &TaskTree::started, this, &TestCodeParser::parsingStarted);
-    connect(m_taskTree.get(), &TaskTree::done, this, onDone);
-    connect(m_taskTree.get(), &TaskTree::errorOccurred, this, onError);
-    if (filteredFiles.size() > 5) {
-        auto progress = new TaskProgress(m_taskTree.get());
-        progress->setDisplayName(Tr::tr("Scanning for Tests"));
-        progress->setId(Constants::TASK_PARSE);
-    }
-    m_taskTree->start();
+
+    const Storage<QSet<FilePath>::const_iterator> storage;
+    const auto onSetup = [this, codeParsers, storage](Async<TestParseResultPtr> &async) {
+        async.setConcurrentCallData(parseFileForTests, codeParsers, **storage);
+        async.setPriority(QThread::LowestPriority);
+        async.setFutureSynchronizer(&m_futureSynchronizer);
+        ++*storage;
+    };
+    const auto onDone = [this](const Async<TestParseResultPtr> &async) {
+        const QList<TestParseResultPtr> &results = async.results();
+        if (!results.isEmpty())
+            emit testParseResultsReady(results);
+    };
+    const Group recipe = For (LoopRepeat(filteredFiles.size())) >> Do {
+        parallelLimit(limit),
+        storage,
+        onGroupSetup([storage, filteredFiles] { *storage = filteredFiles.cbegin(); }),
+        AsyncTask<TestParseResultPtr>(onSetup, onDone, CallDoneIf::Success)
+    };
+    m_taskTreeRunner.start(recipe);
 }
 
 void TestCodeParser::onTaskStarted(Id type)

@@ -21,12 +21,12 @@
 #include "catch/catchtestframework.h"
 #include "ctest/ctesttool.h"
 #include "gtest/gtestframework.h"
+#include "qtest/datataglocatorfilter.h"
 #include "qtest/qttestframework.h"
 #include "quick/quicktestframework.h"
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
-#include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
 #include <coreplugin/messagemanager.h>
@@ -39,6 +39,7 @@
 #include <cppeditor/cppeditorconstants.h>
 #include <cppeditor/cppmodelmanager.h>
 
+#include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
 
 #include <projectexplorer/buildmanager.h>
@@ -46,7 +47,6 @@
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorericons.h>
 #include <projectexplorer/projectmanager.h>
-#include <projectexplorer/projectpanelfactory.h>
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/target.h>
 
@@ -72,19 +72,18 @@
 #endif
 
 using namespace Core;
+using namespace ProjectExplorer;
 using namespace Utils;
 
-namespace Autotest {
-namespace Internal {
+namespace Autotest::Internal {
 
-class AutotestPluginPrivate : public QObject
+class AutotestPluginPrivate final : public QObject
 {
     Q_OBJECT
 public:
     AutotestPluginPrivate();
-    ~AutotestPluginPrivate() override;
+    ~AutotestPluginPrivate() final;
 
-    TestNavigationWidgetFactory m_navigationWidgetFactory;
     TestResultsPane *m_resultsPane = nullptr;
     QMap<QString, ChoicePair> m_runconfigCache;
 
@@ -96,34 +95,17 @@ public:
     void onRunUnderCursorTriggered(TestRunMode mode);
     void onDisableTemporarily(bool disable);
 
-    TestSettingsPage m_testSettingPage;
-
     TestCodeParser m_testCodeParser;
     TestTreeModel m_testTreeModel{&m_testCodeParser};
     TestRunner m_testRunner;
+    DataTagLocatorFilter m_dataTagLocatorFilter;
 #ifdef WITH_TESTS
     LoadProjectScenario m_loadProjectScenario{&m_testTreeModel};
 #endif
 };
 
 static AutotestPluginPrivate *dd = nullptr;
-static QHash<ProjectExplorer::Project *, TestProjectSettings *> s_projectSettings;
-
-AutotestPlugin::AutotestPlugin()
-{
-    // needed to be used in QueuedConnection connects
-    qRegisterMetaType<TestResult>();
-    qRegisterMetaType<TestTreeItem *>();
-    qRegisterMetaType<TestCodeLocationAndType>();
-    // warm up meta type system to be able to read Qt::CheckState with persistent settings
-    qRegisterMetaType<Qt::CheckState>();
-}
-
-AutotestPlugin::~AutotestPlugin()
-{
-    delete dd;
-    dd = nullptr;
-}
+static QHash<Project *, TestProjectSettings *> s_projectSettings;
 
 AutotestPluginPrivate::AutotestPluginPrivate()
 {
@@ -139,25 +121,17 @@ AutotestPluginPrivate::AutotestPluginPrivate()
 
     m_resultsPane = TestResultsPane::instance();
 
-    auto panelFactory = new ProjectExplorer::ProjectPanelFactory();
-    panelFactory->setPriority(666);
-//    panelFactory->setIcon();  // TODO ?
-    panelFactory->setDisplayName(Tr::tr("Testing"));
-    panelFactory->setCreateWidgetFunction([](ProjectExplorer::Project *project) {
-        return new ProjectTestSettingsWidget(project);
-    });
-    ProjectExplorer::ProjectPanelFactory::registerFactory(panelFactory);
+    setupAutotestProjectPanel();
 
     TestFrameworkManager::activateFrameworksAndToolsFromSettings();
     m_testTreeModel.synchronizeTestFrameworks();
     m_testTreeModel.synchronizeTestTools();
 
-    auto sessionManager = ProjectExplorer::ProjectManager::instance();
-    connect(sessionManager, &ProjectExplorer::ProjectManager::startupProjectChanged,
+    auto projectManager = ProjectManager::instance();
+    connect(projectManager, &ProjectManager::startupProjectChanged,
             this, [this] { m_runconfigCache.clear(); });
 
-    connect(sessionManager, &ProjectExplorer::ProjectManager::aboutToRemoveProject,
-            this, [](ProjectExplorer::Project *project) {
+    connect(projectManager, &ProjectManager::aboutToRemoveProject, this, [](Project *project) {
         const auto it = s_projectSettings.constFind(project);
         if (it != s_projectSettings.constEnd()) {
             delete it.value();
@@ -176,7 +150,7 @@ AutotestPluginPrivate::~AutotestPluginPrivate()
     delete m_resultsPane;
 }
 
-TestProjectSettings *AutotestPlugin::projectSettings(ProjectExplorer::Project *project)
+TestProjectSettings *projectSettings(Project *project)
 {
     auto &settings = s_projectSettings[project];
     if (!settings)
@@ -187,173 +161,94 @@ TestProjectSettings *AutotestPlugin::projectSettings(ProjectExplorer::Project *p
 
 void AutotestPluginPrivate::initializeMenuEntries()
 {
-    ActionContainer *menu = ActionManager::createMenu(Constants::MENU_ID);
-    menu->menu()->setTitle(Tr::tr("&Tests"));
-    menu->setOnAllDisabledBehavior(ActionContainer::Show);
+    const Id menuId = Constants::MENU_ID;
 
-    QAction *action = new QAction(Tr::tr("Run &All Tests"), this);
-    action->setIcon(Utils::Icons::RUN_SMALL.icon());
-    action->setToolTip(Tr::tr("Run All Tests"));
-    Command *command = ActionManager::registerAction(action, Constants::ACTION_RUN_ALL_ID);
-    command->setDefaultKeySequence(
-        QKeySequence(useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+A") : Tr::tr("Alt+Shift+T,Alt+A")));
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunAllTriggered, this, TestRunMode::Run));
-    action->setEnabled(false);
-    menu->addAction(command);
+    MenuBuilder(menuId)
+        .setTitle(Tr::tr("&Tests"))
+        .setOnAllDisabledBehavior(ActionContainer::Show)
+        .addToContainer(Core::Constants::M_TOOLS);
 
-    action = new QAction(Tr::tr("Run All Tests Without Deployment"), this);
-    action->setIcon(Utils::Icons::RUN_SMALL.icon());
-    action->setToolTip(Tr::tr("Run All Tests Without Deployment"));
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_ALL_NODEPLOY_ID);
-    command->setDefaultKeySequence(
-                QKeySequence(useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+E") : Tr::tr("Alt+Shift+T,Alt+E")));
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunAllTriggered, this, TestRunMode::RunWithoutDeploy));
-    action->setEnabled(false);
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_RUN_ALL_ID)
+        .setText(Tr::tr("Run &All Tests"))
+        .setIcon(Utils::Icons::RUN_SMALL.icon())
+        .setToolTip(Tr::tr("Run All Tests"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+A"), Tr::tr("Alt+Shift+T,Alt+A"))
+        .addToContainer(menuId)
+        .setEnabled(false)
+        .addOnTriggered(this, [this] { onRunAllTriggered(TestRunMode::Run); });
 
-    action = new QAction(Tr::tr("&Run Selected Tests"), this);
-    action->setIcon(Utils::Icons::RUN_SELECTED.icon());
-    action->setToolTip(Tr::tr("Run Selected Tests"));
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_SELECTED_ID);
-    command->setDefaultKeySequence(
-        QKeySequence(useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+R") : Tr::tr("Alt+Shift+T,Alt+R")));
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunSelectedTriggered, this, TestRunMode::Run));
-    action->setEnabled(false);
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_RUN_ALL_NODEPLOY_ID)
+        .setText(Tr::tr("Run All Tests Without Deployment"))
+        .setIcon(Utils::Icons::RUN_SMALL.icon())
+        .setToolTip(Tr::tr("Run All Tests Without Deployment"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+E"), Tr::tr("Alt+Shift+T,Alt+E"))
+        .addToContainer(menuId)
+        .setEnabled(false)
+        .addOnTriggered(this, [this] { onRunAllTriggered(TestRunMode::RunWithoutDeploy); });
 
-    action = new QAction(Tr::tr("&Run Selected Tests Without Deployment"), this);
-    action->setIcon(Utils::Icons::RUN_SELECTED.icon());
-    action->setToolTip(Tr::tr("Run Selected Tests Without Deployment"));
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_SELECTED_NODEPLOY_ID);
-    command->setDefaultKeySequence(
-        QKeySequence(useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+W") : Tr::tr("Alt+Shift+T,Alt+W")));
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunSelectedTriggered, this, TestRunMode::RunWithoutDeploy));
-    action->setEnabled(false);
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_RUN_SELECTED_ID)
+        .setText(Tr::tr("&Run Selected Tests"))
+        .setIcon(Utils::Icons::RUN_SELECTED.icon())
+        .setToolTip(Tr::tr("Run Selected Tests"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+R"), Tr::tr("Alt+Shift+T,Alt+R"))
+        .addToContainer(menuId)
+        .setEnabled(false)
+        .addOnTriggered(this, [this] { onRunSelectedTriggered(TestRunMode::Run); });
 
-    action = new QAction(Tr::tr("Run &Failed Tests"),  this);
-    action->setIcon(Icons::RUN_FAILED.icon());
-    action->setToolTip(Tr::tr("Run Failed Tests"));
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_FAILED_ID);
-    command->setDefaultKeySequence(
-                useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+F") : Tr::tr("Alt+Shift+T,Alt+F"));
-    connect(action, &QAction::triggered, this, &AutotestPluginPrivate::onRunFailedTriggered);
-    action->setEnabled(false);
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_RUN_SELECTED_NODEPLOY_ID)
+        .setText(Tr::tr("&Run Selected Tests Without Deployment"))
+        .setIcon(Utils::Icons::RUN_SELECTED.icon())
+        .setToolTip(Tr::tr("Run Selected Tests Without Deployment"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+W"), Tr::tr("Alt+Shift+T,Alt+W"))
+        .addToContainer(menuId)
+        .setEnabled(false)
+        .addOnTriggered(this, [this] { onRunSelectedTriggered(TestRunMode::RunWithoutDeploy); });
 
-    action = new QAction(Tr::tr("Run Tests for &Current File"), this);
-    action->setIcon(Utils::Icons::RUN_FILE.icon());
-    action->setToolTip(Tr::tr("Run Tests for Current File"));
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_FILE_ID);
-    command->setDefaultKeySequence(
-        QKeySequence(useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+C") : Tr::tr("Alt+Shift+T,Alt+C")));
-    connect(action, &QAction::triggered, this, &AutotestPluginPrivate::onRunFileTriggered);
-    action->setEnabled(false);
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_RUN_FAILED_ID)
+        .setText(Tr::tr("Run &Failed Tests"))
+        .setIcon(Icons::RUN_FAILED.icon())
+        .setToolTip(Tr::tr("Run Failed Tests"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+F"), Tr::tr("Alt+Shift+T,Alt+F"))
+        .addToContainer(menuId)
+        .setEnabled(false)
+        .addOnTriggered(this, [this] { onRunFailedTriggered(); });
 
-    action = new QAction(Tr::tr("Disable Temporarily"), this);
-    action->setToolTip(Tr::tr("Disable scanning and other actions until explicitly rescanning, "
-                              "re-enabling, or restarting Qt Creator."));
-    action->setCheckable(true);
-    command = ActionManager::registerAction(action, Constants::ACTION_DISABLE_TMP);
-    connect(action, &QAction::triggered, this, &AutotestPluginPrivate::onDisableTemporarily);
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_RUN_FILE_ID)
+        .setText(Tr::tr("Run Tests for &Current File"))
+        .setIcon(Utils::Icons::RUN_FILE.icon())
+        .setToolTip(Tr::tr("Run Tests for Current File"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+C"), Tr::tr("Alt+Shift+T,Alt+C"))
+        .addToContainer(menuId)
+        .setEnabled(false)
+        .addOnTriggered(this, [this] { onRunFileTriggered(); });
 
-    action = new QAction(Tr::tr("Re&scan Tests"), this);
-    command = ActionManager::registerAction(action, Constants::ACTION_SCAN_ID);
-    command->setDefaultKeySequence(
-        QKeySequence(useMacShortcuts ? Tr::tr("Ctrl+Meta+T, Ctrl+Meta+S") : Tr::tr("Alt+Shift+T,Alt+S")));
+    ActionBuilder(this, Constants::ACTION_DISABLE_TMP)
+        .setText(Tr::tr("Disable Temporarily"))
+        .setToolTip(Tr::tr("Disable scanning and other actions until explicitly rescanning, "
+                           "re-enabling, or restarting Qt Creator."))
+        .setCheckable(true)
+        .addToContainer(menuId)
+        .addOnTriggered(this, [this](bool on) { onDisableTemporarily(on); });
 
-    connect(action, &QAction::triggered, this, [] {
-        if (dd->m_testCodeParser.state() == TestCodeParser::DisabledTemporarily)
-            dd->onDisableTemporarily(false);  // Rescan Test should explicitly re-enable
-        else
-            dd->m_testCodeParser.updateTestTree();
-    });
-    menu->addAction(command);
+    ActionBuilder(this, Constants::ACTION_SCAN_ID)
+        .setText(Tr::tr("Re&scan Tests"))
+        .setDefaultKeySequence(Tr::tr("Ctrl+Meta+T, Ctrl+Meta+S"), Tr::tr("Alt+Shift+T,Alt+S"))
+        .addToContainer(menuId)
+        .addOnTriggered(this, [] {
+            if (dd->m_testCodeParser.state() == TestCodeParser::DisabledTemporarily)
+                dd->onDisableTemporarily(false);  // Rescan Test should explicitly re-enable
+            else
+                dd->m_testCodeParser.updateTestTree();
+        });
 
-    ActionContainer *toolsMenu = ActionManager::actionContainer(Core::Constants::M_TOOLS);
-    toolsMenu->addMenu(menu);
-    using namespace ProjectExplorer;
     connect(BuildManager::instance(), &BuildManager::buildStateChanged,
-            this, &AutotestPlugin::updateMenuItemsEnabledState);
+            this, &updateMenuItemsEnabledState);
     connect(BuildManager::instance(), &BuildManager::buildQueueFinished,
-            this, &AutotestPlugin::updateMenuItemsEnabledState);
+            this, &updateMenuItemsEnabledState);
     connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::runActionsUpdated,
-            this, &AutotestPlugin::updateMenuItemsEnabledState);
+            this, &updateMenuItemsEnabledState);
     connect(&dd->m_testTreeModel, &TestTreeModel::testTreeModelChanged,
-            this, &AutotestPlugin::updateMenuItemsEnabledState);
-}
-
-void AutotestPlugin::initialize()
-{
-    dd = new AutotestPluginPrivate;
-#ifdef WITH_TESTS
-    ExtensionSystem::PluginManager::registerScenario("TestModelManagerInterface",
-                   [] { return dd->m_loadProjectScenario(); });
-
-    addTest<AutoTestUnitTests>(&dd->m_testTreeModel);
-#endif
-}
-
-void AutotestPlugin::extensionsInitialized()
-{
-    ActionContainer *contextMenu = ActionManager::actionContainer(CppEditor::Constants::M_CONTEXT);
-    if (!contextMenu) // if QC is started without CppEditor plugin
-        return;
-
-    ActionContainer * const runTestMenu = ActionManager::createMenu("Autotest.TestUnderCursor");
-    runTestMenu->menu()->setTitle(Tr::tr("Run Test Under Cursor"));
-    contextMenu->addSeparator();
-    contextMenu->addMenu(runTestMenu);
-    contextMenu->addSeparator();
-
-    QAction *action = new QAction(Tr::tr("&Run Test"), this);
-    action->setEnabled(false);
-    action->setIcon(Utils::Icons::RUN_SMALL.icon());
-
-    Command *command = ActionManager::registerAction(action, Constants::ACTION_RUN_UCURSOR);
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunUnderCursorTriggered, dd, TestRunMode::Run));
-    runTestMenu->addAction(command);
-
-    action = new QAction(Tr::tr("Run Test Without Deployment"), this);
-    action->setEnabled(false);
-    action->setIcon(Utils::Icons::RUN_SMALL.icon());
-
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_UCURSOR_NODEPLOY);
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunUnderCursorTriggered, dd, TestRunMode::RunWithoutDeploy));
-    runTestMenu->addAction(command);
-
-    action = new QAction(Tr::tr("&Debug Test"), this);
-    action->setEnabled(false);
-    action->setIcon(ProjectExplorer::Icons::DEBUG_START_SMALL.icon());
-
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_DBG_UCURSOR);
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunUnderCursorTriggered, dd, TestRunMode::Debug));
-    runTestMenu->addAction(command);
-
-    action = new QAction(Tr::tr("Debug Test Without Deployment"), this);
-    action->setEnabled(false);
-    action->setIcon(ProjectExplorer::Icons::DEBUG_START_SMALL.icon());
-
-    command = ActionManager::registerAction(action, Constants::ACTION_RUN_DBG_UCURSOR_NODEPLOY);
-    connect(action, &QAction::triggered,
-            std::bind(&AutotestPluginPrivate::onRunUnderCursorTriggered, dd, TestRunMode::DebugWithoutDeploy));
-    runTestMenu->addAction(command);
-}
-
-ExtensionSystem::IPlugin::ShutdownFlag AutotestPlugin::aboutToShutdown()
-{
-    dd->m_testCodeParser.aboutToShutdown(true);
-    dd->m_testTreeModel.disconnect();
-    return SynchronousShutdown;
+            this, &updateMenuItemsEnabledState);
 }
 
 void AutotestPluginPrivate::onRunAllTriggered(TestRunMode mode)
@@ -425,7 +320,7 @@ void AutotestPluginPrivate::onRunUnderCursorTriggered(TestRunMode mode)
         const QList<const CPlusPlus::Name *> fullName
                 = CPlusPlus::LookupContext::fullyQualifiedName(scope);
         const QString funcName = CPlusPlus::Overview().prettyName(fullName);
-        const TestFrameworks active = AutotestPlugin::activeTestFrameworks();
+        const TestFrameworks active = activeTestFrameworks();
         for (auto framework : active) {
             const QStringList testName = framework->testNameForSymbolName(funcName);
             if (!testName.size())
@@ -493,7 +388,7 @@ void AutotestPluginPrivate::onDisableTemporarily(bool disable)
         // clear model
         m_testTreeModel.removeAllTestItems();
         m_testTreeModel.removeAllTestToolItems();
-        AutotestPlugin::updateMenuItemsEnabledState();
+        updateMenuItemsEnabledState();
     } else {
         // re-enable
         m_testCodeParser.setState(TestCodeParser::Idle);
@@ -502,9 +397,9 @@ void AutotestPluginPrivate::onDisableTemporarily(bool disable)
     }
 }
 
-TestFrameworks AutotestPlugin::activeTestFrameworks()
+TestFrameworks activeTestFrameworks()
 {
-    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject();
+    Project *project = ProjectManager::startupProject();
     TestFrameworks sorted;
     if (!project || projectSettings(project)->useGlobalSettings()) {
         sorted = Utils::filtered(TestFrameworkManager::registeredFrameworks(),
@@ -520,10 +415,10 @@ TestFrameworks AutotestPlugin::activeTestFrameworks()
     return sorted;
 }
 
-void AutotestPlugin::updateMenuItemsEnabledState()
+void updateMenuItemsEnabledState()
 {
-    const ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject();
-    const ProjectExplorer::Target *target = project ? project->activeTarget() : nullptr;
+    const Project *project = ProjectManager::startupProject();
+    const Target *target = project ? project->activeTarget() : nullptr;
     const bool disabled = dd->m_testCodeParser.state() == TestCodeParser::DisabledTemporarily;
     const bool canScan = disabled || (!dd->m_testRunner.isTestRunning()
                                       && dd->m_testCodeParser.state() == TestCodeParser::Idle);
@@ -532,7 +427,7 @@ void AutotestPlugin::updateMenuItemsEnabledState()
     const bool canRun = !disabled && hasTests && canScan
             && project && !project->needsConfiguration()
             && target && target->activeRunConfiguration()
-            && !ProjectExplorer::BuildManager::isBuilding();
+            && !BuildManager::isBuilding();
     const bool canRunFailed = canRun && dd->m_testTreeModel.hasFailedTests();
 
     ActionManager::command(Constants::ACTION_RUN_ALL_ID)->action()->setEnabled(canRun);
@@ -553,35 +448,138 @@ void AutotestPlugin::updateMenuItemsEnabledState()
     ActionManager::command(Constants::ACTION_RUN_DBG_UCURSOR_NODEPLOY)->action()->setEnabled(canRun);
 }
 
-void AutotestPlugin::cacheRunConfigChoice(const QString &buildTargetKey, const ChoicePair &choice)
+void cacheRunConfigChoice(const QString &buildTargetKey, const ChoicePair &choice)
 {
     if (dd)
         dd->m_runconfigCache.insert(buildTargetKey, choice);
 }
 
-ChoicePair AutotestPlugin::cachedChoiceFor(const QString &buildTargetKey)
+ChoicePair cachedChoiceFor(const QString &buildTargetKey)
 {
     return dd ? dd->m_runconfigCache.value(buildTargetKey) : ChoicePair();
 }
 
-void AutotestPlugin::clearChoiceCache()
+void clearChoiceCache()
 {
     if (dd)
         dd->m_runconfigCache.clear();
 }
 
-void AutotestPlugin::popupResultsPane()
+void popupResultsPane()
 {
     if (dd)
         dd->m_resultsPane->popup(Core::IOutputPane::NoModeSwitch);
 }
 
-bool ChoicePair::matches(const ProjectExplorer::RunConfiguration *rc) const
+QString wildcardPatternFromString(const QString &original)
+{
+    QString pattern = original;
+    pattern.replace('\\', "\\\\");
+    pattern.replace('.', "\\.");
+    pattern.replace('^', "\\^").replace('$', "\\$");
+    pattern.replace('(', "\\(").replace(')', "\\)");
+    pattern.replace('[', "\\[").replace(']', "\\]");
+    pattern.replace('{', "\\{").replace('}', "\\}");
+    pattern.replace('+', "\\+");
+    pattern.replace('*', ".*");
+    pattern.replace('?', '.');
+    return pattern;
+}
+
+bool ChoicePair::matches(const RunConfiguration *rc) const
 {
     return rc && rc->displayName() == displayName && rc->runnable().command.executable() == executable;
 }
 
-} // Internal
-} // Autotest
+// AutotestPlugin
+
+class AutotestPlugin final : public ExtensionSystem::IPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "AutoTest.json")
+
+public:
+    AutotestPlugin()
+    {
+        // needed to be used in QueuedConnection connects
+        qRegisterMetaType<TestResult>();
+        qRegisterMetaType<TestTreeItem *>();
+        qRegisterMetaType<TestCodeLocationAndType>();
+        // warm up meta type system to be able to read Qt::CheckState with persistent settings
+        qRegisterMetaType<Qt::CheckState>();
+
+        setupTestNavigationWidgetFactory();
+    }
+
+    ~AutotestPlugin() final
+    {
+        delete dd;
+        dd = nullptr;
+    }
+
+    void initialize() final
+    {
+        setupTestSettingsPage();
+
+        dd = new AutotestPluginPrivate;
+    #ifdef WITH_TESTS
+        ExtensionSystem::PluginManager::registerScenario("TestModelManagerInterface",
+                       [] { return dd->m_loadProjectScenario(); });
+
+        addTestCreator(createAutotestUnitTests);
+    #endif
+    }
+
+    void extensionsInitialized()
+    {
+        ActionContainer *contextMenu = ActionManager::actionContainer(CppEditor::Constants::M_CONTEXT);
+        if (!contextMenu) // if QC is started without CppEditor plugin
+            return;
+
+        const Id menuId = "Autotest.TestUnderCursor";
+        ActionContainer * const runTestMenu = ActionManager::createMenu(menuId);
+        runTestMenu->menu()->setTitle(Tr::tr("Run Test Under Cursor"));
+        contextMenu->addSeparator();
+        contextMenu->addMenu(runTestMenu);
+        contextMenu->addSeparator();
+
+        ActionBuilder(this, Constants::ACTION_RUN_UCURSOR)
+            .setText(Tr::tr("&Run Test"))
+            .setEnabled(false)
+            .setIcon(Utils::Icons::RUN_SMALL.icon())
+            .addToContainer(menuId)
+            .addOnTriggered([] { dd->onRunUnderCursorTriggered(TestRunMode::Run); });
+
+        ActionBuilder(this, Constants::ACTION_RUN_UCURSOR_NODEPLOY)
+            .setText(Tr::tr("Run Test Without Deployment"))
+            .setIcon(Utils::Icons::RUN_SMALL.icon())
+            .setEnabled(false)
+            .addToContainer(menuId)
+            .addOnTriggered([] { dd->onRunUnderCursorTriggered(TestRunMode::RunWithoutDeploy); });
+
+        ActionBuilder(this, Constants::ACTION_RUN_DBG_UCURSOR)
+            .setText(Tr::tr("&Debug Test"))
+            .setIcon(ProjectExplorer::Icons::DEBUG_START_SMALL.icon())
+            .setEnabled(false)
+            .addToContainer(menuId)
+            .addOnTriggered([] { dd->onRunUnderCursorTriggered(TestRunMode::Debug); });
+
+        ActionBuilder(this, Constants::ACTION_RUN_DBG_UCURSOR_NODEPLOY)
+            .setText(Tr::tr("Debug Test Without Deployment"))
+            .setIcon(ProjectExplorer::Icons::DEBUG_START_SMALL.icon())
+            .setEnabled(false)
+            .addToContainer(menuId)
+            .addOnTriggered([] { dd->onRunUnderCursorTriggered(TestRunMode::DebugWithoutDeploy); });
+    }
+
+    ShutdownFlag aboutToShutdown() final
+    {
+        dd->m_testCodeParser.aboutToShutdown(true);
+        dd->m_testTreeModel.disconnect();
+        return SynchronousShutdown;
+    }
+};
+
+} // Autotest::Internal
 
 #include "autotestplugin.moc"

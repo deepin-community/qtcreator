@@ -49,6 +49,7 @@ public:
     bool renderWindow() override;
 
     static QQuickItem *parentEffectItem(QQuickItem *item);
+    static bool hasEffect(QQuickItem *item);
 
 protected:
     void initializeView() override;
@@ -77,8 +78,6 @@ protected:
     virtual QImage grabRenderControl(RenderViewData &viewData);
 
 private:
-    void handleRciSet();
-
     RenderViewData m_viewData;
     QByteArray m_pipelineCacheData;
     QString m_pipelineCacheLocation;

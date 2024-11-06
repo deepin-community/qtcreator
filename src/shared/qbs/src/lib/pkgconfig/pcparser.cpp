@@ -41,26 +41,18 @@
 
 #include "pkgconfig.h"
 
-#if HAS_STD_FILESYSTEM
-#  if __has_include(<filesystem>)
-#    include <filesystem>
-#  else
-#    include <experimental/filesystem>
-// We need the alias from std::experimental::filesystem to std::filesystem
-namespace std {
-    namespace filesystem = experimental::filesystem;
-}
-#  endif
-#else
-#include <QFileInfo>
-#endif
-
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 
 namespace qbs {
+
+using Internal::completeBaseName;
+using Internal::parentPath;
+using Internal::startsWith;
+using Internal::endsWith;
 
 namespace {
 
@@ -193,17 +185,6 @@ std::optional<std::vector<std::string>> splitCommand(std::string_view s)
         result.push_back(arg);
 
     return result;
-}
-
-bool startsWith(std::string_view haystack, std::string_view needle)
-{
-    return haystack.size() >= needle.size() && haystack.compare(0, needle.size(), needle) == 0;
-}
-
-bool endsWith(std::string_view haystack, std::string_view needle)
-{
-    return haystack.size() >= needle.size()
-            && haystack.compare(haystack.size() - needle.size(), needle.size(), needle) == 0;
 }
 
 [[noreturn]] void raizeUnknownComparisonException(const PcPackage &pkg, std::string_view verName, std::string_view comp)
@@ -397,17 +378,6 @@ PcPackage::RequiredVersion::ComparisonType comparisonFromString(
     raizeUnknownComparisonException(pkg, verName, comp);
 }
 
-std::string baseName(const std::string_view &filePath)
-{
-    auto pos = filePath.rfind('/');
-    const auto fileName =
-            pos == std::string_view::npos ? std::string_view() : filePath.substr(pos + 1);
-    pos = fileName.rfind('.');
-    return std::string(pos == std::string_view::npos
-            ? std::string_view()
-            : fileName.substr(0, pos));
-}
-
 } // namespace
 
 PcParser::PcParser(const PkgConfig &pkgConfig)
@@ -429,23 +399,17 @@ try
     if (!file.is_open())
         throw PcException(std::string("Can't open file ") + path);
 
-    package.baseFileName = baseName(path);
-#if HAS_STD_FILESYSTEM
+    package.baseFileName = std::string{completeBaseName(path)};
     const auto fsPath = std::filesystem::path(path);
     package.filePath = fsPath.generic_string();
     package.variables["pcfiledir"] = fsPath.parent_path().generic_string();
-#else
-    QFileInfo fileInfo(QString::fromStdString(path));
-    package.filePath = fileInfo.absoluteFilePath().toStdString();
-    package.variables["pcfiledir"] = fileInfo.absolutePath().toStdString();
-#endif
 
     std::string line;
     while (readOneLine(file, line))
         parseLine(package, line);
     return package;
 } catch(const PcException &ex) {
-    return PcBrokenPackage{path, baseName(path), ex.what()};
+    return PcBrokenPackage{path, std::string{completeBaseName(path)}, ex.what()};
 }
 
 std::string PcParser::trimAndSubstitute(const PcPackage &pkg, std::string_view str) const
@@ -488,6 +452,35 @@ std::string PcParser::trimAndSubstitute(const PcPackage &pkg, std::string_view s
     return result;
 }
 
+std::string PcParser::evaluateVariable(
+    PcPackage &pkg, std::string_view tag, std::string_view str) const
+{
+    static constexpr std::string_view prefixVariable = "prefix";
+    if (m_pkgConfig.options().definePrefix) {
+        if (tag == prefixVariable) {
+            std::string_view prefix = pkg.filePath;
+            prefix = parentPath(prefix);
+            if (completeBaseName(prefix) == "pkgconfig") {
+                prefix = parentPath(prefix);
+                prefix = parentPath(prefix);
+            }
+            pkg.oldPrefix = std::string(str);
+            if (!prefix.empty())
+                str = prefix;
+            return std::string(str);
+        } else if (pkg.oldPrefix
+                && str.size() > pkg.oldPrefix->size()
+                && str.substr(0, pkg.oldPrefix->size()) == *pkg.oldPrefix
+                && str[pkg.oldPrefix->size()] == '/') {
+            auto result = pkg.variables["prefix"];
+            result += str.substr(pkg.oldPrefix->size());
+            return trimAndSubstitute(pkg, result);
+        }
+    }
+
+    return trimAndSubstitute(pkg, str);
+}
+
 void PcParser::parseStringField(
         PcPackage &pkg,
         std::string &field,
@@ -512,9 +505,11 @@ void PcParser::parseLibs(
         raiseDuplicateFieldException(fieldName, pkg.filePath);
 
     const auto trimmed = trimAndSubstitute(pkg, str);
+    if (trimmed.empty())
+        return;
 
     const auto argv = splitCommand(trimmed);
-    if (!trimmed.empty() && !argv)
+    if (!argv)
         throw PcException("Couldn't parse Libs field into an argument vector");
 
     libs = doParseLibs(*argv);
@@ -581,9 +576,11 @@ void PcParser::parseCFlags(PcPackage &pkg, std::string_view str)
         raiseDuplicateFieldException("Cflags", pkg.filePath);
 
     const auto command = trimAndSubstitute(pkg, str);
+    if (command.empty())
+        return;
 
     const auto argv = splitCommand(command);
-    if (!command.empty() && !argv)
+    if (!argv)
         throw PcException("Couldn't parse Cflags field into an argument vector");
 
     std::vector<PcPackage::Flag> cflags;
@@ -710,10 +707,8 @@ void PcParser::parseLine(PcPackage &pkg, std::string_view str)
         size_t pos = 0;
         for (; pos < s.size(); ++pos) {
             auto p = s.data() + pos;
-            if (!((*p >= 'A' && *p <= 'Z') ||
-                   (*p >= 'a' && *p <= 'z') ||
-                   (*p >= '0' && *p <= '9') ||
-                   *p == '_' || *p == '.')) {
+            if ((*p < 'A' || *p > 'Z') && (*p < 'a' || *p > 'z') && (*p < '0' || *p > '9')
+                && *p != '_' && *p != '.') {
                 break;
             }
         }
@@ -765,14 +760,7 @@ void PcParser::parseLine(PcPackage &pkg, std::string_view str)
         str.remove_prefix(1); // cut '='
         str = trimmed(str);
 
-        // TODO: support guesstimating of the prefix variable (pkg-config's --define-prefix option)
-        // from doc: "try to override the value of prefix for each .pc file found with a
-        // guesstimated value based on the location of the .pc file"
-        // https://gitlab.freedesktop.org/pkg-config/pkg-config/-/blob/pkg-config-0.29.2/parse.c#L998
-        // This option is disabled by default, and Qbs doesn't allow to override it yet, so we can
-        // ignore this feature for now
-
-        const auto value = trimAndSubstitute(pkg, str);
+        const auto value = evaluateVariable(pkg, tag, str);
         if (!pkg.variables.insert({std::string(tag), value}).second)
             raizeDuplicateVariableException(pkg, tag);
     }

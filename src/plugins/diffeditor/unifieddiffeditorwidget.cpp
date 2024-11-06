@@ -10,8 +10,6 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <texteditor/fontsettings.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditorsettings.h>
@@ -45,10 +43,7 @@ UnifiedDiffEditorWidget::UnifiedDiffEditorWidget(QWidget *parent)
     connect(this, &QPlainTextEdit::cursorPositionChanged,
             this, &UnifiedDiffEditorWidget::slotCursorPositionChangedInEditor);
 
-    auto context = new IContext(this);
-    context->setWidget(this);
-    context->setContext(Context(Constants::UNIFIED_VIEW_ID));
-    ICore::addContextObject(context);
+    IContext::attach(this, Context(Constants::UNIFIED_VIEW_ID));
 }
 
 UnifiedDiffEditorWidget::~UnifiedDiffEditorWidget() = default;
@@ -133,7 +128,8 @@ void UnifiedDiffEditorWidget::keyPressEvent(QKeyEvent *e)
 
 void UnifiedDiffEditorWidget::contextMenuEvent(QContextMenuEvent *e)
 {
-    QPointer<QMenu> menu = createStandardContextMenu();
+    QMenu *menu = createStandardContextMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
 
     const QTextCursor tc = textCursor();
     QTextCursor start = tc;
@@ -182,9 +178,7 @@ void UnifiedDiffEditorWidget::contextMenuEvent(QContextMenuEvent *e)
     addContextMenuActions(menu, m_data.fileIndexForBlockNumber(blockNumber),
                           m_data.m_chunkInfo.chunkIndexForBlockNumber(blockNumber), selection);
 
-    connect(this, &UnifiedDiffEditorWidget::destroyed, menu.data(), &QMenu::deleteLater);
     menu->exec(e->globalPos());
-    delete menu;
 }
 
 void UnifiedDiffEditorWidget::addContextMenuActions(QMenu *menu, int fileIndex, int chunkIndex,
@@ -452,7 +446,6 @@ void UnifiedDiffEditorWidget::showDiff()
     }
 
     m_asyncTask.reset(new Async<UnifiedShowResult>());
-    m_asyncTask->setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
     m_controller.setBusyShowing(true);
     connect(m_asyncTask.get(), &AsyncBase::done, this, [this] {
         if (m_asyncTask->isCanceled() || !m_asyncTask->isResultAvailable()) {

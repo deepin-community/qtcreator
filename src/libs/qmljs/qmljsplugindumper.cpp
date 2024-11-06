@@ -13,7 +13,7 @@
 #include <utils/filesystemwatcher.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QDir>
 #include <QDirIterator>
@@ -46,7 +46,7 @@ Utils::FileSystemWatcher *PluginDumper::pluginWatcher()
 void PluginDumper::loadBuiltinTypes(const QmlJS::ModelManagerInterface::ProjectInfo &info)
 {
     // move to the owning thread
-    metaObject()->invokeMethod(this, [=] { onLoadBuiltinTypes(info); });
+    metaObject()->invokeMethod(this, [this, info] { onLoadBuiltinTypes(info); });
 }
 
 void PluginDumper::loadPluginTypes(const Utils::FilePath &libraryPath,
@@ -55,8 +55,9 @@ void PluginDumper::loadPluginTypes(const Utils::FilePath &libraryPath,
                                    const QString &importVersion)
 {
     // move to the owning thread
-    metaObject()->invokeMethod(this, [=] { onLoadPluginTypes(libraryPath, importPath,
-                                                             importUri, importVersion); });
+    metaObject()->invokeMethod(this, [this, libraryPath, importPath, importUri, importVersion] {
+        onLoadPluginTypes(libraryPath, importPath, importUri, importVersion);
+    });
 }
 
 void PluginDumper::scheduleRedumpPlugins()
@@ -424,7 +425,12 @@ QFuture<PluginDumper::DependencyInfo> PluginDumper::loadDependencies(const FileP
         visited->insert(name);
     }
 
-    Utils::onFinished(loadQmlTypeDescription(dependenciesPaths), const_cast<PluginDumper*>(this), [=] (const QFuture<PluginDumper::QmlTypeDescription> &typesFuture) {
+    Utils::onFinished(loadQmlTypeDescription(dependenciesPaths), const_cast<PluginDumper*>(this),
+            [this, iface, visited](const QFuture<PluginDumper::QmlTypeDescription> &typesFuture) {
+        if (typesFuture.resultCount() == 0 || typesFuture.isCanceled()) {
+            iface->reportCanceled();
+            return;
+        }
         PluginDumper::QmlTypeDescription typesResult = typesFuture.result();
         FilePaths newDependencies = FileUtils::toFilePathList(typesResult.dependencies);
 
@@ -560,8 +566,12 @@ void PluginDumper::loadQmltypesFile(const FilePaths &qmltypesFilePaths,
                                     const FilePath &libraryPath,
                                     QmlJS::LibraryInfo libraryInfo)
 {
-    Utils::onFinished(loadQmlTypeDescription(qmltypesFilePaths), this, [=](const QFuture<PluginDumper::QmlTypeDescription> &typesFuture)
-    {
+    Utils::onFinished(loadQmlTypeDescription(qmltypesFilePaths), this,
+            [this, qmltypesFilePaths, libraryPath, libraryInfo]
+            (const QFuture<PluginDumper::QmlTypeDescription> &typesFuture) {
+        if (typesFuture.isCanceled() || typesFuture.resultCount() == 0)
+            return;
+
         PluginDumper::QmlTypeDescription typesResult = typesFuture.result();
         if (!typesResult.dependencies.isEmpty())
         {
@@ -569,6 +579,9 @@ void PluginDumper::loadQmltypesFile(const FilePaths &qmltypesFilePaths,
                                                QSharedPointer<QSet<FilePath>>()), this,
                               [typesResult, libraryInfo, libraryPath, this] (const QFuture<PluginDumper::DependencyInfo> &loadFuture)
             {
+                if (loadFuture.isCanceled() || loadFuture.resultCount() == 0)
+                    return;
+
                 PluginDumper::DependencyInfo loadResult = loadFuture.result();
                 QStringList errors = typesResult.errors;
                 QStringList warnings = typesResult.errors;

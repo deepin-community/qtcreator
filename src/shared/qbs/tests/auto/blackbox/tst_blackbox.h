@@ -60,6 +60,8 @@ private slots:
     void bomSources();
     void buildDataOfDisabledProduct();
     void buildDirectories();
+    void buildDirPlaceholders_data();
+    void buildDirPlaceholders();
     void buildEnvChange();
     void buildGraphVersions();
     void buildVariantDefaults_data();
@@ -93,6 +95,9 @@ private slots:
     void conflictingPropertyValues_data();
     void conflictingPropertyValues();
     void cpuFeatures();
+    void cxxModules_data();
+    void cxxModules();
+    void cxxModulesChangesTracking();
     void dateProperty();
     void dependenciesProperty();
     void dependencyScanningLoop();
@@ -109,6 +114,8 @@ private slots:
     void dynamicProject();
     void dynamicRuleOutputs();
     void emptyProfile();
+    void emscriptenArtifacts();
+    void emscriptenArtifacts_data();
     void enableExceptions();
     void enableExceptions_data();
     void enableRtti();
@@ -126,11 +133,15 @@ private slots:
     void exportedPropertyInDisabledProduct_data();
     void exportRule();
     void exportToOutsideSearchPath();
+    void exportsCMake();
+    void exportsCMake_data();
     void exportsPkgconfig();
     void exportsQbs();
     void externalLibs();
     void fileDependencies();
     void fileTagsFilterMerging();
+    void flatbuf();
+    void flatbuf_data();
     void freedesktop();
     void generatedArtifactAsInputToDynamicRule();
     void generateLinkerMapFile();
@@ -163,6 +174,8 @@ private slots:
     void installPackage();
     void installRootFromProjectFile();
     void installTree();
+    void invalidArtifactPath_data();
+    void invalidArtifactPath();
     void invalidCommandProperty_data();
     void invalidCommandProperty();
     void invalidExtensionInstantiation();
@@ -207,6 +220,7 @@ private slots:
     void missingOverridePrefix();
     void moduleConditions();
     void movedFileDependency();
+    void msvcAsmLinkerFlags();
     void multipleChanges();
     void multipleConfigurations();
     void multiplexedTool();
@@ -229,6 +243,7 @@ private slots:
     void overrideProjectProperties();
     void pathProbe_data();
     void pathProbe();
+    void pathListInProbe();
     void pchChangeTracking();
     void perGroupDefineInExportItem();
     void pkgConfigProbe();
@@ -247,7 +262,6 @@ private slots:
     void productDependenciesByType();
     void productInExportedModule();
     void productProperties();
-    void propertyAssignmentOnNonPresentModule();
     void propertyAssignmentInFailedModule();
     void propertyChanges();
     void propertyEvaluationContext();
@@ -265,6 +279,8 @@ private slots:
     void qbsConfigImport_data();
     void qbsConfigExport();
     void qbsConfigExport_data();
+    void qbsLanguageServer_data();
+    void qbsLanguageServer();
     void qbsSession();
     void qbsVersion();
     void qtBug51237();
@@ -281,6 +297,8 @@ private slots:
     void rescueTransformerData();
     void responseFiles();
     void retaggedOutputArtifact();
+    void rpathlinkDeduplication();
+    void ruleConditions_data();
     void ruleConditions();
     void ruleConnectionWithExcludedInputs();
     void ruleCycle();
@@ -289,11 +307,14 @@ private slots:
     void runMultiplexed();
     void sanitizer_data();
     void sanitizer();
+    void scannerItem_data();
     void scannerItem();
     void scanResultInOtherProduct();
     void scanResultInNonDependency();
     void setupBuildEnvironment();
     void setupRunEnvironment();
+    void staticLibDeps();
+    void staticLibDeps_data();
     void smartRelinking();
     void smartRelinking_data();
     void soVersion();
@@ -341,6 +362,8 @@ private slots:
     void wholeArchive();
     void wholeArchive_data();
     void wildCardsAndRules();
+    void wildCardsAndChangeTracking_data();
+    void wildCardsAndChangeTracking();
     void wildcardRenaming();
     void zip();
     void zip_data();
@@ -351,6 +374,7 @@ private:
     QMap<QString, QString> findNodejs(int *status);
     QMap<QString, QString> findTypeScript(int *status);
     QString findArchiver(const QString &fileName, int *status = nullptr);
+    bool prepareAndRunConan();
     static bool lexYaccExist();
     static qbs::Version bisonVersion();
 };

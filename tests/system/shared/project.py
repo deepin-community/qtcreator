@@ -9,11 +9,11 @@ def openQbsProject(projectPath):
 def openQmakeProject(projectPath, targets=Targets.desktopTargetClasses(), fromWelcome=False):
     cleanUpUserFiles(projectPath)
     if fromWelcome:
-        wsButtonFrame, wsButtonLabel = getWelcomeScreenSideBarButton('Open Project...')
-        if not all((wsButtonFrame, wsButtonLabel)):
+        wsButton = getWelcomeScreenSideBarButton('Open Project...')
+        if not object.exists(wsButton):
             test.fatal("Could not find 'Open Project...' button on Welcome Page.")
             return []
-        mouseClick(wsButtonLabel)
+        mouseClick(wsButton)
     else:
         invokeMenuItem("File", "Open File or Project...")
     selectFromFileDialog(projectPath)
@@ -60,11 +60,11 @@ def __createProjectOrFileSelectType__(category, template, fromWelcome = False, i
     if fromWelcome:
         if not isProject:
             test.fatal("'Create Project...' on Welcome screen only handles projects nowadays.")
-        wsButtonFrame, wsButtonLabel = getWelcomeScreenSideBarButton("Create Project...")
-        if not all((wsButtonFrame, wsButtonLabel)):
+        wsButton = getWelcomeScreenSideBarButton("Create Project...")
+        if not object.exists(wsButton):
             test.fatal("Could not find 'Create Project...' button on Welcome Page")
             return []
-        mouseClick(wsButtonLabel)
+        mouseClick(wsButton)
     elif isProject:
         invokeMenuItem("File", "New Project...")
     else:
@@ -139,8 +139,13 @@ def __createProjectHandleQtQuickSelection__(minimumQtVersion):
 # param buildSystem is a string holding the build system selected for the project
 # param checks turns tests in the function on if set to True
 # param available a list holding the available targets
-def __selectQtVersionDesktop__(buildSystem, checks, available=None):
-    wanted = Targets.desktopTargetClasses()
+# param targets a list holding the wanted targets - defaults to all desktop targets if empty
+# returns checked targets
+def __selectQtVersionDesktop__(buildSystem, checks, available=None, targets=[]):
+    if len(targets):
+        wanted = targets
+    else:
+        wanted = Targets.desktopTargetClasses()
     checkedTargets = __chooseTargets__(wanted, available)
     if checks:
         for target in checkedTargets:
@@ -162,6 +167,7 @@ def __selectQtVersionDesktop__(buildSystem, checks, available=None):
                     verifyChecked(cbObject % ("Profile", objectMap.realName(detailsWidget)))
                 clickButton(detailsButton)
     clickButton(waitForObject(":Next_QPushButton"))
+    return checkedTargets
 
 def __createProjectHandleLastPage__(expectedFiles=[], addToVersionControl="<None>", addToProject=None):
     if len(expectedFiles):
@@ -205,8 +211,10 @@ def __getProjectFileName__(projectName, buildSystem):
 # param checks turns tests in the function on if set to True
 # param addToVersionControl selects the specified VCS from Creator's wizard
 # param buildSystem selects the specified build system from Creator's wizard
+# param targets specifies targets that should be checked
+# returns the checked targets
 def createProject_Qt_GUI(path, projectName, checks=True, addToVersionControl="<None>",
-                         buildSystem=None):
+                         buildSystem=None, targets=[]):
     template = "Qt Widgets Application"
     available = __createProjectOrFileSelectType__("  Application (Qt)", template)
     __createProjectSetNameAndPath__(path, projectName, checks)
@@ -229,7 +237,7 @@ def createProject_Qt_GUI(path, projectName, checks=True, addToVersionControl="<N
 
     clickButton(waitForObject(":Next_QPushButton"))
     __createProjectHandleTranslationSelection__()
-    __selectQtVersionDesktop__(buildSystem, checks, available)
+    checkedTargets = __selectQtVersionDesktop__(buildSystem, checks, available, targets)
 
     expectedFiles = []
     if checks:
@@ -243,6 +251,7 @@ def createProject_Qt_GUI(path, projectName, checks=True, addToVersionControl="<N
     waitForProjectParsing()
     if checks:
         __verifyFileCreation__(path, expectedFiles)
+    return checkedTargets
 
 # Creates a Qt Console project
 # param path specifies where to create the project
@@ -419,19 +428,19 @@ def __chooseTargets__(targets, availableTargets=None, additionalFunc=None):
         try:
             ensureChecked("{type='QCheckBox' text='%s' visible='1'}" % Targets.getStringForTarget(current),
                           mustCheck, 3000)
+            detailsWidget = waitForObject("{type='Utils::DetailsWidget' unnamed='1' "
+                                          "window=':Qt Creator_Core::Internal::MainWindow' "
+                                          "summaryText='%s' visible='1'}"
+                                          % Targets.getStringForTarget(current))
+            detailsButton = getChildByClass(detailsWidget, "QToolButton")
             if mustCheck:
                 checkedTargets.add(current)
 
                 # perform additional function on detailed kits view
                 if additionalFunc:
-                    detailsWidget = waitForObject("{type='Utils::DetailsWidget' unnamed='1' "
-                                                  "window=':Qt Creator_Core::Internal::MainWindow' "
-                                                  "summaryText='%s' visible='1'}"
-                                                  % Targets.getStringForTarget(current))
-                    detailsButton = getChildByClass(detailsWidget, "QToolButton")
-                    clickButton(detailsButton)
+                    ensureChecked(detailsButton)
                     additionalFunc()
-                    clickButton(detailsButton)
+            ensureChecked(detailsButton, False)
         except LookupError:
             if mustCheck:
                 test.fail("Failed to check target '%s'." % Targets.getStringForTarget(current))
@@ -515,7 +524,7 @@ def __getSupportedPlatforms__(text, templateName, getAsStrings=False, ignoreVali
         version = res.group("version")
     else:
         version = None
-    if templateName == "Qt Quick Application":
+    if templateName in ("Qt Quick 2 Extension Plugin", "Qt Quick Application"):
         result = set([Targets.DESKTOP_6_2_4])
     elif 'Supported Platforms' in text:
         supports = text[text.find('Supported Platforms'):].split(":")[1].strip().split("\n")
@@ -524,7 +533,7 @@ def __getSupportedPlatforms__(text, templateName, getAsStrings=False, ignoreVali
             result = result.union(set([Targets.DESKTOP_5_10_1_DEFAULT,
                                        Targets.DESKTOP_5_14_1_DEFAULT,
                                        Targets.DESKTOP_6_2_4]))
-            if platform.system() != 'Darwin':
+            if platform.system() in ('Windows', 'Microsoft'):
                 result.add(Targets.DESKTOP_5_4_1_GCC)
     elif 'Platform independent' in text:
         result = Targets.desktopTargetClasses()
@@ -594,7 +603,7 @@ def __writeProjectTreeFile__(projectTree, filename):
 
 def __getTestData__(record):
     return [testData.field(record, "text"),
-            __builtin__.int(testData.field(record, "nestinglevel"))]
+            builtins.int(testData.field(record, "nestinglevel"))]
 
 def compareProjectTree(rootObject, dataset):
     root = waitForObject(rootObject)
@@ -653,7 +662,7 @@ def addCPlusPlusFile(name, template, projectName, forceOverwrite=False, addToVCS
             test.compare(str(waitForObject("{name='HdrFileName' type='QLineEdit' visible='1'}").text),
                          expectedHeaderName)
     clickButton(waitForObject(":Next_QPushButton"))
-    projectComboBox = waitForObjectExists(":projectComboBox_Utils::TreeViewComboBox")
+    projectComboBox = waitForObjectExists(":projectComboBox_QComboBox")
     test.compare(projectComboBox.enabled, projectName != None,
                  "Project combo box must be enabled when a project is open")
     projectNameToDisplay = "<None>"
@@ -685,7 +694,11 @@ def addCPlusPlusFile(name, template, projectName, forceOverwrite=False, addToVCS
 def waitForProjectParsing(beginParsingTimeout=0, projectParsingTimeout=10000,
                           codemodelParsingTimeout=10000):
     runButton = findObject(':*Qt Creator.Run_Core::Internal::FancyToolButton')
-    waitFor("not runButton.enabled", beginParsingTimeout)
+    if beginParsingTimeout > 0:
+        # currently unused
+        test.warning("Waiting for the runButton to become disabled is probably futile.",
+                     "The button isn't disabled during project parsing anymore.")
+        waitFor("not runButton.enabled", beginParsingTimeout)
     # Wait for parsing to complete
     waitFor("runButton.enabled", projectParsingTimeout)
     if codemodelParsingTimeout > 0:

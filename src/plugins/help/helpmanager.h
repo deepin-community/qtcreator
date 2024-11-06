@@ -29,6 +29,7 @@ public:
     static QString collectionFilePath();
 
     void registerDocumentation(const QStringList &fileNames) override;
+    void setBlockedDocumentation(const QStringList &fileNames) override;
     void unregisterDocumentation(const QStringList &fileNames) override;
 
     static void registerUserDocumentation(const QStringList &filePaths);
@@ -55,6 +56,8 @@ public:
     Q_INVOKABLE void showHelpUrl(
         const QUrl &url,
         Core::HelpManager::HelpViewerLocation location = Core::HelpManager::HelpModeAlways) override;
+
+    void addOnlineHelpHandler(const Core::HelpManager::OnlineHelpHandler &handler) override;
 
     static void setupHelpManager();
 

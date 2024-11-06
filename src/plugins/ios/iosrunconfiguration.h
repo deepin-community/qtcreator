@@ -3,17 +3,17 @@
 
 #pragma once
 
-#include "iosconstants.h"
-#include "iosconfigurations.h"
 #include "iossimulator.h"
 
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/runconfigurationaspects.h>
 
-#include <utils/fileutils.h>
-
-#include <QComboBox>
 #include <QStandardItemModel>
+
+QT_BEGIN_NAMESPACE
+class QComboBox;
+class QPushButton;
+QT_END_NAMESPACE
 
 namespace Ios::Internal {
 
@@ -29,7 +29,7 @@ public:
 
     void fromMap(const Utils::Store &map) override;
     void toMap(Utils::Store &map) const override;
-    void addToLayout(Layouting::LayoutItem &parent) override;
+    void addToLayoutImpl(Layouting::Layout &parent) override;
 
     IosDeviceType deviceType() const;
     void setDeviceType(const IosDeviceType &deviceType);
@@ -58,6 +58,7 @@ private:
     QStandardItemModel m_deviceTypeModel;
     QLabel *m_deviceTypeLabel = nullptr;
     QComboBox *m_deviceTypeComboBox = nullptr;
+    QPushButton *m_updateButton = nullptr;
 };
 
 class IosRunConfiguration : public ProjectExplorer::RunConfiguration
@@ -70,21 +71,17 @@ public:
     QString applicationName() const;
     Utils::FilePath bundleDirectory() const;
     Utils::FilePath localExecutable() const;
-    QString disabledReason() const override;
+    QString disabledReason(Utils::Id runMode) const override;
     IosDeviceType deviceType() const;
 
 private:
-    bool isEnabled() const final;
+    bool isEnabled(Utils::Id runMode) const final;
 
     ProjectExplorer::ExecutableAspect executable{this};
     ProjectExplorer::ArgumentsAspect arguments{this};
     IosDeviceTypeAspect iosDeviceType;
 };
 
-class IosRunConfigurationFactory : public ProjectExplorer::RunConfigurationFactory
-{
-public:
-    IosRunConfigurationFactory();
-};
+void setupIosRunConfiguration();
 
 } // Ios::Internal

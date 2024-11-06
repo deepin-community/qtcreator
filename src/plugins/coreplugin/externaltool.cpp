@@ -14,7 +14,7 @@
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
 #include <utils/macroexpander.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QCoreApplication>
@@ -158,7 +158,7 @@ Environment ExternalTool::baseEnvironment() const
 {
     if (m_baseEnvironmentProviderId.isValid()) {
         const std::optional<EnvironmentProvider> provider = EnvironmentProvider::provider(
-            m_baseEnvironmentProviderId.name());
+            m_baseEnvironmentProviderId.toByteArray());
         if (provider && provider->environment)
             return provider->environment();
     }
@@ -190,7 +190,7 @@ void ExternalTool::setFilePath(const FilePath &filePath)
     m_filePath = filePath;
 }
 
-void ExternalTool::setPreset(QSharedPointer<ExternalTool> preset)
+void ExternalTool::setPreset(std::shared_ptr<ExternalTool> preset)
 {
     m_presetTool = preset;
 }
@@ -200,7 +200,7 @@ FilePath ExternalTool::filePath() const
     return m_filePath;
 }
 
-QSharedPointer<ExternalTool> ExternalTool::preset() const
+std::shared_ptr<ExternalTool> ExternalTool::preset() const
 {
     return m_presetTool;
 }
@@ -598,7 +598,10 @@ bool ExternalToolRunner::resolve()
         }
     }
 
-    m_resolvedArguments = expander->expandProcessArgs(m_tool->arguments());
+    const expected_str<QString> args = expander->expandProcessArgs(m_tool->arguments());
+    QTC_ASSERT_EXPECTED(args, return false);
+
+    m_resolvedArguments = *args;
     m_resolvedInput = expander->expand(m_tool->input());
     m_resolvedWorkingDirectory = expander->expand(m_tool->workingDirectory());
 
@@ -623,10 +626,8 @@ void ExternalToolRunner::run()
     }
     m_process = new Process(this);
     connect(m_process, &Process::done, this, &ExternalToolRunner::done);
-    connect(m_process, &Process::readyReadStandardOutput,
-            this, &ExternalToolRunner::readStandardOutput);
-    connect(m_process, &Process::readyReadStandardError,
-            this, &ExternalToolRunner::readStandardError);
+    m_process->setStdOutLineCallback([this](const QString &s) { readStandardOutput(s); });
+    m_process->setStdErrLineCallback([this](const QString &s) { readStandardError(s); });
     if (!m_resolvedWorkingDirectory.isEmpty())
         m_process->setWorkingDirectory(m_resolvedWorkingDirectory);
     const CommandLine cmd{m_resolvedExecutable, m_resolvedArguments, CommandLine::Raw};
@@ -665,30 +666,29 @@ void ExternalToolRunner::done()
     deleteLater();
 }
 
-void ExternalToolRunner::readStandardOutput()
+static QString stripNewline(const QString &output)
+{
+    if (output.endsWith('\n'))
+        return output.chopped(1);
+    return output;
+}
+
+void ExternalToolRunner::readStandardOutput(const QString &output)
 {
     if (m_tool->outputHandling() == ExternalTool::Ignore)
         return;
-    const QByteArray data = m_process->readAllRawStandardOutput();
-    const QString output = m_outputCodec->toUnicode(data.constData(),
-                                                    data.length(),
-                                                    &m_outputCodecState);
     if (m_tool->outputHandling() == ExternalTool::ShowInPane)
-        MessageManager::writeSilently(output);
+        MessageManager::writeSilently(stripNewline(output));
     else if (m_tool->outputHandling() == ExternalTool::ReplaceSelection)
         m_processOutput.append(output);
 }
 
-void ExternalToolRunner::readStandardError()
+void ExternalToolRunner::readStandardError(const QString &output)
 {
     if (m_tool->errorHandling() == ExternalTool::Ignore)
         return;
-    const QByteArray data = m_process->readAllRawStandardError();
-    const QString output = m_outputCodec->toUnicode(data.constData(),
-                                                    data.length(),
-                                                    &m_errorCodecState);
     if (m_tool->errorHandling() == ExternalTool::ShowInPane)
-        MessageManager::writeSilently(output);
+        MessageManager::writeSilently(stripNewline(output));
     else if (m_tool->errorHandling() == ExternalTool::ReplaceSelection)
         m_processOutput.append(output);
 }

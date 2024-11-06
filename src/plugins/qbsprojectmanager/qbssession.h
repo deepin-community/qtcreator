@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 
 #include <QHash>
 #include <QJsonObject>
@@ -14,11 +14,14 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
+#include <variant>
 
 namespace ProjectExplorer { class Target; }
 
 namespace QbsProjectManager {
 namespace Internal {
+class QbsBuildSystem;
 
 class ErrorInfoItem
 {
@@ -96,7 +99,7 @@ class QbsSession : public QObject
 {
     Q_OBJECT
 public:
-    explicit QbsSession(QObject *parent = nullptr);
+    explicit QbsSession(QbsBuildSystem *buildSystem);
     ~QbsSession() override;
 
     enum class State { Initializing, Active, Inactive };
@@ -113,6 +116,8 @@ public:
     static QString errorString(Error error);
     QJsonObject projectData() const;
 
+    int apiLevel() const;
+
     void sendRequest(const QJsonObject &request);
     void cancelCurrentJob();
     void requestFilesGeneratedFrom(const QHash<QString, QStringList> &sourceFilesPerProduct);
@@ -121,6 +126,10 @@ public:
                               const QString &group);
     FileChangeResult removeFiles(const QStringList &files, const QString &product,
                                  const QString &group);
+    FileChangeResult renameFiles(
+        const QList<std::pair<QString, QString>> &files,
+        const QString &product,
+        const QString &group);
     RunEnvironmentResult getRunEnvironment(const QString &product,
             const QProcessEnvironment &baseEnv,
             const QStringList &config);
@@ -169,9 +178,14 @@ private:
     void setProjectDataFromReply(const QJsonObject &packet, bool withBuildSystemFiles);
     void setError(Error error);
     void setInactive();
-    FileChangeResult updateFileList(const char *action, const QStringList &files,
-                                    const QString &product, const QString &group);
+    FileChangeResult updateFileList(
+        const char *action,
+        const std::variant<QStringList, QList<std::pair<QString, QString>>> &files,
+        const QString &product,
+        const QString &group);
     void handleFileListUpdated(const QJsonObject &reply);
+    void sendNextPendingFileUpdateRequest();
+    void sendFileUpdateRequest(const QJsonObject &request);
 
     class Private;
     Private * const d;

@@ -39,11 +39,11 @@
 
 #include "scriptengine.h"
 
+#include "deprecationinfo.h"
 #include "filecontextbase.h"
 #include "jsimports.h"
-#include "propertymapinternal.h"
-#include "scriptimporter.h"
 #include "preparescriptobserver.h"
+#include "scriptimporter.h"
 
 #include <buildgraph/artifact.h>
 #include <buildgraph/rulenode.h>
@@ -53,10 +53,11 @@
 #include <tools/fileinfo.h>
 #include <tools/profiling.h>
 #include <tools/qbsassert.h>
-#include <tools/scripttools.h>
 #include <tools/qttools.h>
+#include <tools/scripttools.h>
 #include <tools/stlutils.h>
 #include <tools/stringconstants.h>
+#include <tools/version.h>
 
 #include <QtCore/qdatetime.h>
 #include <QtCore/qdebug.h>
@@ -137,18 +138,25 @@ LookupResult ScriptEngine::doExtraScopeLookup(JSContext *ctx, JSAtom prop)
     ScriptEngine * const engine = engineForContext(ctx);
     engine->m_lastLookupWasSuccess = false;
 
-    JSValueList scopes;
-    if (!engine->m_scopeChains.isEmpty())
-        scopes = engine->m_scopeChains.last();
-    if (JS_IsObject(engine->m_globalObject))
-        scopes.insert(scopes.begin(), engine->m_globalObject);
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        const JSValue v = JS_GetProperty(ctx, *it, prop);
+    auto handleScope = [ctx, prop, engine](const JSValue &scope) -> LookupResult {
+        const JSValue v = JS_GetProperty(ctx, scope, prop);
         if (!JS_IsUndefined(v) || engine->m_lastLookupWasSuccess) {
             engine->m_lastLookupWasSuccess = false;
-            return {v, *it, true};
+            return {v, scope, true};
+        }
+        return fail;
+    };
+
+    if (!engine->m_scopeChains.empty()) {
+        const auto scopes = engine->m_scopeChains.back();
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+            const auto res = handleScope(*it);
+            if (res.useResult)
+                return res;
         }
     }
+    if (JS_IsObject(engine->m_globalObject))
+        return handleScope(engine->m_globalObject);
     return fail;
 }
 
@@ -226,6 +234,7 @@ void ScriptEngine::reset()
         JS_FreeValue(m_context, it.value());
     }
     m_artifactsScriptValues.clear();
+    m_logger.clearWarnings();
 }
 
 void ScriptEngine::import(const FileContextBaseConstPtr &fileCtx, JSValue &targetObject,
@@ -339,6 +348,26 @@ void ScriptEngine::checkContext(const QString &operation,
             m_logger.printWarning(ErrorInfo(warning));
         }
         return;
+    }
+}
+
+void ScriptEngine::handleDeprecation(
+    const Version &removalVersion, const QString &message, const CodeLocation &loc)
+{
+    if (!m_setupParams)
+        return;
+    switch (m_setupParams->deprecationWarningMode()) {
+    case DeprecationWarningMode::Error:
+        throw ErrorInfo(message, loc);
+    case DeprecationWarningMode::BeforeRemoval:
+        if (!DeprecationInfo::isLastVersionBeforeRemoval(removalVersion))
+            break;
+        [[fallthrough]];
+    case DeprecationWarningMode::On:
+        m_logger.printWarning(ErrorInfo(message, loc));
+        break;
+    case DeprecationWarningMode::Off:
+        break;
     }
 }
 
@@ -488,6 +517,8 @@ void ScriptEngine::addInternalExtension(const char *name, JSValue ext)
 
 JSValue ScriptEngine::asJsValue(const QVariant &v, quintptr id, bool frozen)
 {
+    if (v.isNull())
+        return JS_UNDEFINED;
     switch (static_cast<QMetaType::Type>(v.userType())) {
     case QMetaType::QByteArray:
         return asJsValue(v.toByteArray());
@@ -508,8 +539,7 @@ JSValue ScriptEngine::asJsValue(const QVariant &v, quintptr id, bool frozen)
     case QMetaType::Bool:
         return JS_NewBool(m_context, v.toBool());
     case QMetaType::QDateTime:
-        return JS_NewDate(
-            m_context, v.toDateTime().toString(Qt::ISODateWithMs).toUtf8().constData());
+        return JS_NewDate(m_context, v.toDateTime().toMSecsSinceEpoch());
     case QMetaType::QVariantMap:
         return asJsValue(v.toMap(), id, frozen);
     default:
@@ -536,7 +566,7 @@ JSValue ScriptEngine::asJsValue(const QString &s)
 JSValue ScriptEngine::asJsValue(const QStringList &l)
 {
     JSValue array = JS_NewArray(m_context);
-    setJsProperty(m_context, array, QLatin1String("length"), JS_NewInt32(m_context, l.size()));
+    setJsProperty(m_context, array, std::string_view("length"), JS_NewInt32(m_context, l.size()));
     for (int i = 0; i < l.size(); ++i)
         JS_SetPropertyUint32(m_context, array, i, asJsValue(l.at(i)));
     return array;
@@ -572,7 +602,7 @@ JSValue ScriptEngine::asJsValue(const QVariantList &l, quintptr id, bool frozen)
         return JS_DupValue(m_context, it.value());
     frozen = id || frozen;
     JSValue array = JS_NewArray(m_context);
-    setJsProperty(m_context, array, QLatin1String("length"), JS_NewInt32(m_context, l.size()));
+    setJsProperty(m_context, array, std::string_view("length"), JS_NewInt32(m_context, l.size()));
     for (int i = 0; i < l.size(); ++i)
         JS_SetPropertyUint32(m_context, array, i, asJsValue(l.at(i), 0, frozen));
     if (frozen)
@@ -800,17 +830,21 @@ JSValue ScriptEngine::newArray(int length, JsValueOwner owner)
     return arr;
 }
 
-JSValue ScriptEngine::evaluate(JsValueOwner resultOwner, const QString &code,
-                               const QString &filePath, int line, const JSValueList &scopeChain)
+JSValue ScriptEngine::evaluate(
+    JsValueOwner resultOwner,
+    const QString &code,
+    const QString &filePath,
+    int line,
+    qbs::Internal::span<const JSValue> scopeChain)
 {
-    m_scopeChains << scopeChain;
+    m_scopeChains.emplace_back(scopeChain);
     const QByteArray &codeStr = code.toUtf8();
 
-    m_evalPositions.emplace(std::make_pair(filePath, line));
+    m_evalPositions.emplace(filePath, line);
     const JSValue v = JS_EvalThis(m_context, globalObject(), codeStr.constData(), codeStr.length(),
                                   filePath.toUtf8().constData(), line, JS_EVAL_TYPE_GLOBAL);
     m_evalPositions.pop();
-    m_scopeChains.removeLast();
+    m_scopeChains.pop_back();
     if (resultOwner == JsValueOwner::ScriptEngine && JS_VALUE_HAS_REF_COUNT(v))
         ++m_evalResults[v];
     return v;
@@ -827,7 +861,7 @@ ScopedJsValueList ScriptEngine::argumentList(const QStringList &argumentNames,
     JSValueList result;
     for (const auto &name : argumentNames)
         result.push_back(getJsProperty(m_context, context, name));
-    return ScopedJsValueList(m_context, result);
+    return {m_context, result};
 }
 
 JSClassID ScriptEngine::registerClass(const char *name, JSClassCall *constructor,

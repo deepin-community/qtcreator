@@ -9,13 +9,17 @@
 #include "../iwizardfactory.h"
 
 #include <utils/algorithm.h>
+#include <utils/fancylineedit.h>
+#include <utils/guiutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/icon.h>
-#include <utils/fancylineedit.h>
 #include <utils/qtcassert.h>
+#include <utils/stylehelper.h>
 
+#include <QAbstractSpinBox>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QEventLoop>
@@ -38,8 +42,8 @@
 
 #include <extensionsystem/pluginmanager.h>
 
-const int kInitialWidth = 750;
-const int kInitialHeight = 450;
+const int kInitialWidth = 800;
+const int kInitialHeight = 500;
 const int kMaxMinimumWidth = 250;
 const int kMaxMinimumHeight = 250;
 
@@ -245,16 +249,18 @@ protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
 };
 
-const char SETTING_HIDE_OPTION_CATEGORIES[] = "HideOptionCategories";
-
 static bool categoryVisible(const Id &id)
 {
+#ifdef QT_NO_DEBUG
+
     static QStringList list
-        = Core::ICore::settings()->value(SETTING_HIDE_OPTION_CATEGORIES).toStringList();
+        = Core::ICore::settings()->value("HideOptionCategories").toStringList();
 
     if (anyOf(list, [id](const QString &str) { return id.toString().contains(str); }))
         return false;
-
+#else
+    Q_UNUSED(id);
+#endif
     return true;
 }
 
@@ -336,6 +342,14 @@ public:
 
 // ----------- SmartScrollArea
 
+template <typename T>
+void setWheelScrollingWithoutFocusBlockedForChildren(QWidget *widget)
+{
+    const auto children = widget->findChildren<T>();
+    for (auto child : children)
+        setWheelScrollingWithoutFocusBlocked(child);
+}
+
 class SmartScrollArea : public QScrollArea
 {
 public:
@@ -352,6 +366,8 @@ private:
     {
         if (!widget()) {
             if (QWidget *inner = m_page->widget()) {
+                setWheelScrollingWithoutFocusBlockedForChildren<QComboBox *>(inner);
+                setWheelScrollingWithoutFocusBlockedForChildren<QAbstractSpinBox *>(inner);
                 setWidget(inner);
                 inner->setAutoFillBackground(false);
             } else {
@@ -569,14 +585,7 @@ void SettingsDialog::showPage(const Id pageId)
 
 void SettingsDialog::createGui()
 {
-    // Header label with large font and a bit of spacing (align with group boxes)
-    QFont headerLabelFont = m_headerLabel->font();
-    headerLabelFont.setBold(true);
-    // Paranoia: Should a font be set in pixels...
-    const int pointSize = headerLabelFont.pointSize();
-    if (pointSize > 0)
-        headerLabelFont.setPointSize(pointSize + 2);
-    m_headerLabel->setFont(headerLabelFont);
+    m_headerLabel->setFont(StyleHelper::uiFont(StyleHelper::UiElementH4));
 
     auto headerHLayout = new QHBoxLayout;
     const int leftMargin = QApplication::style()->pixelMetric(QStyle::PM_LayoutLeftMargin);
@@ -587,11 +596,13 @@ void SettingsDialog::createGui()
     QWidget *emptyWidget = new QWidget(this);
     m_stackedLayout->addWidget(emptyWidget); // no category selected, for example when filtering
 
-    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok |
-                                                       QDialogButtonBox::Apply |
-                                                       QDialogButtonBox::Cancel);
-    connect(buttonBox->button(QDialogButtonBox::Apply), &QAbstractButton::clicked,
-            this, &SettingsDialog::apply);
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Apply | QDialogButtonBox::Cancel);
+    connect(
+        buttonBox->button(QDialogButtonBox::Apply),
+        &QAbstractButton::clicked,
+        this,
+        &SettingsDialog::apply);
 
     connect(buttonBox, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &SettingsDialog::reject);
@@ -737,8 +748,10 @@ void SettingsDialog::reject()
         return;
     m_finished = true;
     disconnectTabWidgets();
-    for (IOptionsPage *page : std::as_const(m_pages))
+    for (IOptionsPage *page : std::as_const(m_pages)) {
+        page->cancel();
         page->finish();
+    }
     done(QDialog::Rejected);
 }
 
@@ -779,7 +792,7 @@ bool SettingsDialog::execDialog()
             ICore::settings()->setValueWithDefault(kPreferenceDialogSize, size(), initialSize);
             // make sure that the current "single" instance is deleted
             // we can't delete right away, since we still access the m_applied member
-            deleteLater();
+            QMetaObject::invokeMethod(this, [this] { deleteLater(); }, Qt::QueuedConnection);
         });
     }
 

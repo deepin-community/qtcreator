@@ -8,10 +8,11 @@
 #include "cppmodelmanager.h"
 #include "cpptoolstestcase.h"
 
-#include <texteditor/codeassist/iassistproposal.h>
-#include <texteditor/texteditor.h>
-#include <texteditor/textdocument.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <texteditor/codeassist/iassistproposal.h>
+#include <texteditor/syntaxhighlighter.h>
+#include <texteditor/textdocument.h>
+#include <texteditor/texteditor.h>
 
 #include <utils/algorithm.h>
 #include <utils/changeset.h>
@@ -61,6 +62,7 @@ public:
         // Open in editor
         m_editor = EditorManager::openEditor(filePath);
         QVERIFY(m_editor);
+
         closeEditorAtEndOfTestCase(m_editor);
         m_editorWidget = TextEditorWidget::fromEditor(m_editor);
         QVERIFY(m_editorWidget);
@@ -137,6 +139,17 @@ public:
         change.insert(m_position, QLatin1String(text));
         change.apply(m_textDocument);
         m_position += text.length();
+    }
+
+    bool waitForSyntaxHighlighting()
+    {
+        TextEditor::BaseTextEditor *cppEditor = qobject_cast<TextEditor::BaseTextEditor *>(m_editor);
+        if (!cppEditor)
+            return false;
+        if (cppEditor->textDocument()->syntaxHighlighter()->syntaxHighlighterUpToDate())
+            return true;
+        return ::CppEditor::Tests::waitForSignalOrTimeout(
+            cppEditor->textDocument()->syntaxHighlighter(), &SyntaxHighlighter::finished, 5000);
     }
 
 private:
@@ -404,6 +417,7 @@ void CompletionTest::testDoxygenTagCompletion()
 
     CompletionTestCase test(code, prefix);
     QVERIFY(test.succeededSoFar());
+    QVERIFY(test.waitForSyntaxHighlighting());
     const QStringList completions = test.getCompletions();
     QVERIFY(isDoxygenTagCompletion(completions));
 }
@@ -2875,6 +2889,16 @@ void CompletionTest::testCompletionMemberAccessOperator_data()
         ) << _("p->") << QStringList({"S", "m"})
         << false
         << false;
+    QTest::newRow("dot to arrow: template + reference + double typedef")
+        << _("template <typename T> struct C {\n"
+             "    using ref = T &;\n"
+             "    ref operator[](int i);\n"
+             "};\n"
+             "struct S { int m; };\n"
+             "template<typename T> using CS = C<T>;\n"
+             "CS<S *> v;\n"
+             "@\n")
+        << _("v[0].") << QStringList({"S", "m"}) << false << true;
 }
 
 } // namespace CppEditor::Internal

@@ -3,13 +3,11 @@
 
 #include "followsymbol_switchmethoddecldef_test.h"
 
+#include "clangdsettings.h"
 #include "cppcodemodelsettings.h"
-#include "cppeditorplugin.h"
 #include "cppeditorwidget.h"
-#include "cppelementevaluator.h"
 #include "cppfollowsymbolundercursor.h"
 #include "cppmodelmanager.h"
-#include "cpptoolsreuse.h"
 #include "cpptoolstestcase.h"
 #include "cppvirtualfunctionassistprovider.h"
 #include "cppvirtualfunctionproposalitem.h"
@@ -235,14 +233,12 @@ F2TestCase::F2TestCase(CppEditorAction action,
     const QString tag = QLatin1String(QTest::currentDataTag());
     const bool useClangd = m_testKit;
     if (useClangd) {
-        if (curTestName == "testFollowSymbolQObjectConnect"
-                || curTestName == "testFollowSymbolQObjectOldStyleConnect") {
-            QSKIP("TODO: Implement fall-back");
+        if (tag.contains("before keyword") || tag.contains("in keyword")
+            || tag.contains("before parenthesis")) {
+            QSKIP("clangd correctly goes to definition of SIGNAL macro");
         }
         if (curTestName == "testFollowClassOperator" && tag == "backward")
             QSKIP("clangd goes to operator name first");
-        if (tag.toLower().contains("fuzzy"))
-            QSKIP("fuzzy matching is not supposed to work with clangd"); // TODO: Implement fallback as we do with libclang
         if (tag == "baseClassFunctionIntroducedByUsingDeclaration")
             QSKIP("clangd points to the using declaration");
         if (curTestName == "testFollowClassOperatorInOp")
@@ -252,7 +248,7 @@ F2TestCase::F2TestCase(CppEditorAction action,
     // Write files to disk
     CppEditor::Tests::TemporaryDir temporaryDir;
     QVERIFY(temporaryDir.isValid());
-    QString projectFileContent = "CppApplication { files: [";
+    QString projectFileContent = "QtApplication { files: [";
    for (TestDocumentPtr testFile : testFiles) {
         QVERIFY(testFile->baseDirectory().isEmpty());
         testFile->setBaseDirectory(temporaryDir.path());
@@ -314,7 +310,7 @@ F2TestCase::F2TestCase(CppEditorAction action,
 
         // Rehighlight
         if (!useClangd)
-            waitForRehighlightedSemanticDocument(testFile->m_editorWidget);
+            QVERIFY(waitForRehighlightedSemanticDocument(testFile->m_editorWidget));
     }
 
     // Activate editor of initial test file
@@ -331,9 +327,7 @@ F2TestCase::F2TestCase(CppEditorAction action,
     switch (action) {
     case FollowSymbolUnderCursorAction: {
         CppEditorWidget *widget = initialTestFile->m_editorWidget;
-        if (CppModelManager::isClangCodeModelActive()) {
-            if (curTestName == "testFollowSymbolQTCREATORBUG7903")
-                QSKIP((curTestName + " is not supported by Clang FollowSymbol").toLatin1());
+        if (useClangd) {
             widget->enableTestMode();
             widget->openLinkUnderCursor();
             break;
@@ -361,7 +355,7 @@ F2TestCase::F2TestCase(CppEditorAction action,
         if (useClangd && tag.endsWith("Var"))
             initialTestFile->m_editorWidget->openLinkUnderCursor();
         else
-            CppEditorPlugin::instance()->switchDeclarationDefinition();
+            initialTestFile->m_editorWidget->switchDeclarationDefinition(/*inNextSplit*/false);
         break;
     default:
         QFAIL("Unknown test action");
@@ -369,8 +363,6 @@ F2TestCase::F2TestCase(CppEditorAction action,
     }
 
     if (useClangd) {
-        QEXPECT_FAIL("infiniteLoopLocalTypedef_QTCREATORBUG-11999",
-                     "clangd bug: Go to definition does not return", Abort);
         if (expectedVirtualFunctionProposal.size() <= 1) {
             QVERIFY(CppEditor::Tests::waitForSignalOrTimeout(EditorManager::instance(),
                                                              &EditorManager::linkOpened, 10000));
@@ -405,6 +397,12 @@ F2TestCase::F2TestCase(CppEditorAction action,
     BaseTextEditor *currentTextEditor = dynamic_cast<BaseTextEditor*>(currentEditor);
     QVERIFY(currentTextEditor);
 
+    if (useClangd) {
+        QEXPECT_FAIL("matchFunctionSignatureFuzzy1Forward", "clangd returns decl loc", Abort);
+        QEXPECT_FAIL("matchFunctionSignatureFuzzy2Forward", "clangd returns decl loc", Abort);
+        QEXPECT_FAIL("matchFunctionSignatureFuzzy1Backward", "clangd returns def loc", Abort);
+        QEXPECT_FAIL("matchFunctionSignatureFuzzy2Backward", "clangd returns def loc", Abort);
+    }
     QCOMPARE(currentTextEditor->document()->filePath(), targetTestFile->filePath());
     int expectedLine, expectedColumn;
     if (useClangd && expectedVirtualFunctionProposal.size() == 1) {
@@ -423,9 +421,16 @@ F2TestCase::F2TestCase(CppEditorAction action,
 //    qDebug() << "Expected line:" << expectedLine;
 //    qDebug() << "Expected column:" << expectedColumn;
 
-    if (!useClangd) {
+    if (useClangd) {
+        QEXPECT_FAIL("matchFunctionSignature_Follow_8_fuzzy",
+                     "clangd points to declaration", Abort);
+        QEXPECT_FAIL("matchFunctionSignature_Follow_9_fuzzy",
+                     "clangd points to declaration", Abort);
+    } else {
         QEXPECT_FAIL("globalVarFromEnum", "Contributor works on a fix.", Abort);
         QEXPECT_FAIL("matchFunctionSignature_Follow_5", "foo(int) resolved as CallAST", Abort);
+        if (tag.contains("SLOT") && tag.contains("no 2nd QObject"))
+            QEXPECT_FAIL("", "FIXME", Abort);
     }
 
     QCOMPARE(currentTextEditor->currentLine(), expectedLine);
@@ -496,8 +501,11 @@ void FollowSymbolTest::initTestCase()
         return;
 
     // Find suitable kit.
+    // Qt is not actually required for the tests, but we need it for consistency with
+    // configureAsExampleProject().
+    // FIXME: Make configureAsExampleProject() work with non-Qt kits.
     F2TestCase::m_testKit = Utils::findOr(KitManager::kits(), nullptr, [](const Kit *k) {
-        return k->isValid();
+        return k->isValid() && !k->hasWarning() && k->value("QtSupport.QtInformation").isValid();
     });
     if (!F2TestCase::m_testKit)
         QSKIP("This test requires at least one kit to be present");
@@ -1581,11 +1589,6 @@ void FollowSymbolTest::testFollowSymbolQObjectConnect()
 
     if (!secondQObjectParam)
         source.replace(" &foo, ", QByteArray());
-
-    if (start >= '7' && !secondQObjectParam) {
-        qWarning("SLOT jump triggers QTCREATORBUG-10265. Skipping.");
-        return;
-    }
 
     F2TestCase(F2TestCase::FollowSymbolUnderCursorAction, singleDocument(source));
 }

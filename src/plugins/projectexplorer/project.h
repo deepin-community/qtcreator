@@ -27,6 +27,7 @@ class MacroExpander;
 
 namespace ProjectExplorer {
 
+class BuildConfiguration;
 class BuildInfo;
 class BuildSystem;
 class ContainerNode;
@@ -49,7 +50,8 @@ public:
     enum ModelRoles {
         // Absolute file path
         FilePathRole = QFileSystemModel::FilePathRole,
-        isParsingRole
+        isParsingRole,
+        UseUnavailableMarkerRole,
     };
 
     Project(const QString &mimeType, const Utils::FilePath &fileName);
@@ -66,9 +68,8 @@ public:
 
     BuildSystem *createBuildSystem(Target *target) const;
 
-    Utils::FilePath projectFilePath() const;
-    Utils::FilePath projectDirectory() const;
-    static Utils::FilePath projectDirectory(const Utils::FilePath &top);
+    virtual Utils::FilePath projectFilePath() const;
+    virtual Utils::FilePath projectDirectory() const;
 
     // This does not affect nodes, only the root path.
     void changeRootProjectDirectory();
@@ -95,6 +96,7 @@ public:
     virtual Tasks projectIssues(const Kit *k) const;
 
     static bool copySteps(Target *sourceTarget, Target *newTarget);
+    bool copySteps(const Utils::Store &store, Kit *targetKit);
 
     void saveSettings();
     enum class RestoreResult { Ok, Error, UserAbort };
@@ -110,6 +112,8 @@ public:
     bool isKnownFile(const Utils::FilePath &filename) const;
     const Node *nodeForFilePath(const Utils::FilePath &filePath,
                                 const NodeMatcher &extraMatcher = {}) const;
+    ProjectNode *productNodeForFilePath(
+        const Utils::FilePath &filePath, const NodeMatcher &extraMatcher = {}) const;
     Utils::FilePaths binariesForSourceFile(const Utils::FilePath &sourceFile) const;
 
     virtual void toMap(Utils::Store &map) const;
@@ -133,6 +137,7 @@ public:
     bool hasMakeInstallEquivalent() const;
 
     void setup(const QList<BuildInfo> &infoList);
+    BuildConfiguration *setup(const BuildInfo &info);
     Utils::MacroExpander *macroExpander() const;
 
     ProjectNode *findNodeForBuildKey(const QString &buildKey) const;
@@ -176,6 +181,11 @@ public:
                                             Utils::MacroExpander *expander,
                                             const std::function<Project *()> &projectGetter);
 
+    QList<Utils::Store> vanishedTargets() const;
+    void removeVanishedTarget(int index);
+    void removeAllVanishedTargets();
+    Target *createKitAndTargetFromStore(const Utils::Store &store);
+
 signals:
     void projectFileIsDirty(const Utils::FilePath &path);
 
@@ -189,6 +199,8 @@ signals:
     void aboutToRemoveTarget(ProjectExplorer::Target *target);
     void removedTarget(ProjectExplorer::Target *target);
     void addedTarget(ProjectExplorer::Target *target);
+
+    void vanishedTargetsChanged();
 
     void settingsLoaded();
     void aboutToSaveSettings();
@@ -220,7 +232,10 @@ protected:
 
     static ProjectExplorer::Task createProjectTask(ProjectExplorer::Task::TaskType type,
                                                    const QString &description);
-
+    template <typename BuildSystemImpl>
+    void setBuildSystemCreator() {
+        setBuildSystemCreator([](Target *t) { return new BuildSystemImpl(t); });
+    }
     void setBuildSystemCreator(const std::function<BuildSystem *(Target *)> &creator);
 
 private:

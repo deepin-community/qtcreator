@@ -8,7 +8,6 @@ QtcPlugin {
 
     Depends { name: "Core" }
     Depends { name: "ProjectExplorer" }
-    Depends { name: "CppEditor" }
     Depends { name: "QtSupport" }
 
     files: [
@@ -27,8 +26,6 @@ QtcPlugin {
         "configurestep.h",
         "makefileparser.cpp",
         "makefileparser.h",
-        "makefileparserthread.cpp",
-        "makefileparserthread.h",
         "makestep.cpp",
         "makestep.h",
     ]

@@ -4,12 +4,17 @@
 #include "pythonsettings.h"
 
 #include "pythonconstants.h"
-#include "pythonplugin.h"
+#include "pythonkitaspect.h"
 #include "pythontr.h"
 #include "pythonutils.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icore.h>
+#include <coreplugin/progressmanager/processprogress.h>
+
+#include <projectexplorer/kitaspect.h>
+#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/kitmanager.h>
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -27,7 +32,7 @@
 #include <utils/layoutbuilder.h>
 #include <utils/listmodel.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/treemodel.h>
 #include <utils/utilsicons.h>
@@ -49,9 +54,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+using namespace Layouting;
 using namespace ProjectExplorer;
 using namespace Utils;
-using namespace Layouting;
 
 namespace Python::Internal {
 
@@ -65,9 +70,9 @@ static Interpreter createInterpreter(const FilePath &python,
 
     Process pythonProcess;
     pythonProcess.setProcessChannelMode(QProcess::MergedChannels);
-    pythonProcess.setTimeoutS(1);
     pythonProcess.setCommand({python, {"--version"}});
-    pythonProcess.runBlocking();
+    using namespace std::chrono_literals;
+    pythonProcess.runBlocking(1s);
     if (pythonProcess.result() == ProcessResult::FinishedWithSuccess)
         result.name = pythonProcess.cleanedStdOut().trimmed();
     if (result.name.isEmpty())
@@ -140,65 +145,38 @@ public:
 
 private:
     QTreeView *m_view = nullptr;
-    ListModel<Interpreter> m_model;
+    ListModel<Interpreter> * const m_model;
     InterpreterDetailsWidget *m_detailsWidget = nullptr;
     QPushButton *m_deleteButton = nullptr;
     QPushButton *m_makeDefaultButton = nullptr;
+    QPushButton *m_generateKitButton = nullptr;
     QPushButton *m_cleanButton = nullptr;
     QString m_defaultId;
 
     void currentChanged(const QModelIndex &index, const QModelIndex &previous);
     void detailsChanged();
     void updateCleanButton();
+    void updateGenerateKitButton(const Interpreter &interpreter);
     void addItem();
     void deleteItem();
     void makeDefault();
+    void generateKit();
     void cleanUp();
 };
 
 InterpreterOptionsWidget::InterpreterOptionsWidget()
-    : m_detailsWidget(new InterpreterDetailsWidget(this))
+    : m_model(createInterpreterModel(this))
+    , m_detailsWidget(new InterpreterDetailsWidget(this))
     , m_defaultId(PythonSettings::defaultInterpreter().id)
 {
-    m_model.setDataAccessor([this](const Interpreter &interpreter, int column, int role) -> QVariant {
-        switch (role) {
-        case Qt::DisplayRole:
-            return interpreter.name;
-        case Qt::FontRole: {
-            QFont f = font();
-            f.setBold(interpreter.id == m_defaultId);
-            return f;
-        }
-        case Qt::ToolTipRole:
-            if (interpreter.command.needsDevice())
-                break;
-            if (interpreter.command.isEmpty())
-                return Tr::tr("Executable is empty.");
-            if (!interpreter.command.exists())
-                return Tr::tr("\"%1\" does not exist.").arg(interpreter.command.toUserOutput());
-            if (!interpreter.command.isExecutableFile())
-                return Tr::tr("\"%1\" is not an executable file.")
-                    .arg(interpreter.command.toUserOutput());
-            break;
-        case Qt::DecorationRole:
-            if (interpreter.command.needsDevice())
-                break;
-            if (column == 0 && !interpreter.command.isExecutableFile())
-                return Utils::Icons::CRITICAL.icon();
-            break;
-        default:
-            break;
-        }
-        return {};
-    });
-    m_model.setAllData(PythonSettings::interpreters());
-
     auto addButton = new QPushButton(Tr::tr("&Add"), this);
 
     m_deleteButton = new QPushButton(Tr::tr("&Delete"), this);
     m_deleteButton->setEnabled(false);
     m_makeDefaultButton = new QPushButton(Tr::tr("&Make Default"));
     m_makeDefaultButton->setEnabled(false);
+    m_generateKitButton = new QPushButton(Tr::tr("&Generate Kit"));
+    m_generateKitButton->setEnabled(false);
 
     m_cleanButton = new QPushButton(Tr::tr("&Clean Up"), this);
     m_cleanButton->setToolTip(Tr::tr("Remove all Python interpreters without a valid executable."));
@@ -209,6 +187,7 @@ InterpreterOptionsWidget::InterpreterOptionsWidget()
         addButton,
         m_deleteButton,
         m_makeDefaultButton,
+        m_generateKitButton,
         m_cleanButton,
         st
     };
@@ -222,7 +201,7 @@ InterpreterOptionsWidget::InterpreterOptionsWidget()
 
     m_detailsWidget->hide();
 
-    m_view->setModel(&m_model);
+    m_view->setModel(m_model);
     m_view->setHeaderHidden(true);
     m_view->setSelectionMode(QAbstractItemView::SingleSelection);
     m_view->setSelectionBehavior(QAbstractItemView::SelectItems);
@@ -230,6 +209,7 @@ InterpreterOptionsWidget::InterpreterOptionsWidget()
     connect(addButton, &QPushButton::pressed, this, &InterpreterOptionsWidget::addItem);
     connect(m_deleteButton, &QPushButton::pressed, this, &InterpreterOptionsWidget::deleteItem);
     connect(m_makeDefaultButton, &QPushButton::pressed, this, &InterpreterOptionsWidget::makeDefault);
+    connect(m_generateKitButton, &QPushButton::pressed, this, &InterpreterOptionsWidget::generateKit);
     connect(m_cleanButton, &QPushButton::pressed, this, &InterpreterOptionsWidget::cleanUp);
 
     connect(m_detailsWidget, &InterpreterDetailsWidget::changed,
@@ -245,38 +225,41 @@ void InterpreterOptionsWidget::apply()
 
 void InterpreterOptionsWidget::addInterpreter(const Interpreter &interpreter)
 {
-    m_model.appendItem(interpreter);
+    m_model->appendItem(interpreter);
 }
 
 void InterpreterOptionsWidget::removeInterpreterFrom(const QString &detectionSource)
 {
-    m_model.destroyItems(Utils::equal(&Interpreter::detectionSource, detectionSource));
+    m_model->destroyItems(Utils::equal(&Interpreter::detectionSource, detectionSource));
 }
 
 QList<Interpreter> InterpreterOptionsWidget::interpreters() const
 {
     QList<Interpreter> interpreters;
-    for (const TreeItem *treeItem : m_model)
+    for (const TreeItem *treeItem : *m_model)
         interpreters << static_cast<const ListItem<Interpreter> *>(treeItem)->itemData;
     return interpreters;
 }
 
 QList<Interpreter> InterpreterOptionsWidget::interpreterFrom(const QString &detectionSource) const
 {
-    return m_model.allData(Utils::equal(&Interpreter::detectionSource, detectionSource));
+    return m_model->allData(Utils::equal(&Interpreter::detectionSource, detectionSource));
 }
 
 void InterpreterOptionsWidget::currentChanged(const QModelIndex &index, const QModelIndex &previous)
 {
     if (previous.isValid()) {
-        m_model.itemAt(previous.row())->itemData = m_detailsWidget->toInterpreter();
-        emit m_model.dataChanged(previous, previous);
+        m_model->itemAt(previous.row())->itemData = m_detailsWidget->toInterpreter();
+        emit m_model->dataChanged(previous, previous);
     }
     if (index.isValid()) {
-        m_detailsWidget->updateInterpreter(m_model.itemAt(index.row())->itemData);
+        const Interpreter interpreter = m_model->itemAt(index.row())->itemData;
+        m_detailsWidget->updateInterpreter(interpreter);
         m_detailsWidget->show();
+        updateGenerateKitButton(interpreter);
     } else {
         m_detailsWidget->hide();
+        m_generateKitButton->setEnabled(false);
     }
     m_deleteButton->setEnabled(index.isValid());
     m_makeDefaultButton->setEnabled(index.isValid());
@@ -286,23 +269,32 @@ void InterpreterOptionsWidget::detailsChanged()
 {
     const QModelIndex &index = m_view->currentIndex();
     if (index.isValid()) {
-        m_model.itemAt(index.row())->itemData = m_detailsWidget->toInterpreter();
-        emit m_model.dataChanged(index, index);
+        const Interpreter interpreter = m_detailsWidget->toInterpreter();
+        m_model->itemAt(index.row())->itemData = interpreter;
+        emit m_model->dataChanged(index, index);
+        updateGenerateKitButton(interpreter);
     }
     updateCleanButton();
 }
 
 void InterpreterOptionsWidget::updateCleanButton()
 {
-    m_cleanButton->setEnabled(Utils::anyOf(m_model.allData(), [](const Interpreter &interpreter) {
+    m_cleanButton->setEnabled(Utils::anyOf(m_model->allData(), [](const Interpreter &interpreter) {
         return !interpreter.command.isExecutableFile();
     }));
 }
 
+void InterpreterOptionsWidget::updateGenerateKitButton(const Interpreter &interpreter)
+{
+    bool enabled = !KitManager::kit(Id::fromString(interpreter.id))
+            && (interpreter.command.needsDevice() || interpreter.command.isExecutableFile());
+    m_generateKitButton->setEnabled(enabled);
+}
+
 void InterpreterOptionsWidget::addItem()
 {
-    const QModelIndex &index = m_model.indexForItem(
-        m_model.appendItem({QUuid::createUuid().toString(), QString("Python"), FilePath(), false}));
+    const QModelIndex &index = m_model->indexForItem(m_model->appendItem(
+        {QUuid::createUuid().toString(), QString("Python"), FilePath(), false}));
     QTC_ASSERT(index.isValid(), return);
     m_view->setCurrentIndex(index);
     updateCleanButton();
@@ -312,7 +304,7 @@ void InterpreterOptionsWidget::deleteItem()
 {
     const QModelIndex &index = m_view->currentIndex();
     if (index.isValid())
-        m_model.destroyItem(m_model.itemAt(index.row()));
+        m_model->destroyItem(m_model->itemAt(index.row()));
     updateCleanButton();
 }
 
@@ -326,33 +318,27 @@ public:
         setCategory(Constants::C_PYTHON_SETTINGS_CATEGORY);
         setDisplayCategory(Tr::tr("Python"));
         setCategoryIconPath(":/python/images/settingscategory_python.png");
-        setWidgetCreator([this] { m_widget = new InterpreterOptionsWidget; return m_widget; });
+        setWidgetCreator([] { return new InterpreterOptionsWidget(); });
     }
 
     QList<Interpreter> interpreters()
     {
-        if (m_widget)
-            return m_widget->interpreters();
-        return {};
+        return static_cast<InterpreterOptionsWidget *>(widget())->interpreters();
     }
 
     void addInterpreter(const Interpreter &interpreter)
     {
-        if (m_widget)
-            m_widget->addInterpreter(interpreter);
+        static_cast<InterpreterOptionsWidget *>(widget())->addInterpreter(interpreter);
     }
 
     void removeInterpreterFrom(const QString &detectionSource)
     {
-        if (m_widget)
-            m_widget->removeInterpreterFrom(detectionSource);
+        static_cast<InterpreterOptionsWidget *>(widget())->removeInterpreterFrom(detectionSource);
     }
 
     QList<Interpreter> interpreterFrom(const QString &detectionSource)
     {
-        if (m_widget)
-            return m_widget->interpreterFrom(detectionSource);
-        return {};
+        return static_cast<InterpreterOptionsWidget *>(widget())->interpreterFrom(detectionSource);
     }
 
     QStringList keywords() const final
@@ -366,9 +352,6 @@ public:
             Tr::tr("&Make Default")
         };
     }
-
-private:
-    InterpreterOptionsWidget *m_widget = nullptr;
 };
 
 static InterpreterOptionsPage &interpreterOptionsPage()
@@ -391,7 +374,6 @@ static const QStringList &plugins()
                                      "pydocstyle",
                                      "pyflakes",
                                      "pylint",
-                                     "rope_completion",
                                      "yapf"};
     return plugins;
 }
@@ -400,11 +382,10 @@ class PyLSConfigureWidget : public Core::IOptionsPageWidget
 {
 public:
     PyLSConfigureWidget()
-        : m_editor(LanguageClient::jsonEditor())
+        : m_editor(LanguageClient::createJsonEditor(this))
         , m_advancedLabel(new QLabel)
         , m_pluginsGroup(new QGroupBox(Tr::tr("Plugins:")))
         , m_mainGroup(new QGroupBox(Tr::tr("Use Python Language Server")))
-
     {
         m_mainGroup->setCheckable(true);
 
@@ -543,19 +524,27 @@ void InterpreterOptionsWidget::makeDefault()
 {
     const QModelIndex &index = m_view->currentIndex();
     if (index.isValid()) {
-        QModelIndex defaultIndex = m_model.findIndex([this](const Interpreter &interpreter) {
+        QModelIndex defaultIndex = m_model->findIndex([this](const Interpreter &interpreter) {
             return interpreter.id == m_defaultId;
         });
-        m_defaultId = m_model.itemAt(index.row())->itemData.id;
-        emit m_model.dataChanged(index, index, {Qt::FontRole});
+        m_defaultId = m_model->itemAt(index.row())->itemData.id;
+        emit m_model->dataChanged(index, index, {Qt::FontRole});
         if (defaultIndex.isValid())
-            emit m_model.dataChanged(defaultIndex, defaultIndex, {Qt::FontRole});
+            emit m_model->dataChanged(defaultIndex, defaultIndex, {Qt::FontRole});
     }
+}
+
+void InterpreterOptionsWidget::generateKit()
+{
+    const QModelIndex &index = m_view->currentIndex();
+    if (index.isValid())
+        PythonSettings::addKitsForInterpreter(m_model->itemAt(index.row())->itemData, true);
+    m_generateKitButton->setEnabled(false);
 }
 
 void InterpreterOptionsWidget::cleanUp()
 {
-    m_model.destroyItems(
+    m_model->destroyItems(
         [](const Interpreter &interpreter) { return !interpreter.command.isExecutableFile(); });
     updateCleanButton();
 }
@@ -563,6 +552,7 @@ void InterpreterOptionsWidget::cleanUp()
 constexpr char settingsGroupKey[] = "Python";
 constexpr char interpreterKey[] = "Interpeter";
 constexpr char defaultKey[] = "DefaultInterpeter";
+constexpr char kitsGeneratedKey[] = "KitsGenerated";
 constexpr char pylsEnabledKey[] = "PylsEnabled";
 constexpr char pylsConfigurationKey[] = "PylsConfiguration";
 
@@ -587,7 +577,6 @@ static QString defaultPylsConfiguration()
         plugins.insert("pydocstyle", disabled);
         plugins.insert("pyflakes", enabled);
         plugins.insert("pylint", disabled);
-        plugins.insert("rope_completion", enabled);
         plugins.insert("yapf", enabled);
         QJsonObject pylsp;
         pylsp.insert("plugins", plugins);
@@ -596,7 +585,7 @@ static QString defaultPylsConfiguration()
     return QString::fromUtf8(QJsonDocument(configuration).toJson());
 }
 
-static void disableOutdatedPylsNow()
+void PythonSettings::disableOutdatedPylsNow()
 {
     using namespace LanguageClient;
     const QList<BaseSettings *>
@@ -612,23 +601,26 @@ static void disableOutdatedPylsNow()
     }
 }
 
-static void disableOutdatedPyls()
+void PythonSettings::disableOutdatedPyls()
 {
     using namespace ExtensionSystem;
     if (PluginManager::isInitializationDone()) {
         disableOutdatedPylsNow();
     } else {
         QObject::connect(PluginManager::instance(), &PluginManager::initializationDone,
-                         PythonPlugin::instance(), &disableOutdatedPylsNow);
+                         this, &PythonSettings::disableOutdatedPylsNow);
     }
 }
 
-static QList<Interpreter> pythonsFromRegistry()
+static void pythonsFromRegistry(QPromise<QList<Interpreter>> &promise)
 {
     QList<Interpreter> pythons;
     QSettings pythonRegistry("HKEY_LOCAL_MACHINE\\SOFTWARE\\Python\\PythonCore",
                              QSettings::NativeFormat);
     for (const QString &versionGroup : pythonRegistry.childGroups()) {
+        if (promise.isCanceled())
+            return;
+
         pythonRegistry.beginGroup(versionGroup);
         QString name = pythonRegistry.value("DisplayName").toString();
         QVariant regVal = pythonRegistry.value("InstallPath/ExecutablePath");
@@ -640,45 +632,31 @@ static QList<Interpreter> pythonsFromRegistry()
                                        FilePath::fromUserInput(regVal.toString())};
             }
         }
-        regVal = pythonRegistry.value("InstallPath/WindowedExecutablePath");
-        if (regVal.isValid()) {
-            const FilePath &executable = FilePath::fromUserInput(regVal.toString());
-            if (executable.exists()) {
-                pythons << Interpreter{QUuid::createUuid().toString(),
-                                       //: <python display name> (Windowed)
-                                       Tr::tr("%1 (Windowed)").arg(name),
-                                       FilePath::fromUserInput(regVal.toString())};
-            }
-        }
         regVal = pythonRegistry.value("InstallPath/.");
         if (regVal.isValid()) {
             const FilePath &path = FilePath::fromUserInput(regVal.toString());
             const FilePath python = path.pathAppended("python").withExecutableSuffix();
             if (python.exists())
                 pythons << createInterpreter(python, "Python " + versionGroup);
-            const FilePath pythonw = path.pathAppended("pythonw").withExecutableSuffix();
-            if (pythonw.exists())
-                pythons << createInterpreter(pythonw, "Python " + versionGroup, "(Windowed)");
         }
         pythonRegistry.endGroup();
     }
-    return pythons;
+    promise.addResult(pythons);
 }
 
-static QList<Interpreter> pythonsFromPath()
+static void pythonsFromPath(QPromise<QList<Interpreter>> &promise)
 {
     QList<Interpreter> pythons;
     if (HostOsInfo::isWindowsHost()) {
         for (const FilePath &executable : FilePath("python").searchAllInPath()) {
+            if (promise.isCanceled())
+                return;
+
             // Windows creates empty redirector files that may interfere
             if (executable.toFileInfo().size() == 0)
                 continue;
             if (executable.exists())
                 pythons << createInterpreter(executable, "Python from Path");
-        }
-        for (const FilePath &executable : FilePath("pythonw").searchAllInPath()) {
-            if (executable.exists())
-                pythons << createInterpreter(executable, "Python from Path", "(Windowed)");
         }
     } else {
         const QStringList filters = {"python",
@@ -686,16 +664,22 @@ static QList<Interpreter> pythonsFromPath()
                                      "python[1-9].[1-9][0-9]",
                                      "python[1-9]"};
         const FilePaths dirs = Environment::systemEnvironment().path();
+        QSet<FilePath> used;
         for (const FilePath &path : dirs) {
             const QDir dir(path.toString());
             for (const QFileInfo &fi : dir.entryInfoList(filters)) {
-                const FilePath executable = Utils::FilePath::fromFileInfo(fi);
-                if (executable.exists())
+                if (promise.isCanceled())
+                    return;
+
+                const FilePath executable = FilePath::fromUserInput(fi.canonicalFilePath());
+                if (!used.contains(executable) && executable.exists()) {
+                    used.insert(executable);
                     pythons << createInterpreter(executable, "Python from Path");
+                }
             }
         }
     }
-    return pythons;
+    promise.addResult(pythons);
 }
 
 static QString idForPythonFromPath(const QList<Interpreter> &pythons)
@@ -724,41 +708,6 @@ static bool alreadyRegistered(const Interpreter &candidate)
                         });
 }
 
-static void scanPath()
-{
-    auto watcher = new QFutureWatcher<QList<Interpreter>>();
-    QObject::connect(watcher, &QFutureWatcher<QList<Interpreter>>::finished, [watcher]() {
-        for (const Interpreter &interpreter : watcher->result()) {
-            if (!alreadyRegistered(interpreter))
-                settingsInstance->addInterpreter(interpreter);
-        }
-        watcher->deleteLater();
-    });
-    watcher->setFuture(Utils::asyncRun(pythonsFromPath));
-}
-
-static void scanRegistry()
-{
-    auto watcher = new QFutureWatcher<QList<Interpreter>>();
-    QObject::connect(watcher, &QFutureWatcher<QList<Interpreter>>::finished, [watcher]() {
-        for (const Interpreter &interpreter : watcher->result()) {
-            if (!alreadyRegistered(interpreter))
-                settingsInstance->addInterpreter(interpreter);
-        }
-        watcher->deleteLater();
-        scanPath();
-    });
-    watcher->setFuture(Utils::asyncRun(pythonsFromRegistry));
-}
-
-static void scanSystemForInterpreters()
-{
-    if (Utils::HostOsInfo::isWindowsHost())
-        scanRegistry();
-    else
-        scanPath();
-}
-
 PythonSettings::PythonSettings()
 {
     QTC_ASSERT(!settingsInstance, return);
@@ -769,7 +718,30 @@ PythonSettings::PythonSettings()
 
     initFromSettings(Core::ICore::settings());
 
-    scanSystemForInterpreters();
+    const auto onRegistrySetup = [](Async<QList<Interpreter>> &task) {
+        task.setConcurrentCallData(pythonsFromRegistry);
+    };
+    const auto onPathSetup = [](Async<QList<Interpreter>> &task) {
+        task.setConcurrentCallData(pythonsFromPath);
+    };
+    const auto onTaskDone = [](const Async<QList<Interpreter>> &task) {
+        if (!task.isResultAvailable())
+            return;
+
+        const auto interpreters = task.result();
+        for (const Interpreter &interpreter : interpreters) {
+            if (!alreadyRegistered(interpreter))
+                settingsInstance->addInterpreter(interpreter);
+        }
+    };
+
+    const Tasking::Group recipe {
+        Tasking::finishAllAndSuccess,
+        Utils::HostOsInfo::isWindowsHost()
+            ? AsyncTask<QList<Interpreter>>(onRegistrySetup, onTaskDone) : Tasking::nullItem,
+        AsyncTask<QList<Interpreter>>(onPathSetup, onTaskDone)
+    };
+    m_taskTreeRunner.start(recipe);
 
     if (m_defaultInterpreterId.isEmpty())
         m_defaultInterpreterId = idForPythonFromPath(m_interpreters);
@@ -786,12 +758,72 @@ PythonSettings::~PythonSettings()
     settingsInstance = nullptr;
 }
 
+static void setRelevantAspectsToKit(Kit *k)
+{
+    QTC_ASSERT(k, return);
+    QSet<Utils::Id> relevantAspects = k->relevantAspects();
+    relevantAspects.unite({PythonKitAspect::id(), EnvironmentKitAspect::id()});
+    k->setRelevantAspects(relevantAspects);
+}
+
+void PythonSettings::addKitsForInterpreter(const Interpreter &interpreter, bool force)
+{
+    if (!KitManager::isLoaded()) {
+        connect(KitManager::instance(),
+                &KitManager::kitsLoaded,
+                settingsInstance,
+                [interpreter, force]() { addKitsForInterpreter(interpreter, force); });
+        return;
+    }
+
+    const Id kitId = Id::fromString(interpreter.id);
+    if (Kit *k = KitManager::kit(kitId)) {
+        setRelevantAspectsToKit(k);
+    } else if (force || !isVenvPython(interpreter.command)) {
+        KitManager::registerKit(
+            [interpreter](Kit *k) {
+                k->setAutoDetected(true);
+                k->setAutoDetectionSource("Python");
+                k->setUnexpandedDisplayName("%{Python:Name}");
+                setRelevantAspectsToKit(k);
+                PythonKitAspect::setPython(k, interpreter.id);
+                k->setSticky(PythonKitAspect::id(), true);
+            },
+            kitId);
+    }
+}
+
+void PythonSettings::removeKitsForInterpreter(const Interpreter &interpreter)
+{
+    if (!KitManager::isLoaded()) {
+        connect(KitManager::instance(), &KitManager::kitsLoaded, settingsInstance, [interpreter]() {
+            removeKitsForInterpreter(interpreter);
+        });
+        return;
+    }
+
+    if (Kit *k = KitManager::kit(Id::fromString(interpreter.id)))
+        KitManager::deregisterKit(k);
+}
+
+bool PythonSettings::interpreterIsValid(const Interpreter &interpreter)
+{
+    return interpreter.command.needsDevice() || interpreter.command.isExecutableFile();
+}
+
 void PythonSettings::setInterpreter(const QList<Interpreter> &interpreters, const QString &defaultId)
 {
     if (defaultId == settingsInstance->m_defaultInterpreterId
         && interpreters == settingsInstance->m_interpreters) {
         return;
     }
+    QList<Interpreter> toRemove = settingsInstance->m_interpreters;
+    for (const Interpreter &interpreter : interpreters) {
+        if (!Utils::eraseOne(toRemove, Utils::equal(&Interpreter::id, interpreter.id)))
+            addKitsForInterpreter(interpreter, false);
+    }
+    for (const Interpreter &interpreter : toRemove)
+        removeKitsForInterpreter(interpreter);
     settingsInstance->m_interpreters = interpreters;
     settingsInstance->m_defaultInterpreterId = defaultId;
     saveSettings();
@@ -833,6 +865,7 @@ void PythonSettings::addInterpreter(const Interpreter &interpreter, bool isDefau
     if (isDefault)
         settingsInstance->m_defaultInterpreterId = interpreter.id;
     saveSettings();
+    addKitsForInterpreter(interpreter, false);
 }
 
 Interpreter PythonSettings::addInterpreter(const FilePath &interpreterPath,
@@ -853,7 +886,7 @@ PythonSettings *PythonSettings::instance()
 void PythonSettings::createVirtualEnvironmentInteractive(
     const FilePath &startDirectory,
     const Interpreter &defaultInterpreter,
-    const std::function<void(std::optional<Interpreter>)> &callback)
+    const std::function<void(const FilePath &)> &callback)
 {
     QDialog dialog;
     dialog.setModal(true);
@@ -893,26 +926,37 @@ void PythonSettings::createVirtualEnvironmentInteractive(
         interpreters->currentData().toString());
 
     auto venvDir = pathChooser->filePath();
-    createVirtualEnvironment(venvDir, interpreter, callback);
+    createVirtualEnvironment(interpreter.command, venvDir, callback);
 }
 
 void PythonSettings::createVirtualEnvironment(
+    const FilePath &python,
     const FilePath &directory,
-    const Interpreter &interpreter,
-    const std::function<void(std::optional<Interpreter>)> &callback,
-    const QString &nameSuffix)
+    const std::function<void(const FilePath &)> &callback)
 {
-    createVenv(interpreter.command, directory, [directory, callback, nameSuffix](bool success) {
-        std::optional<Interpreter> result;
-        if (success) {
+    QTC_ASSERT(python.isExecutableFile(), return);
+    QTC_ASSERT(!directory.exists() || directory.isDir(), return);
+
+    const CommandLine command(python, QStringList{"-m", "venv", directory.toUserOutput()});
+
+    auto process = new Process;
+    auto progress = new Core::ProcessProgress(process);
+    progress->setDisplayName(Tr::tr("Create Python venv"));
+    QObject::connect(process, &Process::done, [directory, process, callback](){
+        if (process->result() == ProcessResult::FinishedWithSuccess) {
             FilePath venvPython = directory.osType() == Utils::OsTypeWindows ? directory / "Scripts"
                                                                              : directory / "bin";
             venvPython = venvPython.pathAppended("python").withExecutableSuffix();
-            if (venvPython.exists())
-                result = PythonSettings::addInterpreter(venvPython, false, nameSuffix);
+            if (venvPython.exists()) {
+                if (callback)
+                    callback(venvPython);
+                emit instance()->virtualEnvironmentCreated(venvPython);
+            }
         }
-        callback(result);
+        process->deleteLater();
     });
+    process->setCommand(command);
+    process->start();
 }
 
 QList<Interpreter> PythonSettings::detectPythonVenvs(const FilePath &path)
@@ -981,7 +1025,24 @@ void PythonSettings::initFromSettings(QtcSettings *settings)
                 || interpreter.command.isExecutableFile();
     };
 
-    m_interpreters = Utils::filtered(m_interpreters, keepInterpreter);
+    const auto [valid, outdatedInterpreters] = Utils::partition(m_interpreters, keepInterpreter);
+    m_interpreters = valid;
+
+    if (!settings->value(kitsGeneratedKey, false).toBool()) {
+        for (const Interpreter &interpreter : m_interpreters) {
+            if (interpreter.autoDetected) {
+                const FilePath &cmd = interpreter.command;
+                if (cmd.needsDevice() || cmd.parentDir().pathAppended("activate").exists())
+                    continue;
+            }
+            addKitsForInterpreter(interpreter, false);
+        }
+    } else {
+        fixupPythonKits();
+    }
+
+    for (const Interpreter &outdated : outdatedInterpreters)
+        removeKitsForInterpreter(outdated);
 
     m_defaultInterpreterId = settings->value(defaultKey).toString();
 
@@ -1012,8 +1073,13 @@ void PythonSettings::writeToSettings(QtcSettings *settings)
     }
     settings->setValue(interpreterKey, interpretersVar);
     settings->setValue(defaultKey, m_defaultInterpreterId);
-    settings->setValue(pylsConfigurationKey, m_pylsConfiguration);
+
+    settings->setValueWithDefault(pylsConfigurationKey,
+                                  m_pylsConfiguration,
+                                  defaultPylsConfiguration());
+
     settings->setValue(pylsEnabledKey, m_pylsEnabled);
+    settings->setValue(kitsGeneratedKey, true);
     settings->endGroup();
 }
 
@@ -1056,6 +1122,22 @@ void PythonSettings::listDetectedPython(const QString &detectionSource, QString 
         logMessage->append(interpreter.name + '\n');
 }
 
+void PythonSettings::fixupPythonKits()
+{
+    if (!KitManager::isLoaded()) {
+        connect(KitManager::instance(),
+                &KitManager::kitsLoaded,
+                settingsInstance,
+                &PythonSettings::fixupPythonKits,
+                Qt::UniqueConnection);
+        return;
+    }
+    for (const Interpreter &interpreter : m_interpreters) {
+        if (auto k = KitManager::kit(Id::fromString(interpreter.id)))
+            setRelevantAspectsToKit(k);
+    }
+}
+
 void PythonSettings::saveSettings()
 {
     QTC_ASSERT(settingsInstance, return);
@@ -1078,6 +1160,59 @@ Interpreter PythonSettings::interpreter(const QString &interpreterId)
 {
     return Utils::findOrDefault(settingsInstance->m_interpreters,
                                 Utils::equal(&Interpreter::id, interpreterId));
+}
+
+void setupPythonSettings(QObject *guard)
+{
+    new PythonSettings; // Initializes settingsInstance
+    settingsInstance->setParent(guard);
+}
+
+Utils::ListModel<ProjectExplorer::Interpreter> *createInterpreterModel(QObject *parent)
+{
+    const auto model = new ListModel<Interpreter>(parent);
+    model->setDataAccessor([](const Interpreter &interpreter, int column, int role) -> QVariant {
+        if (interpreter.id == "none") {
+            if (role == Qt::DisplayRole)
+                return Tr::tr("None");
+            if (role == KitAspect::IsNoneRole)
+                return true;
+            return {};
+        }
+        switch (role) {
+        case Qt::DisplayRole:
+            return interpreter.name;
+        case Qt::FontRole: {
+            QFont f;
+            f.setBold(interpreter.id == PythonSettings::defaultInterpreter().id);
+            return f;
+        }
+        case Qt::ToolTipRole:
+            if (interpreter.command.needsDevice())
+                break;
+            if (interpreter.command.isEmpty())
+                return Tr::tr("Executable is empty.");
+            if (!interpreter.command.exists())
+                return Tr::tr("\"%1\" does not exist.").arg(interpreter.command.toUserOutput());
+            if (!interpreter.command.isExecutableFile())
+                return Tr::tr("\"%1\" is not an executable file.")
+                    .arg(interpreter.command.toUserOutput());
+            break;
+        case Qt::DecorationRole:
+            if (column == 0 && !PythonSettings::interpreterIsValid(interpreter))
+                return Utils::Icons::CRITICAL.icon();
+            break;
+        case KitAspect::IdRole:
+            return interpreter.id;
+        case KitAspect::QualityRole:
+            return int(PythonSettings::interpreterIsValid(interpreter));
+        default:
+            break;
+        }
+        return {};
+    });
+    model->setAllData(PythonSettings::interpreters());
+    return model;
 }
 
 } // Python::Internal

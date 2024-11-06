@@ -85,11 +85,37 @@ public:
         Item *item = nullptr;
         ProductContext *product = nullptr; // Set if and only if the dep is a product.
 
-        // All items that declared an explicit dependency on this module. Can contain any
+        // All the sites that declared an explicit dependency on this module. Can contain any
         // number of module instances and at most one product.
         using ParametersWithPriority = std::pair<QVariantMap, int>;
-        using LoadingItemInfo = std::pair<Item *, ParametersWithPriority>;
-        std::vector<LoadingItemInfo> loadingItems;
+        struct LoadContext {
+            LoadContext(Item *dependsItem,
+                        const ParametersWithPriority &parameters)
+                : dependsItem(dependsItem), parameters(parameters) {}
+            LoadContext(Item *dependsItem, ParametersWithPriority &&parameters)
+                : dependsItem(dependsItem), parameters(std::move(parameters)) {}
+
+            LoadContext(const LoadContext &) = default;
+            LoadContext(LoadContext &&) = default;
+            LoadContext &operator=(const LoadContext &) = default;
+            LoadContext &operator=(LoadContext &&) = default;
+
+            Item *loadingItem() const
+            {
+                if (!dependsItem)
+                    return nullptr;
+                Item *loadingItem = dependsItem->parent();
+                while (loadingItem->type() == ItemType::Group)
+                    loadingItem = loadingItem->parent();
+                QBS_CHECK(
+                    loadingItem->type() == ItemType::ModuleInstance
+                    || loadingItem->type() == ItemType::Product);
+                return loadingItem;
+            }
+            Item *dependsItem;
+            ParametersWithPriority parameters;
+        };
+        std::vector<LoadContext> loadContexts;
 
         QVariantMap parameters;
         VersionRange versionRange;
@@ -109,6 +135,7 @@ public:
 
     const QString &id() const { return m_id; }
     const CodeLocation &location() const { return m_location; }
+    CodeRange codeRange() const;
     Item *prototype() const { return m_prototype; }
     Item *rootPrototype();
     Item *scope() const { return m_scope; }
@@ -153,6 +180,7 @@ public:
     void setPropertyDeclaration(const QString &name, const PropertyDeclaration &declaration);
     void setPropertyDeclarations(const PropertyDeclarationMap &decls);
     void setLocation(const CodeLocation &location) { m_location = location; }
+    void setEndPosition(const CodePosition &position) { m_endPosition = position; }
     void setPrototype(Item *prototype) { m_prototype = prototype; }
     void setFile(const FileContextPtr &file) { m_file = file; }
     void setId(const QString &id) { m_id = id; }
@@ -165,6 +193,7 @@ public:
     static void removeChild(Item *parent, Item *child);
     void dump() const;
     bool isPresentModule() const;
+    bool isFallbackModule() const;
     void setupForBuiltinType(DeprecationWarningMode deprecationMode, Logger &logger);
     void copyProperty(const QString &propertyName, Item *target) const;
     void overrideProperties(
@@ -181,7 +210,7 @@ public:
 private:
     ItemValuePtr itemProperty(const QString &name, const Item *itemTemplate,
                               const ItemValueConstPtr &itemValue, ItemPool &pool);
-
+    void adaptScopesOfClonedAlternatives(Item *clone) const;
     void dump(int indentation) const;
 
     void lockModule() const;
@@ -192,6 +221,7 @@ private:
     mutable std::mutex m_observersMutex;
     QString m_id;
     CodeLocation m_location;
+    CodePosition m_endPosition;
     Item *m_prototype = nullptr;
     Item *m_scope = nullptr;
     Item *m_outerItem = nullptr;
@@ -213,7 +243,7 @@ inline bool operator<(const Item::Module &m1, const Item::Module &m2) { return m
 
 Item *createNonPresentModule(ItemPool &pool, const QString &name, const QString &reason,
                              Item *module);
-void setScopeForDescendants(Item *item, Item *scope);
+void setScopeForDescendants(Item *item, Item *scope, bool insertIds);
 
 // This mechanism is needed because Module items are shared between products (not doing so
 // would be prohibitively expensive).

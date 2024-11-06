@@ -60,16 +60,13 @@ public:
 
         QString simUdid;
         qint64 inferiorPid{-1};
-        QString commandOutput;
     };
 
     using Response = Utils::expected_str<ResponseData>;
 
 public:
-    static QList<DeviceTypeInfo> availableDeviceTypes();
-    static QFuture<QList<DeviceTypeInfo>> updateDeviceTypes(QObject *context);
-    static QList<RuntimeInfo> availableRuntimes();
-    static QFuture<QList<RuntimeInfo>> updateRuntimes(QObject *context);
+    static QFuture<QList<DeviceTypeInfo>> updateDeviceTypes();
+    static QFuture<QList<RuntimeInfo>> updateRuntimes();
     static QList<SimulatorInfo> availableSimulators();
     static QFuture<QList<SimulatorInfo>> updateAvailableSimulators(QObject *context);
     static bool isSimulatorRunning(const QString &simUdid);

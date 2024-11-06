@@ -11,6 +11,8 @@
 #include "debugserverprovidermanager.h"
 #include "idebugserverprovider.h"
 
+#include <projectexplorer/devicesupport/idevicefactory.h>
+
 #include <utils/qtcassert.h>
 
 using namespace ProjectExplorer;
@@ -18,20 +20,20 @@ using namespace Utils;
 
 namespace BareMetal::Internal {
 
-const char debugServerProviderIdKeyC[] = "IDebugServerProviderId";
-
 // BareMetalDevice
 
 BareMetalDevice::BareMetalDevice()
 {
     setDisplayType(Tr::tr("Bare Metal"));
     setOsType(Utils::OsTypeOther);
+
+    m_debugServerProviderId.setSettingsKey("IDebugServerProviderId");
 }
 
 BareMetalDevice::~BareMetalDevice()
 {
     if (IDebugServerProvider *provider = DebugServerProviderManager::findProvider(
-                m_debugServerProviderId))
+                debugServerProviderId()))
         provider->unregisterDevice(this);
 }
 
@@ -42,70 +44,69 @@ QString BareMetalDevice::defaultDisplayName()
 
 QString BareMetalDevice::debugServerProviderId() const
 {
-    return m_debugServerProviderId;
+    return m_debugServerProviderId();
 }
 
 void BareMetalDevice::setDebugServerProviderId(const QString &id)
 {
-    if (id == m_debugServerProviderId)
+    if (id == debugServerProviderId())
         return;
     if (IDebugServerProvider *currentProvider =
-            DebugServerProviderManager::findProvider(m_debugServerProviderId))
+            DebugServerProviderManager::findProvider(debugServerProviderId()))
         currentProvider->unregisterDevice(this);
-    m_debugServerProviderId = id;
+    m_debugServerProviderId.setValue(id);
     if (IDebugServerProvider *provider = DebugServerProviderManager::findProvider(id))
         provider->registerDevice(this);
 }
 
 void BareMetalDevice::unregisterDebugServerProvider(IDebugServerProvider *provider)
 {
-    if (provider->id() == m_debugServerProviderId)
-        m_debugServerProviderId.clear();
+    if (provider->id() == debugServerProviderId())
+        m_debugServerProviderId.setValue(QString());
 }
 
 void BareMetalDevice::fromMap(const Store &map)
 {
     IDevice::fromMap(map);
-    QString providerId = map.value(debugServerProviderIdKeyC).toString();
-    if (providerId.isEmpty()) {
+
+    if (debugServerProviderId().isEmpty()) {
         const QString name = displayName();
         if (IDebugServerProvider *provider =
                 DebugServerProviderManager::findByDisplayName(name)) {
-            providerId = provider->id();
-            setDebugServerProviderId(providerId);
+            setDebugServerProviderId(provider->id());
         }
-    } else {
-        setDebugServerProviderId(providerId);
     }
-}
-
-Store BareMetalDevice::toMap() const
-{
-    Store map = IDevice::toMap();
-    map.insert(debugServerProviderIdKeyC, debugServerProviderId());
-    return map;
 }
 
 IDeviceWidget *BareMetalDevice::createWidget()
 {
-    return new BareMetalDeviceConfigurationWidget(sharedFromThis());
+    return new BareMetalDeviceConfigurationWidget(shared_from_this());
 }
 
 // Factory
 
-BareMetalDeviceFactory::BareMetalDeviceFactory()
-    : IDeviceFactory(Constants::BareMetalOsType)
+class BareMetalDeviceFactory final : public ProjectExplorer::IDeviceFactory
 {
-    setDisplayName(Tr::tr("Bare Metal Device"));
-    setCombinedIcon(":/baremetal/images/baremetaldevicesmall.png",
-                    ":/baremetal/images/baremetaldevice.png");
-    setConstructionFunction(&BareMetalDevice::create);
-    setCreator([] {
-        BareMetalDeviceConfigurationWizard wizard;
-        if (wizard.exec() != QDialog::Accepted)
-            return IDevice::Ptr();
-        return wizard.device();
-    });
+public:
+    BareMetalDeviceFactory()
+        : IDeviceFactory(Constants::BareMetalOsType)
+    {
+        setDisplayName(Tr::tr("Bare Metal Device"));
+        setCombinedIcon(":/baremetal/images/baremetaldevicesmall.png",
+                        ":/baremetal/images/baremetaldevice.png");
+        setConstructionFunction(&BareMetalDevice::create);
+        setCreator([] {
+            BareMetalDeviceConfigurationWizard wizard;
+            if (wizard.exec() != QDialog::Accepted)
+                return IDevice::Ptr();
+            return wizard.device();
+        });
+    }
+};
+
+void setupBareMetalDevice()
+{
+    static BareMetalDeviceFactory theBareMetalDeviceFactory;
 }
 
 } // BareMetal::Internal

@@ -9,9 +9,7 @@
 
 #include <cplusplus/Token.h>
 
-#ifdef WITH_TESTS
-#include <QTextDocument>
-#endif
+namespace ExtensionSystem { class IPlugin; }
 
 namespace CppEditor {
 
@@ -22,7 +20,7 @@ class CPPEDITOR_EXPORT CppHighlighter : public TextEditor::SyntaxHighlighter
 public:
     CppHighlighter(QTextDocument *document = nullptr);
 
-    void setLanguageFeatures(const CPlusPlus::LanguageFeatures &languageFeatures);
+    void setLanguageFeaturesFlags(unsigned int flags) override;
     void highlightBlock(const QString &text) override;
 
 private:
@@ -40,25 +38,8 @@ private:
     CPlusPlus::LanguageFeatures m_languageFeatures = CPlusPlus::LanguageFeatures::defaultFeatures();
 };
 
-#ifdef WITH_TESTS
 namespace Internal {
-class CppHighlighterTest : public CppHighlighter
-{
-    Q_OBJECT
-
-public:
-    CppHighlighterTest();
-
-private slots:
-    void test_data();
-    void test();
-    void testParentheses_data();
-    void testParentheses();
-
-private:
-    QTextDocument m_doc;
-};
+void registerHighlighterTests(ExtensionSystem::IPlugin &plugin);
 } // namespace Internal
-#endif // WITH_TESTS
 
 } // namespace CppEditor

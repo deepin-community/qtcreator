@@ -22,6 +22,7 @@
 #include "propertyeditorqmlbackend.h"
 #include "propertyeditorvalue.h"
 #include "propertymodel.h"
+#include "propertynamevalidator.h"
 #include "qmlanchorbindingproxy.h"
 #include "richtexteditor/richtexteditorproxy.h"
 #include "selectiondynamicpropertiesproxymodel.h"
@@ -53,7 +54,7 @@ void Quick2PropertyEditorView::registerQmlTypes()
         ItemFilterModel::registerDeclarativeType();
         ListValidator::registerDeclarativeType();
         ColorPaletteBackend::registerDeclarativeType();
-        Internal::QmlAnchorBindingProxy::registerDeclarativeType();
+        QmlAnchorBindingProxy::registerDeclarativeType();
         BindingEditor::registerDeclarativeType();
         ActionEditor::registerDeclarativeType();
         AnnotationEditor::registerDeclarativeType();
@@ -65,18 +66,12 @@ void Quick2PropertyEditorView::registerQmlTypes()
         DynamicPropertyRow::registerDeclarativeType();
         PropertyChangesModel::registerDeclarativeType();
         PropertyModel::registerDeclarativeType();
+        PropertyNameValidator::registerDeclarativeType();
 
         const QString resourcePath = PropertyEditorQmlBackend::propertyEditorResourcesPath();
 
         QUrl regExpUrl = QUrl::fromLocalFile(resourcePath + "/RegExpValidator.qml");
         qmlRegisterType(regExpUrl, "HelperWidgets", 2, 0, "RegExpValidator");
-
-        const QString qtPrefix = "/Qt6";
-        qmlRegisterType(QUrl::fromLocalFile(resourcePath + qtPrefix + "HelperWindow.qml"),
-                        "HelperWidgets",
-                        2,
-                        0,
-                        "HelperWindow");
     }
 }
 

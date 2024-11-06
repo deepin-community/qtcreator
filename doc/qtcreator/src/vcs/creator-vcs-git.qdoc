@@ -10,7 +10,7 @@
 /*!
     \page creator-vcs-git.html
     \if defined(qtdesignstudio)
-    \previouspage studio-developer-topics.html
+    \previouspage studio-finding-the-qt-runtime-version.html
     \nextpage studio-porting-projects.html
 
     \title Using Git
@@ -29,10 +29,6 @@
 
     You can use the \l{http://code.google.com/p/gerrit/}{Gerrit} code review
     tool for projects that use Git.
-
-    \if defined(qtdesignstudio)
-    \include creator-vcs-options.qdocinc vcs options
-    \endif
 
     \if defined(qtcreator)
     \section1 Using Git for Windows
@@ -79,7 +75,7 @@
 
     \image qtcreator-vcs-diff.png
 
-    The \l{Comparing Files}{diff editor} displays the diff side-by-side. To use
+    The diff editor displays the diff side-by-side. To use
     the unified diff view instead, select the
     \uicontrol {Switch to Unified Diff Editor} (1) option from the toolbar.
     In both views, you can use context menu commands to apply, revert, stage,
@@ -309,10 +305,11 @@
     \section2 Working with Branches
 
     To work with Git branches, select \uicontrol {Branches}. The
-    \uicontrol {Git Branches} sidebar view shows the checked out
-    branch in bold and underlined in the list of branches.
+    \uicontrol {Git Branches} view shows a list of branches, as well
+    as the differences between your local branches and their origin.
+    The branch you checked out is shown in bold and underlined.
 
-    \image qtcreator-vcs-gitbranch.png {Git Branches sidebar view}
+    \image qtcreator-git-branches.webp {Git Branches view}
 
     Old entries and tags are filtered out of the list of branches
     by default. To include them, select \inlineimage icons/filtericon.png
@@ -331,6 +328,20 @@
 
     To refresh the list of branches, select \inlineimage icons/reload_gray.png
     (\uicontrol Refresh).
+
+    \section3 Adding Branches
+
+    To create a new tracking or non-tracking branch, select
+    \inlineimage icons/plus.png.
+
+    \image qtcreator-git-add-branch.webp {Add Branch dialog}
+
+    To check out the branch when creating it, select
+    \uicontrol {Checkout new branch}.
+
+    To track the selected branch, select \uicontrol {Track local branch}.
+
+    \section3 Managing Branches
 
     The context menu for a branch has the following functions:
 
@@ -532,6 +543,45 @@
 
     \endtable
 
+    \section2 Using Instant Blame
+
+    Instant Blame annotates the current editor line with its author and date this
+    line was last changed. The commit subject can optionally be shown in the annotation.
+
+    \note Instant Blame is not available for unsaved files.
+
+    To show the latest real changes to the line, configure Instant Blame to ignore
+    whitespace changes and line moves.
+
+    When you hover the annotation, a tooltip with additional information is shown.
+    From the tooltip, the following actions are available:
+
+    \table
+        \header
+            \li Action
+            \li Description
+        \row
+            \li Blame <hash>
+            \li Opens the full file blame for the revision of \e hash.
+        \row
+            \li Blame Parent
+            \li Opens the full file blame for the parent revision of \e hash.
+        \row
+            \li File at <hash>
+            \li Opens the file contents at the revision of \e hash.
+        \row
+            \li Log for line <line>
+            \li Shows a log with all the commits that touched the \e line.
+        \row
+            \li Icon "Copy"
+            \li Copies the full \e hash to the clipboard.
+        \row
+            \li commit <hash>
+            \li Opens the commit \e hash with full description and diff.
+    \endtable
+
+    \note Most of these actions have no meaning for uncommmited changes.
+
     \section2 Using Git with Subversion
 
     You can use Git as a client for a Subversion server. To fetch changes from a
@@ -623,6 +673,7 @@
     visible only when you have merge conflicts to resolve.
 
     \if defined(qtcreator)
-    \sa {Set up version control systems}, {Version Control Systems}
+    \sa {Compare files}, {Set up version control systems},
+        {Version Control Systems}
     \endif
 */

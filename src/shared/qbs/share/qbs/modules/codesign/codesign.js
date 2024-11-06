@@ -280,20 +280,21 @@ function prepareSign(project, product, inputs, outputs, input, output) {
         return cmds;
 
     var isBundle = "bundle.content" in outputs;
-    var outputFilePath = isBundle
-            ? FileInfo.joinPaths(product.destinationDirectory, product.bundle.bundleName)
-            : outputs["codesign.signed_artifact"][0].filePath;
-    var outputFileName = isBundle
-            ? product.bundle.bundleName
-            : outputs["codesign.signed_artifact"][0].fileName;
-    var isProductBundle = product.bundle && product.bundle.isBundle;
 
-    // If the product is a bundle, just sign the bundle
-    // instead of signing the bundle and executable separately
+    var artifacts = [];
+    if (isBundle) {
+        artifacts = [{
+            filePath: FileInfo.joinPaths(product.destinationDirectory, product.bundle.bundleName),
+            fileName: product.bundle.bundleName
+        }];
+    } else {
+        artifacts = outputs["codesign.signed_artifact"];
+    }
+    var isProductBundle = product.bundle && product.bundle.isBundle;
     var shouldSignArtifact = !isProductBundle || isBundle;
 
     var enableCodeSigning = product.codesign.enableCodeSigning;
-    if (enableCodeSigning && shouldSignArtifact) {
+    if (enableCodeSigning) {
         var actualSigningIdentity = product.codesign._actualSigningIdentity;
         if (!actualSigningIdentity) {
             throw "No codesigning identities (i.e. certificate and private key pairs) matching “"
@@ -310,36 +311,53 @@ function prepareSign(project, product, inputs, outputs, input, output) {
             }
         }
 
-        var args = ["--force", "--sign", actualSigningIdentity.SHA1];
-
-        // If signingTimestamp is undefined or empty, do not specify the flag at all -
-        // this uses the system-specific default behavior
-        var signingTimestamp = product.codesign.signingTimestamp;
-        if (signingTimestamp) {
-            // If signingTimestamp is an empty string, specify the flag but do
-            // not specify a value - this uses a default Apple-provided server
-            var flag = "--timestamp";
-            if (signingTimestamp)
-                flag += "=" + signingTimestamp;
-            args.push(flag);
+        // The codesign tool behaves weirdly. It can sign a bundle with a single artifact, but if
+        // say debug build variant is present, it starts complaining that it is not signed.
+        // We could always sign everything, but again, in case of a framework (but not in case of
+        // app or loadable bundle), codesign produces a warning that artifact is already signed.
+        // So, we skip signing the release artifact and only sign if other build variants present.
+        if (!shouldSignArtifact && artifacts.length == 1) {
+            artifacts = [];
         }
+        for (var i = 0; i < artifacts.length; ++i) {
+            if (!shouldSignArtifact
+                && artifacts[i].qbs && artifacts[i].qbs.buildVariant === "release") {
+                continue;
+            }
+            var outputFilePath = artifacts[i].filePath;
+            var outputFileName = artifacts[i].fileName;
 
-        for (var j in inputs["codesign.xcent"]) {
-            args.push("--entitlements", inputs["codesign.xcent"][j].filePath);
-            break; // there should only be one
+            var args = ["--force", "--sign", actualSigningIdentity.SHA1];
+
+            // If signingTimestamp is undefined or empty, do not specify the flag at all -
+            // this uses the system-specific default behavior
+            var signingTimestamp = product.codesign.signingTimestamp;
+            if (signingTimestamp) {
+                // If signingTimestamp is an empty string, specify the flag but do
+                // not specify a value - this uses a default Apple-provided server
+                var flag = "--timestamp";
+                if (signingTimestamp)
+                    flag += "=" + signingTimestamp;
+                args.push(flag);
+            }
+
+            for (var j in inputs["codesign.xcent"]) {
+                args.push("--entitlements", inputs["codesign.xcent"][j].filePath);
+                break; // there should only be one
+            }
+
+            args = args.concat(product.codesign.codesignFlags || []);
+
+            args.push(outputFilePath + subpath);
+            cmd = new Command(product.codesign.codesignPath, args);
+            cmd.description = "codesign " + outputFileName
+                    + " (" + actualSigningIdentity.subjectInfo.CN + ")";
+            cmd.outputFilePath = outputFilePath;
+            cmd.stderrFilterFunction = function(stderr) {
+                return stderr.replace(outputFilePath + ": replacing existing signature\n", "");
+            };
+            cmds.push(cmd);
         }
-
-        args = args.concat(product.codesign.codesignFlags || []);
-
-        args.push(outputFilePath + subpath);
-        cmd = new Command(product.codesign.codesignPath, args);
-        cmd.description = "codesign " + outputFileName
-                + " (" + actualSigningIdentity.subjectInfo.CN + ")";
-        cmd.outputFilePath = outputFilePath;
-        cmd.stderrFilterFunction = function(stderr) {
-            return stderr.replace(outputFilePath + ": replacing existing signature\n", "");
-        };
-        cmds.push(cmd);
     }
 
     if (isBundle) {
@@ -472,4 +490,158 @@ function prepareSigntool(project, product, inputs, outputs, input, output) {
     cmd.highlight = "linker";
     cmds.push(cmd);
     return cmds;
+}
+
+function generateAppleProvisioningProfileOutputs()
+{
+    var artifacts = [];
+    var provisioningProfiles = (inputs["codesign.provisioningprofile"] || [])
+        .map(function (a) { return a.filePath; });
+    var bestProfile = findBestProvisioningProfile(product, provisioningProfiles);
+    var uuid = product.provisioningProfile;
+    if (bestProfile) {
+        artifacts.push({
+            filePath: FileInfo.joinPaths(product.destinationDirectory,
+                                         product.codesign._embeddedProfileName),
+            fileTags: ["codesign.embedded_provisioningprofile"],
+            codesign: {
+                _provisioningProfileFilePath: bestProfile.filePath,
+                _provisioningProfileData: JSON.stringify(bestProfile.data),
+            }
+        });
+    } else if (uuid) {
+        throw "Your build settings specify a provisioning profile with the UUID '"
+                + uuid + "', however, no such provisioning profile was found.";
+    } else if (product._provisioningProfileRequired) {
+        var hasProfiles = !!((inputs["codesign.provisioningprofile"] || []).length);
+        var teamIdentifier = product.teamIdentifier;
+        var codeSignIdentity = product.signingIdentity;
+        if (hasProfiles) {
+            if (codeSignIdentity) {
+                console.warn("No provisioning profiles matching the bundle identifier '"
+                             + product.bundle.identifier
+                             + "' were found.");
+            } else {
+                console.warn("No provisioning profiles matching an applicable signing "
+                             + "identity were found.");
+            }
+        } else {
+            if (codeSignIdentity) {
+                if (teamIdentifier) {
+                    console.warn("No provisioning profiles with a valid signing identity "
+                                 + "(i.e. certificate and private key pair) matching the "
+                                 + "team ID '" + teamIdentifier + "' were found.")
+                } else {
+                    console.warn("No provisioning profiles with a valid signing identity "
+                                 + "(i.e. certificate and private key pair) were found.");
+                }
+             } else {
+                console.warn("No non-expired provisioning profiles were found.");
+            }
+        }
+    }
+    return artifacts;
+}
+
+function generateAppleProvisioningProfileCommands(project, product, inputs, outputs, input, output,
+                                                  explicitlyDependsOn)
+{
+    var cmd = new JavaScriptCommand();
+    var data = JSON.parse(output.codesign._provisioningProfileData);
+    cmd.source = output.codesign._provisioningProfileFilePath;
+    cmd.destination = output.filePath;
+    cmd.description = "using provisioning profile " + data.Name + " (" + data.UUID + ")";
+    cmd.highlight = "filegen";
+    cmd.sourceCode = function() {
+        File.copy(source, destination);
+    };
+    return [cmd];
+}
+
+function generateAppleEntitlementsCommands(project, product, inputs, outputs, input, output,
+                                           explicitlyDependsOn)
+{
+    var cmd = new JavaScriptCommand();
+    cmd.description = "generating entitlements";
+    cmd.highlight = "codegen";
+    cmd.bundleIdentifier = product.bundle.identifier;
+    cmd.signingEntitlements = (inputs["codesign.entitlements"] || [])
+        .map(function (a) { return a.filePath; });
+    cmd.provisioningProfiles = (inputs["codesign.embedded_provisioningprofile"] || [])
+        .map(function (a) { return a.filePath; });
+    cmd.platformPath = product.xcode ? product.xcode.platformPath : undefined;
+    cmd.sdkPath = product.xcode ? product.xcode.sdkPath : undefined;
+    cmd.sourceCode = function() {
+        var i;
+        var provData = {};
+        var provisionProfiles = inputs["codesign.embedded_provisioningprofile"];
+        for (i in provisionProfiles) {
+            var plist = new PropertyList();
+            try {
+                plist.readFromData(Utilities.smimeMessageContent(
+                                       provisionProfiles[i].filePath));
+                provData = plist.toObject();
+            } finally {
+                plist.clear();
+            }
+        }
+
+        var aggregateEntitlements = {};
+
+        // Start building up an aggregate entitlements plist from the files in the SDKs,
+        // which contain placeholders in the same manner as Info.plist
+        function entitlementsFileContents(path) {
+            return File.exists(path) ? BundleTools.infoPlistContents(path) : undefined;
+        }
+        var entitlementsSources = [];
+        if (platformPath) {
+            entitlementsSources.push(
+                    entitlementsFileContents(
+                            FileInfo.joinPaths(platformPath, "Entitlements.plist")));
+        }
+        if (sdkPath) {
+            entitlementsSources.push(
+                    entitlementsFileContents(
+                            FileInfo.joinPaths(sdkPath, "Entitlements.plist")));
+        }
+
+        for (i = 0; i < signingEntitlements.length; ++i) {
+            entitlementsSources.push(entitlementsFileContents(signingEntitlements[i]));
+        }
+
+        for (i = 0; i < entitlementsSources.length; ++i) {
+            var contents = entitlementsSources[i];
+            for (var key in contents) {
+                if (contents.hasOwnProperty(key))
+                    aggregateEntitlements[key] = contents[key];
+            }
+        }
+
+        contents = provData["Entitlements"];
+        for (key in contents) {
+            if (contents.hasOwnProperty(key) && !aggregateEntitlements.hasOwnProperty(key))
+                aggregateEntitlements[key] = contents[key];
+        }
+
+        // Expand entitlements variables with data from the provisioning profile
+        var env = {
+            "AppIdentifierPrefix": (provData["ApplicationIdentifierPrefix"] || "") + ".",
+            "CFBundleIdentifier": bundleIdentifier
+        };
+        DarwinTools.expandPlistEnvironmentVariables(aggregateEntitlements, env, true);
+
+        // Anything with an undefined or otherwise empty value should be removed
+        // Only JSON-formatted plists can have null values, other formats error out
+        // This also follows Xcode behavior
+        DarwinTools.cleanPropertyList(aggregateEntitlements);
+
+        var plist = new PropertyList();
+        try {
+            plist.readFromObject(aggregateEntitlements);
+            plist.writeToFile(outputs["codesign.xcent"][0].filePath, "xml1");
+        } finally {
+            plist.clear();
+        }
+    };
+    return [cmd];
 }

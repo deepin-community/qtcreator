@@ -10,6 +10,7 @@
 #include "coreconstants.h"
 #include "coreplugin.h"
 #include "editormanager/editormanager.h"
+#include "editormanager/editormanager_p.h"
 #include "icore.h"
 #include "modemanager.h"
 #include "progressmanager/progressmanager.h"
@@ -30,8 +31,9 @@
 
 #include <QAction>
 #include <QActionGroup>
-#include <QFutureInterface>
+#include <QCoreApplication>
 #include <QDebug>
+#include <QFutureInterface>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
@@ -267,6 +269,11 @@ QDateTime SessionManager::lastActiveTime(const QString &session)
     return d->m_lastActiveTimes.value(session);
 }
 
+int SessionManager::sessionsCount()
+{
+    return d->m_sessions.count();
+}
+
 FilePath SessionManager::sessionNameToFileName(const QString &session)
 {
     return ICore::userResourcePath(session + ".qws");
@@ -342,9 +349,11 @@ bool SessionManager::deleteSession(const QString &session)
     d->m_lastActiveTimes.remove(session);
     emit instance()->sessionRemoved(session);
     FilePath sessionFile = sessionNameToFileName(session);
-    if (sessionFile.exists())
-        return sessionFile.removeFile();
-    return false;
+    if (!sessionFile.exists())
+        return false;
+    Result result = sessionFile.removeFile();
+    QTC_CHECK_EXPECTED(result);
+    return bool(result);
 }
 
 void SessionManager::deleteSessions(const QStringList &sessions)
@@ -548,6 +557,18 @@ void SessionManagerPrivate::restoreEditors()
         EditorManager::restoreState(QByteArray::fromBase64(editorsettings.toByteArray()));
         SessionManager::sessionLoadingProgress();
     }
+}
+
+FilePaths SessionManager::openFilesForSessionName(const QString &session, int max)
+{
+    const FilePath fileName = sessionNameToFileName(session);
+    PersistentSettingsReader reader;
+    if (fileName.exists()) {
+        if (!reader.load(fileName))
+            return {};
+    }
+    return Internal::EditorManagerPrivate::openFilesForState(
+        QByteArray::fromBase64(reader.restoreValue("EditorSettings").toByteArray()), max);
 }
 
 /*!

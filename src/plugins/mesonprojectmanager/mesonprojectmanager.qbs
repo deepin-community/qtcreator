@@ -12,7 +12,6 @@ Project {
         Depends { name: "Utils" }
 
         Depends { name: "Core" }
-        Depends { name: "CppEditor" }
         Depends { name: "ProjectExplorer" }
         Depends { name: "QtSupport" }
 
@@ -21,27 +20,16 @@ Project {
         files: [
             "mesontools.cpp",
             "mesontools.h",
-            "mesonwrapper.cpp",
-            "mesonwrapper.h",
-            "ninjawrapper.h",
-            "toolwrapper.cpp",
-            "toolwrapper.h",
             "kitdata.h",
             "mesonactionsmanager.cpp",
             "mesonactionsmanager.h",
             "buildoptions.h",
-            "mesoninfo.h",
+            "mesoninfoparser.cpp",
             "mesoninfoparser.h",
-            "buildoptionsparser.h",
-            "buildsystemfilesparser.h",
             "common.h",
-            "infoparser.h",
-            "targetparser.h",
             "target.h",
             "mesonpluginconstants.h",
             "mesonprojectplugin.cpp",
-            "arrayoptionlineedit.cpp",
-            "arrayoptionlineedit.h",
             "buildoptionsmodel.cpp",
             "buildoptionsmodel.h",
             "mesonbuildconfiguration.cpp",
@@ -65,28 +53,17 @@ Project {
             "ninjaparser.h",
             "mesonprojectnodes.cpp",
             "mesonprojectnodes.h",
-            "projecttree.cpp",
-            "projecttree.h",
             "resources_meson.qrc",
             "settings.cpp",
             "settings.h",
-            "mesontoolkitaspect.cpp",
-            "mesontoolkitaspect.h",
-            "ninjatoolkitaspect.cpp",
-            "ninjatoolkitaspect.h",
             "toolkitaspectwidget.cpp",
             "toolkitaspectwidget.h",
-            "toolitemsettings.cpp",
-            "toolitemsettings.h",
             "toolsmodel.cpp",
             "toolsmodel.h",
             "toolssettingsaccessor.cpp",
             "toolssettingsaccessor.h",
             "toolssettingspage.cpp",
             "toolssettingspage.h",
-            "tooltreeitem.cpp",
-            "tooltreeitem.h",
-            "versionhelper.h",
         ]
     }
 
@@ -100,12 +77,8 @@ Project {
         cpp.includePaths: "."
 
         files: [
-            "mesonwrapper.cpp",
-            "mesonwrapper.h",
-            "ninjawrapper.h",
-            "toolwrapper.h",
-            "toolwrapper.cpp",
             "mesontools.h",
+            "mesontools.cpp",
             "tests/testmesonwrapper.cpp",
         ]
     }
@@ -120,12 +93,9 @@ Project {
         cpp.includePaths: "."
 
         files: [
-            "mesonwrapper.cpp",
-            "mesonwrapper.h",
-            "ninjawrapper.h",
-            "toolwrapper.h",
-            "toolwrapper.cpp",
+            "mesontools.cpp",
             "mesontools.h",
+            "mesoninfoparser.cpp",
             "mesoninfoparser.h",
             "tests/testmesoninfoparser.cpp",
         ]

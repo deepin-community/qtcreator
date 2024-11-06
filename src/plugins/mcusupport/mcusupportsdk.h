@@ -5,7 +5,8 @@
 
 #include "mcusupport_global.h"
 #include "settingshandler.h"
-#include <utils/fileutils.h>
+
+#include <utils/filepath.h>
 
 namespace McuSupport::Internal {
 
@@ -15,7 +16,7 @@ class McuAbstractPackage;
 class McuPackage;
 class McuSdkRepository;
 class McuTarget;
-class McuToolChainPackage;
+class McuToolchainPackage;
 struct McuTargetDescription;
 
 McuPackagePtr createQtForMCUsPackage(const SettingsHandler::Ptr &);
@@ -35,16 +36,16 @@ Utils::FilePath kitsPath(const Utils::FilePath &dir);
 
 namespace Legacy {
 
-McuPackagePtr createUnsupportedToolChainFilePackage(const SettingsHandler::Ptr &,
+McuPackagePtr createUnsupportedToolchainFilePackage(const SettingsHandler::Ptr &,
                                                     const Utils::FilePath &qtMcuSdkPath);
-McuToolChainPackagePtr createUnsupportedToolChainPackage(const SettingsHandler::Ptr &);
-McuToolChainPackagePtr createIarToolChainPackage(const SettingsHandler::Ptr &, const QStringList &);
-McuToolChainPackagePtr createGccToolChainPackage(const SettingsHandler::Ptr &, const QStringList &);
-McuToolChainPackagePtr createArmGccToolchainPackage(const SettingsHandler::Ptr &,
+McuToolchainPackagePtr createUnsupportedToolchainPackage(const SettingsHandler::Ptr &);
+McuToolchainPackagePtr createIarToolchainPackage(const SettingsHandler::Ptr &, const QStringList &);
+McuToolchainPackagePtr createGccToolchainPackage(const SettingsHandler::Ptr &, const QStringList &);
+McuToolchainPackagePtr createArmGccToolchainPackage(const SettingsHandler::Ptr &,
                                                     const QStringList &);
-McuToolChainPackagePtr createMsvcToolChainPackage(const SettingsHandler::Ptr &, const QStringList &);
-McuToolChainPackagePtr createGhsToolchainPackage(const SettingsHandler::Ptr &, const QStringList &);
-McuToolChainPackagePtr createGhsArmToolchainPackage(const SettingsHandler::Ptr &,
+McuToolchainPackagePtr createMsvcToolchainPackage(const SettingsHandler::Ptr &, const QStringList &);
+McuToolchainPackagePtr createGhsToolchainPackage(const SettingsHandler::Ptr &, const QStringList &);
+McuToolchainPackagePtr createGhsArmToolchainPackage(const SettingsHandler::Ptr &,
                                                     const QStringList &);
 
 McuPackagePtr createBoardSdkPackage(const SettingsHandler::Ptr &, const McuTargetDescription &);

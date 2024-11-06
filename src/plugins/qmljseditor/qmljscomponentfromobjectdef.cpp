@@ -166,7 +166,7 @@ public:
         const bool reindent = true;
         const bool openEditor = false;
         const Utils::FilePath newFilePath = newFileName;
-        if (!refactoring.createFile(newFileName, newComponentSource, reindent, openEditor))
+        if (!refactoring.file(newFileName)->create(newComponentSource, reindent, openEditor))
             return;
 
         if (path.toString() == currentFileName.toFileInfo().path()) {
@@ -187,11 +187,7 @@ public:
         for (const QString &property : std::as_const(result))
             replacement += property + QLatin1String(": ") + propertyReader.readAstValue(property) + QLatin1Char('\n');
 
-        Utils::ChangeSet changes;
-        changes.replace(start, end, replacement);
-        currentFile->setChangeSet(changes);
-        currentFile->appendIndentRange(Range(start, end + 1));
-        currentFile->apply();
+        currentFile->apply(ChangeSet::makeReplace(start, end, replacement));
 
         Core::IVersionControl *versionControl = Core::VcsManager::findVersionControlForDirectory(
             path);
@@ -248,7 +244,7 @@ void performComponentFromObjectDef(QmlJSEditorWidget *editor,
 {
     QmlJSRefactoringChanges refactoring(QmlJS::ModelManagerInterface::instance(),
                                         QmlJS::ModelManagerInterface::instance()->snapshot());
-    QmlJSRefactoringFilePtr current = refactoring.file(Utils::FilePath::fromString(fileName));
+    QmlJSRefactoringFilePtr current = refactoring.qmlJSFile(Utils::FilePath::fromString(fileName));
 
     QmlJSQuickFixAssistInterface interface(editor, TextEditor::AssistReason::ExplicitlyInvoked);
     Operation operation(&interface, objDef);

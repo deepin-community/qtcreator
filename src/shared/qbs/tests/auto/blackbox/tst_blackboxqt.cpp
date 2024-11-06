@@ -130,6 +130,28 @@ void TestBlackboxQt::dbusInterfaces()
     QCOMPARE(runQbs(), 0);
 }
 
+void TestBlackboxQt::emscriptenHtml()
+{
+    QDir::setCurrent(testDataDir + "/emscripten-html");
+    QCOMPARE(runQbs(), 0);
+    if (m_qbsStdout.contains("is emscripten: false"))
+        QSKIP("Skipping emscripten test");
+    QVERIFY(m_qbsStdout.contains("is emscripten: true"));
+
+    const auto relativeInstallRoot = relativeBuildDir() + QStringLiteral("/install-root/");
+    QVERIFY(!regularFileExists(relativeInstallRoot + QStringLiteral("qtloader.js")));
+    QVERIFY(!regularFileExists(relativeInstallRoot + QStringLiteral("qtlogo.svg")));
+    QVERIFY(!regularFileExists(relativeInstallRoot + QStringLiteral("app.html")));
+
+    const QStringList params = {QStringLiteral("products.app.generateHtml:true")};
+    QCOMPARE(runQbs(QbsRunParameters("resolve", params)), 0);
+    QCOMPARE(runQbs(QbsRunParameters("build", params)), 0);
+
+    QVERIFY(regularFileExists(relativeInstallRoot + QStringLiteral("qtloader.js")));
+    QVERIFY(regularFileExists(relativeInstallRoot + QStringLiteral("qtlogo.svg")));
+    QVERIFY(regularFileExists(relativeInstallRoot + QStringLiteral("app.html")));
+}
+
 void TestBlackboxQt::forcedMoc()
 {
     QDir::setCurrent(testDataDir + "/forced-moc");
@@ -173,6 +195,9 @@ void TestBlackboxQt::lrelease()
 {
     QDir::setCurrent(testDataDir + QLatin1String("/lrelease"));
     QCOMPARE(runQbs(), 0);
+    if (m_qbsStdout.contains("targetPlatform differs from hostPlatform"))
+        QSKIP("Cannot run binaries in cross-compiled build");
+
     QVERIFY(regularFileExists(relativeProductBuildDir("lrelease-test") + "/de.qm"));
     QVERIFY(regularFileExists(relativeProductBuildDir("lrelease-test") + "/hu.qm"));
 
@@ -238,18 +263,15 @@ void TestBlackboxQt::metaTypes()
 void TestBlackboxQt::mixedBuildVariants()
 {
     QDir::setCurrent(testDataDir + "/mixed-build-variants");
-    const SettingsPtr s = settings();
-    qbs::Profile profile(profileName(), s.get());
-    if (profileToolchain(profile).contains("msvc")) {
-        QbsRunParameters params;
-        params.arguments << "qbs.buildVariant:debug";
-        params.expectFailure = true;
-        QVERIFY(runQbs(params) != 0);
+    QbsRunParameters params;
+    params.expectFailure = true;
+    QVERIFY(runQbs(params) != 0);
+    const bool isMsvc = m_qbsStdout.contains("is msvc: true");
+    const bool isNotMsvc = m_qbsStdout.contains("is msvc: false");
+    if (isMsvc) {
         QVERIFY2(m_qbsStderr.contains("not allowed"), m_qbsStderr.constData());
     } else {
-        QbsRunParameters params;
-        params.expectFailure = true;
-        QVERIFY(runQbs(params) != 0);
+        QVERIFY(isNotMsvc);
         QVERIFY2(m_qbsStderr.contains("not supported"), m_qbsStderr.constData());
     }
 }
@@ -294,6 +316,9 @@ void TestBlackboxQt::noRelinkOnQDebug()
 
     // Target check.
     QCOMPARE(runQbs(QbsRunParameters("resolve")), 0);
+    if (m_qbsStdout.contains("is emscripten: true"))
+        QSKIP("Irrelevant for emscripten");
+    QVERIFY(m_qbsStdout.contains("is emscripten: false"));
     QVERIFY2(m_qbsStdout.contains("is GCC: "), m_qbsStdout.constData());
     QVERIFY2(m_qbsStdout.contains("is MinGW: "), m_qbsStdout.constData());
     QVERIFY2(m_qbsStdout.contains("is Darwin: "), m_qbsStdout.constData());
@@ -344,8 +369,6 @@ void TestBlackboxQt::pkgconfig()
     QbsRunParameters params;
     params.command = "run";
     QCOMPARE(runQbs(params), 0);
-    if (m_qbsStdout.contains("targetPlatform differs from hostPlatform"))
-        QSKIP("pkgconfig or Qt not found");
 }
 
 void TestBlackboxQt::pkgconfigQt()
@@ -394,6 +417,20 @@ void TestBlackboxQt::pkgconfigQt_data()
             << QStringList({"products.p.qbsModuleProviders:dummyProvider"}) << false;
     QTest::newRow("cross-compiling")
             << QStringList({"moduleProviders.qbspkgconfig.sysroot:/some/fake/sysroot"}) << false;
+}
+
+void TestBlackboxQt::pkgconfigNoQt()
+{
+    QDir::setCurrent(testDataDir + "/pkgconfig-qt");
+    rmDirR(relativeBuildDir());
+    QbsRunParameters params("build", {"-f", "pkgconfig-qt.qbs"});
+    params.arguments << "moduleProviders.qbspkgconfig.libDirs:nonexistent";
+    params.expectFailure = true;
+
+    QCOMPARE(runQbs(params) == 0, false);
+    QVERIFY2(m_qbsStderr.contains("Dependency 'Qt.core' not found for product 'p'"), m_qbsStderr);
+    // QBS-1777: basic check for JS exceptions in case of missing Qt
+    QVERIFY2(!m_qbsStderr.contains("Error executing provider for module 'Qt.core'"), m_qbsStderr);
 }
 
 void TestBlackboxQt::pluginMetaData()
@@ -473,6 +510,8 @@ void TestBlackboxQt::qdoc()
 {
     QDir::setCurrent(testDataDir + "/qdoc");
     QCOMPARE(runQbs(QbsRunParameters("resolve")), 0);
+    if (m_qbsStdout.contains("targetPlatform differs from hostPlatform"))
+        QSKIP("Cannot run binaries in cross-compiled build");
     if (m_qbsStdout.contains("Qt is too old"))
         QSKIP("Skip test since qdoc3 does not work properly");
     QCOMPARE(runQbs(), 0);
@@ -483,6 +522,8 @@ void TestBlackboxQt::qmlDebugging()
 {
     QDir::setCurrent(testDataDir + "/qml-debugging");
     QCOMPARE(runQbs(), 0);
+    if (m_qbsStdout.contains("targetPlatform differs from hostPlatform"))
+        QSKIP("Cannot run binaries in cross-compiled build");
 
     const bool isGcc = m_qbsStdout.contains("is gcc: true");
     const bool isNotGcc = m_qbsStdout.contains("is gcc: false");
@@ -491,7 +532,7 @@ void TestBlackboxQt::qmlDebugging()
     QVERIFY(isGcc);
 
     QProcess nm;
-    nm.start("nm", QStringList(relativeExecutableFilePath("debuggable-app")));
+    nm.start("nm", QStringList(relativeExecutableFilePath("debuggable-app", m_qbsStdout)));
     if (!nm.waitForStarted())
         QSKIP("The remainder of this test requires nm");
 
@@ -657,10 +698,12 @@ void TestBlackboxQt::track_qobject_change()
     QDir::setCurrent(testDataDir + "/trackQObjChange");
     copyFileAndUpdateTimestamp("bla_qobject.h", "bla.h");
     QCOMPARE(runQbs(), 0);
-    const QString productFilePath = relativeExecutableFilePath("i");
+
+    const QString objectSuffix = parsedObjectSuffix(m_qbsStdout);
+    const QString productFilePath = relativeExecutableFilePath("i", m_qbsStdout);
     QVERIFY2(regularFileExists(productFilePath), qPrintable(productFilePath));
-    QString moc_bla_objectFileName = relativeProductBuildDir("i") + '/'
-            + inputDirHash("qt.headers") + objectFileName("/moc_bla.cpp", profileName());
+    QString moc_bla_objectFileName = relativeProductBuildDir("i") + '/' + inputDirHash("qt.headers")
+                                     + "/moc_bla.cpp" + objectSuffix;
     QVERIFY2(regularFileExists(moc_bla_objectFileName), qPrintable(moc_bla_objectFileName));
 
     WAIT_FOR_NEW_TIMESTAMP();
@@ -678,10 +721,10 @@ void TestBlackboxQt::track_qrc()
         QSKIP("Qt version too old");
     if (m_qbsStdout.contains("targetPlatform differs from hostPlatform"))
         QSKIP("Cannot run binaries in cross-compiled build");
+    const QString fileName = relativeExecutableFilePath("i", m_qbsStdout);
     QCOMPARE(runQbs(QbsRunParameters("run")), 0);
     QVERIFY2(m_qbsStdout.contains("rcc"), m_qbsStdout.constData());
     QVERIFY2(!m_qbsStdout.contains("compiling test.cpp"), m_qbsStdout.constData());
-    const QString fileName = relativeExecutableFilePath("i");
     QVERIFY2(regularFileExists(fileName), qPrintable(fileName));
 
     QDateTime dt = QFileInfo(fileName).lastModified();

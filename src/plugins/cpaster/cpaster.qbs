@@ -18,7 +18,6 @@ QtcPlugin {
         "cpasterconstants.h",
         "cpaster.qrc",
         "cpasterplugin.cpp",
-        "cpasterplugin.h",
         "cpastertr.h",
         "dpastedotcomprotocol.cpp",
         "dpastedotcomprotocol.h",
@@ -36,8 +35,6 @@ QtcPlugin {
         "protocol.h",
         "settings.cpp",
         "settings.h",
-        "stickynotespasteprotocol.cpp",
-        "stickynotespasteprotocol.h",
         "urlopenprotocol.cpp",
         "urlopenprotocol.h",
     ]

@@ -3,14 +3,16 @@
 
 #include "cmakebuildstep.h"
 
+#include "cmakeautogenparser.h"
 #include "cmakebuildconfiguration.h"
 #include "cmakebuildsystem.h"
 #include "cmakekitaspect.h"
-#include "cmakeparser.h"
+#include "cmakeoutputparser.h"
 #include "cmakeproject.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
 #include "cmaketool.h"
+#include "cmaketoolmanager.h"
 
 #include <android/androidconstants.h>
 
@@ -68,16 +70,18 @@ public:
     void start() final {
         Target *target = *task();
         if (!target) {
-            emit done(false);
+            emit done(DoneResult::Error);
             return;
         }
-        connect(target, &Target::parsingFinished, this, &TaskInterface::done);
+        connect(target, &Target::parsingFinished, this, [this](bool success) {
+            emit done(toDoneResult(success));
+        });
     }
 };
 
 using ProjectParserTask = CustomTask<ProjectParserTaskAdapter>;
 
-class CmakeProgressParser : public Utils::OutputLineParser
+class CMakeProgressParser : public Utils::OutputLineParser
 {
     Q_OBJECT
 
@@ -223,15 +227,16 @@ CMakeBuildStep::CMakeBuildStep(BuildStepList *bsl, Id id) :
 
     useStaging.setSettingsKey(USE_STAGING_KEY);
     useStaging.setLabel(Tr::tr("Stage for installation"), BoolAspect::LabelPlacement::AtCheckBox);
-    useStaging.setDefaultValue(supportsStageForInstallation(kit()));
+    useStaging.setDefaultValue(supportsStageForInstallation(kit()) && !isCleanStep());
+    useStaging.setEnabled(!isCleanStep());
 
     stagingDir.setSettingsKey(STAGING_DIR_KEY);
     stagingDir.setLabelText(Tr::tr("Staging directory:"));
     stagingDir.setDefaultValue(initialStagingDir(kit()));
     stagingDir.setExpectedKind(PathChooser::Kind::Directory);
 
-    Kit *kit = buildConfiguration()->kit();
-    if (CMakeBuildConfiguration::isIos(kit)) {
+    Kit *kit = this->kit();
+    if (CMakeBuildConfiguration::isIos(kit) && CMakeGeneratorKitAspect::generator(kit) == "Xcode") {
         useiOSAutomaticProvisioningUpdates.setDefaultValue(true);
         useiOSAutomaticProvisioningUpdates.setSettingsKey(
                   IOS_AUTOMATIC_PROVISIONG_UPDATES_ARGUMENTS_KEY);
@@ -326,15 +331,15 @@ bool CMakeBuildStep::init()
 
 void CMakeBuildStep::setupOutputFormatter(Utils::OutputFormatter *formatter)
 {
-    CMakeParser *cmakeParser = new CMakeParser;
-    CmakeProgressParser * const progressParser = new CmakeProgressParser;
-    connect(progressParser, &CmakeProgressParser::progress, this, [this](int percent) {
+    CMakeOutputParser *cmakeOutputParser = new CMakeOutputParser;
+    CMakeProgressParser * const progressParser = new CMakeProgressParser;
+    connect(progressParser, &CMakeProgressParser::progress, this, [this](int percent) {
         emit progress(percent, {});
     });
     formatter->addLineParser(progressParser);
-    cmakeParser->setSourceDirectory(project()->projectDirectory());
-    formatter->addLineParsers({cmakeParser, new GnuMakeParser});
-    ToolChain *tc = ToolChainKitAspect::cxxToolChain(kit());
+    cmakeOutputParser->setSourceDirectory(project()->projectDirectory());
+    formatter->addLineParsers({new CMakeAutogenParser, cmakeOutputParser, new GnuMakeParser});
+    Toolchain *tc = ToolchainKitAspect::cxxToolchain(kit());
     OutputTaskParser *xcodeBuildParser = nullptr;
     if (tc && tc->targetAbi().os() == Abi::DarwinOS) {
         xcodeBuildParser = new XcodebuildParser;
@@ -361,24 +366,20 @@ GroupItem CMakeBuildStep::runRecipe()
         else if (bs->isWaitingForParse())
             message = Tr::tr("Running CMake in preparation to build...");
         else
-            return SetupResult::StopWithDone;
+            return SetupResult::StopWithSuccess;
         emit addOutput(message, OutputFormat::NormalMessage);
         parseTarget = target();
         return SetupResult::Continue;
     };
-    const auto onParserError = [this](const QPointer<Target> &) {
+    const auto onParserError = [this] {
         emit addOutput(Tr::tr("Project did not parse successfully, cannot build."),
                        OutputFormat::ErrorMessage);
     };
-    const auto onEnd = [this] {
-        updateDeploymentData();
-    };
     Group root {
-        ignoreReturnValue() ? finishAllAndDone : stopOnError,
-        ProjectParserTask(onParserSetup, {}, onParserError),
+        ignoreReturnValue() ? finishAllAndSuccess : stopOnError,
+        ProjectParserTask(onParserSetup, onParserError, CallDoneIf::Error),
         defaultProcessTask(),
-        onGroupDone(onEnd),
-        onGroupError(onEnd)
+        onGroupDone([this] { updateDeploymentData(); })
     };
     return root;
 }
@@ -437,23 +438,56 @@ CommandLine CMakeBuildStep::cmakeCommand() const
     CommandLine cmd{cmakeExecutable()};
 
     FilePath buildDirectory = ".";
-    if (buildConfiguration())
+    Project *project = nullptr;
+    if (buildConfiguration()) {
         buildDirectory = buildConfiguration()->buildDirectory();
+        project = buildConfiguration()->project();
+    }
 
-    cmd.addArgs({"--build", buildDirectory.path()});
+    auto bs = qobject_cast<CMakeBuildSystem *>(buildSystem());
+    const bool hasSubprojectBuild = bs && bs->hasSubprojectBuildSupport();
+    bool ninjaSubprojectClean = false;
 
-    cmd.addArg("--target");
-    cmd.addArgs(Utils::transform(m_buildTargets, [this](const QString &s) {
-        if (s.isEmpty()) {
-            if (RunConfiguration *rc = target()->activeRunConfiguration())
-                return rc->buildKey();
+    // Subprojects have subdir/<command> structure
+    if (m_buildTargets.size() == 1 && m_buildTargets.front().contains("/") && hasSubprojectBuild) {
+        QString target = m_buildTargets.front();
+        const auto separator = target.lastIndexOf("/");
+        const QString path = target.left(separator);
+        const QString operation = target.mid(separator + 1);
+
+        if (bs->cmakeGenerator().contains("Makefiles")) {
+            cmd.addArgs(
+                {"--build",
+                 CMakeToolManager::mappedFilePath(project, buildDirectory.pathAppended(path))
+                     .path()});
+            cmd.addArg("--target");
+            cmd.addArg(operation);
+        } else {
+            cmd.addArgs(
+                {"--build", CMakeToolManager::mappedFilePath(project, buildDirectory).path()});
+
+            cmd.addArg("--target");
+            if (operation == "clean") {
+                target = path + "/" + "all";
+                ninjaSubprojectClean = true;
+            }
+            cmd.addArg(target);
         }
-        return s;
-    }));
+    } else {
+        cmd.addArgs({"--build", CMakeToolManager::mappedFilePath(project, buildDirectory).path()});
+
+        cmd.addArg("--target");
+        cmd.addArgs(Utils::transform(m_buildTargets, [this](const QString &s) {
+            if (s.isEmpty()) {
+                if (RunConfiguration *rc = target()->activeRunConfiguration())
+                    return rc->buildKey();
+            }
+            return s;
+        }));
+    }
     if (useStaging())
         cmd.addArg("install");
 
-    auto bs = qobject_cast<CMakeBuildSystem *>(buildSystem());
     if (bs && bs->isMultiConfigReader()) {
         cmd.addArg("--config");
         if (m_configuration)
@@ -476,6 +510,12 @@ CommandLine CMakeBuildStep::cmakeCommand() const
         if (!toolArgumentsSpecified)
             cmd.addArg("--");
         cmd.addArgs("-allowProvisioningUpdates", CommandLine::Raw);
+    }
+
+    if (ninjaSubprojectClean) {
+        if (!toolArgumentsSpecified)
+            cmd.addArg("--");
+        cmd.addArgs({"-t", "clean"});
     }
 
     return cmd;
@@ -518,6 +558,11 @@ void CMakeBuildStep::setBuildPreset(const QString &preset)
 QWidget *CMakeBuildStep::createConfigWidget()
 {
     auto updateDetails = [this] {
+        const bool haveCleanTarget = m_buildTargets.contains(cleanTarget());
+        useStaging.setEnabled(!haveCleanTarget);
+        if (useStaging() && haveCleanTarget)
+            useStaging.setValue(false);
+
         ProcessParameters param;
         setupProcessParameters(&param);
         param.setCommandLine(cmakeCommand());
@@ -601,16 +646,16 @@ QWidget *CMakeBuildStep::createConfigWidget()
     if (!isCleanStep() && !m_buildPreset.isEmpty())
         createAndAddEnvironmentWidgets(builder);
 
-    builder.addItem(Layouting::noMargin);
+    builder.setNoMargins();
     auto widget = builder.emerge();
 
     updateDetails();
 
-    connect(&cmakeArguments, &BaseAspect::changed, this, updateDetails);
-    connect(&toolArguments, &BaseAspect::changed, this, updateDetails);
-    connect(&useStaging, &BaseAspect::changed, this, updateDetails);
-    connect(&stagingDir, &BaseAspect::changed, this, updateDetails);
-    connect(&useiOSAutomaticProvisioningUpdates, &BaseAspect::changed, this, updateDetails);
+    cmakeArguments.addOnChanged(this, updateDetails);
+    toolArguments.addOnChanged(this, updateDetails);
+    useStaging.addOnChanged(this, updateDetails);
+    stagingDir.addOnChanged(this, updateDetails);
+    useiOSAutomaticProvisioningUpdates.addOnChanged(this, updateDetails);
 
     connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::settingsChanged,
             this, updateDetails);
@@ -805,11 +850,20 @@ void CMakeBuildStep::updateDeploymentData()
 
 // CMakeBuildStepFactory
 
-CMakeBuildStepFactory::CMakeBuildStepFactory()
+class CMakeBuildStepFactory final : public BuildStepFactory
 {
-    registerStep<CMakeBuildStep>(Constants::CMAKE_BUILD_STEP_ID);
-    setDisplayName(Tr::tr("CMake Build", "Display name for CMakeProjectManager::CMakeBuildStep id."));
-    setSupportedProjectType(Constants::CMAKE_PROJECT_ID);
+public:
+    CMakeBuildStepFactory()
+    {
+        registerStep<CMakeBuildStep>(Constants::CMAKE_BUILD_STEP_ID);
+        setDisplayName(Tr::tr("CMake Build", "Display name for CMakeProjectManager::CMakeBuildStep id."));
+        setSupportedProjectType(Constants::CMAKE_PROJECT_ID);
+    }
+};
+
+void setupCMakeBuildStep()
+{
+    static CMakeBuildStepFactory theCMakeBuildStepFactory;
 }
 
 } // CMakeProjectManager::Internal

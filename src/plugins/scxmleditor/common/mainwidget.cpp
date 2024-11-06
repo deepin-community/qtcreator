@@ -45,6 +45,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QPalette>
 #include <QProgressBar>
 #include <QProgressDialog>
 #include <QStackedWidget>
@@ -346,7 +347,7 @@ void MainWidget::init()
 
     // Connect alignment change
     alignToolButton->setProperty("currentAlignment", ActionAlignLeft);
-    connect(alignToolButton, &QToolButton::clicked, this, [=] {
+    connect(alignToolButton, &QToolButton::clicked, this, [this, alignToolButton] {
         StateView *view = m_views.last();
         if (view)
             view->scene()->alignStates(alignToolButton->property("currentAlignment").toInt());
@@ -354,7 +355,7 @@ void MainWidget::init()
 
     // Connect alignment change
     adjustToolButton->setProperty("currentAdjustment", ActionAdjustWidth);
-    connect(adjustToolButton, &QToolButton::clicked, this, [=] {
+    connect(adjustToolButton, &QToolButton::clicked, this, [this, adjustToolButton] {
         StateView *view = m_views.last();
         if (view)
             view->scene()->adjustStates(adjustToolButton->property("currentAdjustment").toInt());
@@ -427,7 +428,7 @@ void MainWidget::exportToImage()
     if (!filePath.isEmpty()) {
         const QRectF r = view->scene()->itemsBoundingRect();
         QImage image(r.size().toSize(), QImage::Format_ARGB32);
-        image.fill(QColor(0xef, 0xef, 0xef));
+        image.fill(palette().color(QPalette::Window));
 
         QPainter painter(&image);
         view->scene()->render(&painter, QRectF(), r);
@@ -479,7 +480,7 @@ void MainWidget::addStateView(BaseItem *item)
     view->scene()->setWarningModel(m_errorPane->warningModel());
     view->setUiFactory(m_uiFactory);
 
-    connect(view, &QObject::destroyed, this, [=] {
+    connect(view, &QObject::destroyed, this, [this, view] {
         // TODO: un-lambdafy
         m_views.removeAll(view);
         m_document->popRootTag();

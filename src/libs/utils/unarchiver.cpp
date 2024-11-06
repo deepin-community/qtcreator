@@ -10,6 +10,8 @@
 
 #include <QSettings>
 
+using namespace Tasking;
+
 namespace Utils {
 
 namespace {
@@ -41,6 +43,7 @@ static const QList<Tool> &sTools()
 {
     static QList<Tool> tools;
     if (tools.isEmpty()) {
+        // clang-format off
         if (HostOsInfo::isWindowsHost()) {
             tools << Tool{{"powershell", "-command Expand-Archive -Force '%{src}' '%{dest}'", CommandLine::Raw},
                           {"application/zip"},
@@ -72,6 +75,10 @@ static const QList<Tool> &sTools()
         tools << Tool{{"cmake", {"-E", "tar", "xvjf", "%{src}"}},
                       {"application/x-bzip-compressed-tar"},
                       additionalCMakeDirs};
+        // Keep this at the end so its only used as last resort. Otherwise it might be used for
+        // .tar.gz files.
+        tools << Tool{{"gzip", {"-d", "%{src}", "-c"}}, {"application/gzip"}, {}};
+        // clang-format on
     }
     return tools;
 }
@@ -128,22 +135,61 @@ static CommandLine unarchiveCommand(const CommandLine &commandTemplate, const Fi
 
 void Unarchiver::start()
 {
-    QTC_ASSERT(!m_process, emit done(false); return);
+    QTC_ASSERT(!m_process, emit done(DoneResult::Error); return);
 
     if (!m_sourceAndCommand) {
         emit outputReceived(Tr::tr("No source file set."));
-        emit done(false);
+        emit done(DoneResult::Error);
         return;
     }
     if (m_destDir.isEmpty()) {
         emit outputReceived(Tr::tr("No destination directory set."));
-        emit done(false);
+        emit done(DoneResult::Error);
         return;
     }
 
     const CommandLine command = unarchiveCommand(m_sourceAndCommand->m_commandTemplate,
                                                  m_sourceAndCommand->m_sourceFile, m_destDir);
     m_destDir.ensureWritableDir();
+
+    if (command.executable().fileName() == "gzip") {
+        std::shared_ptr<QFile> outputFile = std::make_shared<QFile>(
+            (m_destDir / m_gzipFileDestName).toFSPathString());
+
+        if (!outputFile->open(QIODevice::WriteOnly)) {
+            emit outputReceived(Tr::tr("Failed to open output file."));
+            emit done(DoneResult::Error);
+            return;
+        }
+
+        m_process.reset(new Process);
+        QObject::connect(m_process.get(), &Process::readyReadStandardOutput, this, [this, outputFile] {
+            const QByteArray data = m_process->readAllRawStandardOutput();
+            if (outputFile->write(data) != data.size()) {
+                emit outputReceived(Tr::tr("Failed to write output file."));
+                emit done(DoneResult::Error);
+            }
+        });
+        QObject::connect(m_process.get(), &Process::readyReadStandardError, this, [this] {
+            emit outputReceived(m_process->readAllStandardError());
+        });
+        QObject::connect(m_process.get(), &Process::done, this, [outputFile, this] {
+            outputFile->close();
+            const bool success = m_process->result() == ProcessResult::FinishedWithSuccess;
+            if (!success) {
+                outputFile->remove();
+                emit outputReceived(Tr::tr("Command failed."));
+            }
+            emit done(toDoneResult(success));
+        });
+        emit outputReceived(
+            Tr::tr("Running %1\nin \"%2\".\n\n", "Running <cmd> in <workingdirectory>")
+                .arg(command.toUserOutput(), m_destDir.toUserOutput()));
+        m_process->setCommand(command);
+        m_process->setWorkingDirectory(m_destDir);
+        m_process->start();
+        return;
+    }
 
     m_process.reset(new Process);
     m_process->setProcessChannelMode(QProcess::MergedChannels);
@@ -154,7 +200,7 @@ void Unarchiver::start()
         const bool success = m_process->result() == ProcessResult::FinishedWithSuccess;
         if (!success)
             emit outputReceived(Tr::tr("Command failed."));
-        emit done(success);
+        emit done(toDoneResult(success));
     });
 
     emit outputReceived(Tr::tr("Running %1\nin \"%2\".\n\n", "Running <cmd> in <workingdirectory>")
@@ -167,7 +213,7 @@ void Unarchiver::start()
 
 UnarchiverTaskAdapter::UnarchiverTaskAdapter()
 {
-    connect(task(), &Unarchiver::done, this, &Tasking::TaskInterface::done);
+    connect(task(), &Unarchiver::done, this, &TaskInterface::done);
 }
 
 void UnarchiverTaskAdapter::start()

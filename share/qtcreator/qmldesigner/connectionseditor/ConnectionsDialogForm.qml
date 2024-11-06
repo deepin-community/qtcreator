@@ -16,7 +16,9 @@ Column {
 
     property var backend
 
-    y: StudioTheme.Values.popupMargin
+    property bool keepOpen: expressionDialogLoader.visible
+    property Window parentWindow: null
+
     width: parent.width
     spacing: root.verticalSpacing
 
@@ -45,6 +47,7 @@ Column {
 
         StudioControls.TopLevelComboBox {
             id: signal
+
             style: StudioTheme.Values.connectionPopupControlStyle
             width: root.columnWidth
 
@@ -117,7 +120,7 @@ Column {
         buttonIcon: qsTr("Add Condition")
         tooltip: qsTr("Sets a logical condition for the selected <b>Signal</b>. It works with the properties of the <b>Target</b> component.")
         iconSize: StudioTheme.Values.baseFontSize
-        iconFont: StudioTheme.Constants.font
+        iconFontFamily: StudioTheme.Constants.font.family
         anchors.horizontalCenter: parent.horizontalCenter
         visible: action.currentValue !== ConnectionModelStatementDelegate.Custom && !backend.hasCondition
 
@@ -130,7 +133,7 @@ Column {
         buttonIcon: qsTr("Remove Condition")
         tooltip: qsTr("Removes the logical condition for the <b>Target</b> component.")
         iconSize: StudioTheme.Values.baseFontSize
-        iconFont: StudioTheme.Constants.font
+        iconFontFamily: StudioTheme.Constants.font.family
         anchors.horizontalCenter: parent.horizontalCenter
         visible: action.currentValue !== ConnectionModelStatementDelegate.Custom && backend.hasCondition
 
@@ -181,7 +184,7 @@ Column {
         buttonIcon: qsTr("Add Else Statement")
         tooltip: qsTr("Sets an alternate condition for the previously defined logical condition.")
         iconSize: StudioTheme.Values.baseFontSize
-        iconFont: StudioTheme.Constants.font
+        iconFontFamily: StudioTheme.Constants.font.family
         anchors.horizontalCenter: parent.horizontalCenter
         visible: action.currentValue !== ConnectionModelStatementDelegate.Custom
                  && backend.hasCondition && !backend.hasElse
@@ -195,7 +198,7 @@ Column {
         buttonIcon: qsTr("Remove Else Statement")
         tooltip: qsTr("Removes the alternate logical condition for the previously defined logical condition.")
         iconSize: StudioTheme.Values.baseFontSize
-        iconFont: StudioTheme.Constants.font
+        iconFontFamily: StudioTheme.Constants.font.family
         anchors.horizontalCenter: parent.horizontalCenter
         visible: action.currentValue !== ConnectionModelStatementDelegate.Custom
                  && backend.hasCondition && backend.hasElse
@@ -216,71 +219,98 @@ Column {
                  && backend.hasCondition && backend.hasElse
     }
 
-    HelperWidgets.AbstractButton {
-        id: editorButton
-        buttonIcon: StudioTheme.Constants.codeEditor_medium
-        tooltip: qsTr("Write the conditions for the components and the signals manually.")
-        onClicked: expressionDialogLoader.show()
-    }
-
-    // Editor
-    Rectangle {
-        id: editor
+    // code preview toolbar
+    Column {
+        id: miniToolbarEditor
         width: parent.width
-        height: 150
-        color: StudioTheme.Values.themeConnectionCodeEditor
+        spacing: -2
 
-        Text {
-            id: code
-            anchors.fill: parent
-            anchors.margins: 4
-            text: backend.indentedSource
-            color: StudioTheme.Values.themeTextColor
-            font.pixelSize: StudioTheme.Values.myFontSize
-            wrapMode: Text.Wrap
-            horizontalAlignment: code.lineCount === 1 ? Text.AlignHCenter : Text.AlignLeft
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        Rectangle {
+            id: miniToolbar
+            width: parent.width
+            height: editorButton.height + 2
+            radius: 4
+            z: -1
+            color: StudioTheme.Values.themeConnectionEditorMicroToolbar
 
+            Row {
+                spacing: 2
+                HelperWidgets.AbstractButton {
+                    id: editorButton
+                    style: StudioTheme.Values.microToolbarButtonStyle
+                    buttonIcon: StudioTheme.Constants.codeEditor_medium
+                    tooltip: qsTr("Write the conditions for the components and the signals manually.")
+                    onClicked: expressionDialogLoader.show()
+                }
+                HelperWidgets.AbstractButton {
+                    id: jumpToCodeButton
+                    style: StudioTheme.Values.microToolbarButtonStyle
+                    buttonIcon: StudioTheme.Constants.jumpToCode_medium
+                    tooltip: qsTr("Jump to the code.")
+                    onClicked: backend.jumpToCode()
+                }
+            }
         }
 
-        Loader {
-            id: expressionDialogLoader
-            parent: editor
-            anchors.fill: parent
-            visible: false
-            active: visible
+        // Editor
+        Rectangle {
+            id: editor
+            width: parent.width
+            height: 150
+            color: StudioTheme.Values.themeConnectionCodeEditor
 
-            function show() {
-                expressionDialogLoader.visible = true
+            Text {
+                id: code
+                anchors.fill: parent
+                anchors.margins: 4
+                text: backend.indentedSource
+                color: StudioTheme.Values.themeTextColor
+                font.pixelSize: StudioTheme.Values.myFontSize
+                wrapMode: Text.Wrap
+                horizontalAlignment: code.lineCount === 1 ? Text.AlignHCenter : Text.AlignLeft
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
             }
 
-            sourceComponent: Item {
-                id: bindingEditorParent
+            Loader {
+                id: expressionDialogLoader
+                parent: editor
+                anchors.fill: parent
+                visible: false
+                active: visible
 
-                Component.onCompleted: {
-                    bindingEditor.showWidget()
-                    bindingEditor.text = backend.source
-                    bindingEditor.showControls(false)
-                    bindingEditor.setMultilne(true)
-                    bindingEditor.updateWindowName()
+                function show() {
+                    expressionDialogLoader.visible = true
                 }
 
-                ActionEditor {
-                    id: bindingEditor
+                sourceComponent: Item {
+                    id: bindingEditorParent
 
-                    onRejected: {
-                        hideWidget()
-                        expressionDialogLoader.visible = false
+                    Component.onCompleted: {
+                        bindingEditor.showWidget()
+                        bindingEditor.text = backend.source
+                        bindingEditor.showControls(false)
+                        bindingEditor.setMultilne(true)
+                        bindingEditor.updateWindowName()
                     }
 
-                    onAccepted: {
-                        backend.setNewSource(bindingEditor.text)
-                        hideWidget()
-                        expressionDialogLoader.visible = false
+                    ActionEditor {
+                        id: bindingEditor
+
+                        onRejected: {
+                            bindingEditor.hideWidget()
+                            expressionDialogLoader.visible = false
+                        }
+
+                        onAccepted: {
+                            backend.setNewSource(bindingEditor.text)
+                            bindingEditor.hideWidget()
+                            expressionDialogLoader.visible = false
+                        }
                     }
                 }
             }
         }
     }
 }
+

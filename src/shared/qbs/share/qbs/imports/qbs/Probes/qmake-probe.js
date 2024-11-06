@@ -72,7 +72,7 @@ function getQmakeFilePaths(qmakeFilePaths) {
     if (filePaths.length === 0) {
         console.warn("Could not find any qmake executables in PATH. Either make sure a qmake "
         + "executable is present in PATH or set the moduleProviders.Qt.qmakeFilePaths property "
-        + "to point a qmake executable.");
+        + "to point to a qmake executable.");
     }
     return filePaths;
 }
@@ -120,7 +120,33 @@ function configVariable(configContent, key) {
 }
 
 function configVariableItems(configContent, key) {
-    return splitNonEmpty(configVariable(configContent, key), ' ');
+    var list = [];
+    var configContentLines = configContent.split('\n');
+    var regexp = new RegExp("^\\s*" + key + "\\s*([+-]?=)(.*)");
+    for (var i = 0; i < configContentLines.length; ++i) {
+        var line = configContentLines[i];
+        var match = regexp.exec(line);
+        if (!match)
+            continue;
+        var op = match[1];
+        var lineList = splitNonEmpty(match[2], ' ');
+        if (op === '=') {
+            list = lineList;
+            continue;
+        }
+        if (op === '+=') {
+            list = list.concat(lineList);
+            continue;
+        }
+        if (op === '-=') {
+            for (var j = 0; j < lineList.length; ++j) {
+                var idx = list.indexOf(lineList[j]);
+                if (idx !== -1)
+                    list.splice(idx, 1);
+            }
+        }
+    }
+    return list;
 }
 
 function msvcCompilerVersionForYear(year) {
@@ -221,13 +247,13 @@ function getQtProperties(qmakeFilePath) {
     var qtProps = {};
     qtProps.installPrefixPath = pathQueryValue(queryResult, "QT_INSTALL_PREFIX");
     qtProps.documentationPath = pathQueryValue(queryResult, "QT_INSTALL_DOCS");
+    qtProps.translationsPath = pathQueryValue(queryResult, "QT_INSTALL_TRANSLATIONS");
     qtProps.includePath = pathQueryValue(queryResult, "QT_INSTALL_HEADERS");
     qtProps.libraryPath = pathQueryValue(queryResult, "QT_INSTALL_LIBS");
     qtProps.hostLibraryPath = pathQueryValue(queryResult, "QT_HOST_LIBS");
     qtProps.binaryPath = pathQueryValue(queryResult, "QT_HOST_BINS")
             || pathQueryValue(queryResult, "QT_INSTALL_BINS");
     qtProps.installPath = pathQueryValue(queryResult, "QT_INSTALL_BINS");
-    qtProps.documentationPath = pathQueryValue(queryResult, "QT_INSTALL_DOCS");
     qtProps.pluginPath = pathQueryValue(queryResult, "QT_INSTALL_PLUGINS");
     qtProps.qmlPath = pathQueryValue(queryResult, "QT_INSTALL_QML");
     qtProps.qmlImportPath = pathQueryValue(queryResult, "QT_INSTALL_IMPORTS");
@@ -271,6 +297,8 @@ function getQtProperties(qmakeFilePath) {
             || configVariable(qconfigContent, "QT_ARCH") || "x86";
     qtProps.configItems = configVariableItems(qconfigContent, "CONFIG");
     qtProps.qtConfigItems = configVariableItems(qconfigContent, "QT_CONFIG");
+    qtProps.enabledFeatures = configVariableItems(qconfigContent, "QT.global.enabled_features");
+    qtProps.disabledFeatures = configVariableItems(qconfigContent, "QT.global.disabled_features");
 
     // retrieve the mkspec
     if (qtProps.qtMajorVersion >= 5) {
@@ -338,6 +366,7 @@ function getQtProperties(qmakeFilePath) {
     addQtBuildVariant(qtProps, "release");
 
     qtProps.staticBuild = checkForStaticBuild(qtProps);
+    qtProps.multiThreading = qtProps.enabledFeatures.contains("thread");
 
     // determine whether user apps require C++11
     if (qtProps.qtConfigItems.contains("c++11") && qtProps.staticBuild)
@@ -352,6 +381,13 @@ function getQtProperties(qmakeFilePath) {
             qtProps.entryPointLibsRelease = fillEntryPointLibs(qtProps, false);
     } else if (qtProps.mkspecPath.contains("macx")) {
         if (qtProps.qtMajorVersion >= 5) {
+            // Since Qt 6.7.1, QMAKE_MACOSX|IOS_DEPLOYMENT_TARGET is no longer present in
+            // qmake.conf. But it is also present in qconfig.pri, so first try to read it from there
+            qtProps.macosVersion = configVariable(qconfigContent, "QMAKE_MACOSX_DEPLOYMENT_TARGET");
+            qtProps.iosVersion = configVariable(qconfigContent, "QMAKE_IOS_DEPLOYMENT_TARGET");
+
+            // Next, we override the value from qmake.conf, if present there
+            // Note, that TVOS/WATCHOS variables are only present in qmake.conf (as of Qt 6.7.1)
             var lines = getFileContentsRecursively(FileInfo.joinPaths(qtProps.mkspecPath,
                                                                       "qmake.conf"));
             for (var i = 0; i < lines.length; ++i) {

@@ -46,6 +46,7 @@ private slots:
     void createProject();
     void dbusAdaptors();
     void dbusInterfaces();
+    void emscriptenHtml();
     void forcedMoc();
     void includedMocCpp();
     void linkerVariant();
@@ -62,6 +63,7 @@ private slots:
     void pkgconfig();
     void pkgconfigQt();
     void pkgconfigQt_data();
+    void pkgconfigNoQt();
     void pluginMetaData();
     void pluginSupport_data();
     void pluginSupport();

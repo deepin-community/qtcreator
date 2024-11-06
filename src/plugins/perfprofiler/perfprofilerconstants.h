@@ -6,7 +6,6 @@
 namespace PerfProfiler {
 namespace Constants {
 
-const char PerfOptionsMenuId[]          = "Analyzer.Menu.PerfOptions";
 const char PerfProfilerTaskLoadPerf[]   =
         "Analyzer.Menu.StartAnalyzer.PerfProfilerOptions.LoadPerf";
 const char PerfProfilerTaskLoadTrace[]  =
@@ -30,6 +29,7 @@ const char AnalyzerSettingsGroupId[]    = "Analyzer";
 
 const char PerfSettingsId[]             = "Analyzer.Perf.Settings";
 const char PerfCallgraphDwarf[]         = "dwarf";
+const char PerfRecordArgsId[]           = "PerfRecordArgsId";
 
 const char PerfStreamMagic[] = "QPERFSTREAM";
 const char PerfZqfileMagic[] = "PTQFILE4.10";

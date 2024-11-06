@@ -32,6 +32,8 @@ const char schemeFileNamesKey[] = "ColorSchemes";
 
 const bool DEFAULT_ANTIALIAS = true;
 
+const char g_sourceCodePro[] = "Source Code Pro";
+
 namespace TextEditor {
 
 // -- FontSettings
@@ -101,6 +103,7 @@ bool FontSettings::fromSettings(const FormatDescriptions &descriptions, const Qt
     m_fontSize = s->value(group + fontSizeKey, m_fontSize).toInt();
     m_fontZoom= s->value(group + fontZoomKey, m_fontZoom).toInt();
     m_lineSpacing = s->value(group + lineSpacingKey, m_lineSpacing).toInt();
+    QTC_ASSERT(m_lineSpacing >= 0, m_lineSpacing = 100);
     m_antialias = s->value(group + antialiasKey, DEFAULT_ANTIALIAS).toBool();
 
     if (s->contains(group + schemeFileNamesKey)) {
@@ -154,7 +157,7 @@ QTextCharFormat FontSettings::toTextCharFormat(TextStyle category) const
     QTextCharFormat tf;
 
     if (category == C_TEXT) {
-        tf.setFontFamily(m_family);
+        tf.setFontFamilies({m_family});
         tf.setFontPointSize(m_fontSize * m_fontZoom / 100.);
         tf.setFontStyleStrategy(m_antialias ? QFont::PreferAntialias : QFont::NoAntialias);
     }
@@ -172,7 +175,7 @@ QTextCharFormat FontSettings::toTextCharFormat(TextStyle category) const
         tf.setBackground(QColor());
     }
 
-    tf.setFontWeight(f.bold() ? QFont::Bold : QFont::Normal);
+    tf.setFontWeight(f.bold() ? QFont::Bold : fontNormalWeight());
     tf.setFontItalic(f.italic());
 
     tf.setUnderlineColor(f.underlineColor());
@@ -218,6 +221,7 @@ QBrush mixBrush(const QBrush &original, double relativeSaturation, double relati
 void FontSettings::addMixinStyle(QTextCharFormat &textCharFormat,
                                  const MixinTextStyles &mixinStyles) const
 {
+    const int normalWeight = fontNormalWeight();
     for (TextStyle mixinStyle : mixinStyles) {
         const Format &format = m_scheme.formatFor(mixinStyle);
 
@@ -242,8 +246,8 @@ void FontSettings::addMixinStyle(QTextCharFormat &textCharFormat,
         if (!textCharFormat.fontItalic())
             textCharFormat.setFontItalic(format.italic());
 
-        if (textCharFormat.fontWeight() == QFont::Normal)
-            textCharFormat.setFontWeight(format.bold() ? QFont::Bold : QFont::Normal);
+        if (textCharFormat.fontWeight() == normalWeight)
+            textCharFormat.setFontWeight(format.bold() ? QFont::Bold : normalWeight);
 
         if (textCharFormat.underlineStyle() == QTextCharFormat::NoUnderline) {
             textCharFormat.setUnderlineStyle(format.underlineStyle());
@@ -334,7 +338,7 @@ qreal FontSettings::lineSpacing() const
     QFont currentFont = font();
     currentFont.setPointSize(std::max(m_fontSize * m_fontZoom / 100, 1));
     qreal spacing = QFontMetricsF(currentFont).lineSpacing();
-    if (m_lineSpacing != 100)
+    if (QTC_GUARD(m_lineSpacing > 0) && m_lineSpacing != 100)
         spacing *= qreal(m_lineSpacing) / 100;
     return spacing;
 }
@@ -353,7 +357,17 @@ QFont FontSettings::font() const
 {
     QFont f(family(), fontSize());
     f.setStyleStrategy(m_antialias ? QFont::PreferAntialias : QFont::NoAntialias);
+    f.setWeight(fontNormalWeight());
     return f;
+}
+
+QFont::Weight FontSettings::fontNormalWeight() const
+{
+    // TODO: Fix this when we upgrade "Source Code Pro" to a version greater than 2.0.30
+    QFont::Weight weight = QFont::Normal;
+    if (Utils::HostOsInfo::isMacHost() && m_family == g_sourceCodePro)
+        weight = QFont::Medium;
+    return weight;
 }
 
 /**
@@ -475,11 +489,10 @@ void FontSettings::setColorScheme(const ColorScheme &scheme)
 static QString defaultFontFamily()
 {
     if (Utils::HostOsInfo::isMacHost())
-        return QLatin1String("Monaco");
+        return QLatin1String("Menlo");
 
-    const QString sourceCodePro("Source Code Pro");
-    const QFontDatabase dataBase;
-    if (dataBase.hasFamily(sourceCodePro))
+    const QString sourceCodePro(g_sourceCodePro);
+    if (QFontDatabase::hasFamily(sourceCodePro))
         return sourceCodePro;
 
     if (Utils::HostOsInfo::isAnyUnixHost())

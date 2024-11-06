@@ -5,10 +5,9 @@
 
 #include <vcsbase/vcsbaseclient.h>
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 
-namespace Subversion {
-namespace Internal {
+namespace Subversion::Internal {
 
 class SubversionDiffEditorController;
 class SubversionSettings;
@@ -29,9 +28,7 @@ public:
                 const QString &commitMessageFile,
                 const QStringList &extraOptions = {}) override;
 
-    void diff(const Utils::FilePath &workingDirectory,
-              const QStringList &files,
-              const QStringList &extraOptions) override;
+    void showDiffEditor(const Utils::FilePath &workingDirectory, const QStringList &files = {});
 
     void log(const Utils::FilePath &workingDir,
              const QStringList &files = {},
@@ -61,7 +58,8 @@ private:
     mutable QString m_svnVersion;
 };
 
+SubversionClient &subversionClient();
+
 Utils::CommandLine &operator<<(Utils::CommandLine &command, SubversionClient::AddAuthOptions);
 
-} // namespace Internal
-} // namespace Subversion
+} // Subversion::Internal

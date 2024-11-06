@@ -114,9 +114,9 @@ QList<FileResourcesItem> FileResourcesModel::model() const
     return m_model;
 }
 
-void FileResourcesModel::openFileDialog()
+void FileResourcesModel::openFileDialog(const QString &customPath)
 {
-    QString resourcePath = m_path.toLocalFile();
+    QString resourcePath = customPath.isEmpty() ? m_path.toLocalFile() : customPath;
     bool resourcePathChanged = m_lastResourcePath != resourcePath;
     m_lastResourcePath = resourcePath;
 
@@ -157,6 +157,13 @@ QString FileResourcesModel::resolve(const QString &relative) const
 
     if (!QUrl::fromUserInput(relative, m_docPath.path()).isLocalFile())
         return relative;
+
+    const QUrl relUrl(relative);
+    if (relUrl.isLocalFile()) {
+        QString localFile = relUrl.toLocalFile();
+        if (QDir::isAbsolutePath(localFile))
+            return localFile;
+    }
 
     return QFileInfo(m_docPath, relative).absoluteFilePath();
 }

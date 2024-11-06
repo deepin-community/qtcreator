@@ -39,6 +39,7 @@ class ClientPrivate;
 class DiagnosticManager;
 class DocumentSymbolCache;
 class DynamicCapabilities;
+class FunctionHintAssistProvider;
 class HoverHandler;
 class InterfaceController;
 class LanguageClientCompletionAssistProvider;
@@ -96,6 +97,7 @@ public:
     QString serverName() const;
     QString serverVersion() const;
     const DynamicCapabilities &dynamicCapabilities() const;
+    DynamicCapabilities &dynamicCapabilities();
     void registerCapabilities(const QList<LanguageServerProtocol::Registration> &registrations);
     void unregisterCapabilities(const QList<LanguageServerProtocol::Unregistration> &unregistrations);
 
@@ -163,6 +165,7 @@ public:
                     LinkTarget target);
     DocumentSymbolCache *documentSymbolCache();
     HoverHandler *hoverHandler();
+    SemanticTokenSupport *semanticTokenSupport();
     QList<LanguageServerProtocol::Diagnostic> diagnosticsAt(const Utils::FilePath &filePath,
                                                             const QTextCursor &cursor) const;
     bool hasDiagnostic(const Utils::FilePath &filePath,
@@ -171,6 +174,7 @@ public:
     void setSemanticTokensHandler(const SemanticTokensHandler &handler);
     void setSnippetsGroup(const QString &group);
     void setCompletionAssistProvider(LanguageClientCompletionAssistProvider *provider);
+    void setFunctionHintAssistProvider(FunctionHintAssistProvider *provider);
     void setQuickFixAssistProvider(LanguageClientQuickFixProvider *provider);
     virtual bool supportsDocumentSymbols(const TextEditor::TextDocument *doc) const;
     virtual bool fileBelongsToProject(const Utils::FilePath &filePath) const;
@@ -201,7 +205,7 @@ public:
     virtual const CustomInspectorTabs createCustomInspectorTabs() { return {}; }
 
     // Caller takes ownership
-    virtual TextEditor::RefactoringChangesData *createRefactoringChangesBackend() const;
+    virtual TextEditor::RefactoringFilePtr createRefactoringFile(const Utils::FilePath &filePath) const;
 
     void setCompletionResultsLimit(int limit);
     int completionResultsLimit() const;
@@ -212,6 +216,7 @@ signals:
     void documentUpdated(TextEditor::TextDocument *document);
     void workDone(const LanguageServerProtocol::ProgressToken &token);
     void shadowDocumentSwitched(const Utils::FilePath &filePath);
+    void stateChanged(State state);
     void finished();
 
 protected:
@@ -220,6 +225,7 @@ protected:
     void handleMessage(const LanguageServerProtocol::JsonRpcMessage &message);
     virtual void handleDiagnostics(const LanguageServerProtocol::PublishDiagnosticsParams &params);
     virtual DiagnosticManager *createDiagnosticManager();
+    virtual void startImpl();
 
 private:
     friend class ClientPrivate;
@@ -233,6 +239,7 @@ private:
                                       const Utils::FilePath &candidate);
     virtual QList<Utils::Text::Range> additionalDocumentHighlights(
         TextEditor::TextEditorWidget *, const QTextCursor &) { return {}; }
+    virtual bool shouldSendDidSave(const TextEditor::TextDocument *) const { return true; }
 };
 
 } // namespace LanguageClient

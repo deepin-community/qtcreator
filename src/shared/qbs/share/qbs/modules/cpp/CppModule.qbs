@@ -63,6 +63,9 @@ Module {
     property bool useCxxPrecompiledHeader: true
     property bool useObjcPrecompiledHeader: true
     property bool useObjcxxPrecompiledHeader: true
+    property bool forceUseCxxModules: false
+    property string moduleOutputFlag // undocumented
+    property string moduleFileFlag // undocumented
 
     property bool treatSystemHeadersAsDependencies: false
 
@@ -192,6 +195,9 @@ Module {
     property string compilerListingSuffix: ".lst"
     property string assemblerListingSuffix: ".lst"
     property string resourceSuffix: ".res"
+    property string compiledModuleSuffix
+    property string moduleMapSuffix: ".modulemap"
+    property string moduleInfoSuffix: ".moduleinfo.json"
     property string precompiledHeaderSuffix
     property bool createSymlinks: true
     property stringList dynamicLibraries // list of names, will be linked with -lname
@@ -417,6 +423,8 @@ Module {
 
     property bool validateTargetTriple: true // undocumented
 
+    property bool importPrivateLibraries: true
+
     // TODO: The following four rules could use a convenience base item if rule properties
     //       were available in Artifact items and prepare scripts.
     Rule {
@@ -496,6 +504,11 @@ Module {
     FileTagger {
         patterns: ["*.C", "*.cpp", "*.cxx", "*.c++", "*.cc"]
         fileTags: combineCxxSources ? ["cpp.combine"] : ["cpp"]
+    }
+
+    FileTagger {
+        patterns: ["*.cppm", "*.ixx"]
+        fileTags: ["cppm"]
     }
 
     FileTagger {

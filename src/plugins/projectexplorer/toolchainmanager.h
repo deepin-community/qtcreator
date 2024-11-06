@@ -12,8 +12,6 @@
 #include <QSet>
 #include <QString>
 
-#include <functional>
-
 namespace Utils { class FilePath; }
 
 namespace ProjectExplorer {
@@ -28,32 +26,36 @@ public:
 };
 
 // --------------------------------------------------------------------------
-// ToolChainManager
+// ToolchainManager
 // --------------------------------------------------------------------------
 
-class PROJECTEXPLORER_EXPORT ToolChainManager : public QObject
+class PROJECTEXPLORER_EXPORT ToolchainManager : public QObject
 {
     Q_OBJECT
 
 public:
-    static ToolChainManager *instance();
-    ~ToolChainManager() override;
+    static ToolchainManager *instance();
+    ~ToolchainManager() override;
 
     static const Toolchains &toolchains();
-    static Toolchains toolchains(const ToolChain::Predicate &predicate);
+    static Toolchains toolchains(const Toolchain::Predicate &predicate);
 
-    static ToolChain *toolChain(const ToolChain::Predicate &predicate);
-    static QList<ToolChain *> findToolChains(const Abi &abi);
-    static ToolChain *findToolChain(const QByteArray &id);
+    static Toolchain *toolchain(const Toolchain::Predicate &predicate);
+    static QList<Toolchain *> findToolchains(const Abi &abi);
+    static Toolchain *findToolchain(const QByteArray &id);
 
     static bool isLoaded();
 
-    static bool registerToolChain(ToolChain *tc);
-    static void deregisterToolChain(ToolChain *tc);
+    static Toolchains registerToolchains(const Toolchains &toolchains);
+    static void deregisterToolchains(const Toolchains &toolchains);
 
     static QList<Utils::Id> allLanguages();
     static bool registerLanguage(const Utils::Id &language, const QString &displayName);
+    static void registerLanguageCategory(
+        const LanguageCategory &languages, const QString &displayName);
     static QString displayNameOfLanguageId(const Utils::Id &id);
+    static QString displayNameOfLanguageCategory(const LanguageCategory &category);
+    static const QList<LanguageCategory> languageCategories();
     static bool isLanguageSupported(const Utils::Id &id);
 
     static void aboutToShutdown();
@@ -65,29 +67,31 @@ public:
     static bool isBadToolchain(const Utils::FilePath &toolchain);
     static void addBadToolchain(const Utils::FilePath &toolchain);
 
-    void saveToolChains();
+    static bool isBetterToolchain(const ToolchainBundle &bundle1, const ToolchainBundle &bundle2);
+
+    void saveToolchains();
 
 signals:
-    void toolChainAdded(ProjectExplorer::ToolChain *);
-    // Tool chain is still valid when this call happens!
-    void toolChainRemoved(ProjectExplorer::ToolChain *);
-    // Tool chain was updated.
-    void toolChainUpdated(ProjectExplorer::ToolChain *);
+    void toolchainsRegistered(const Toolchains &registered);
+    // Toolchains are still valid when this call happens!
+    void toolchainsDeregistered(const Toolchains &deregistered);
+    // Toolchain was updated.
+    void toolchainUpdated(ProjectExplorer::Toolchain *);
     // Something changed.
-    void toolChainsChanged();
+    void toolchainsChanged();
     //
-    void toolChainsLoaded();
+    void toolchainsLoaded();
 
 private:
-    explicit ToolChainManager(QObject *parent = nullptr);
+    explicit ToolchainManager(QObject *parent = nullptr);
 
     // Make sure the this is only called after all toolchain factories are registered!
-    static void restoreToolChains();
+    static void restoreToolchains();
 
-    static void notifyAboutUpdate(ToolChain *);
+    static void notifyAboutUpdate(Toolchain *);
 
     friend class ProjectExplorerPlugin; // for constructor
-    friend class ToolChain;
+    friend class Toolchain;
 };
 
 } // namespace ProjectExplorer

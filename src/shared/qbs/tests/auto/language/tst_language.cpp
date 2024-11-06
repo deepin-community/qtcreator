@@ -610,6 +610,49 @@ void TestLanguage::dependencyOnAllProfiles()
     QCOMPARE(exceptionCaught, false);
 }
 
+void TestLanguage::dependsItemInGroup_data()
+{
+    QTest::addColumn<bool>("enableGroup1");
+    QTest::addColumn<bool>("enableGroup2");
+    QTest::addColumn<bool>("enableDepends");
+    QTest::addColumn<bool>("dependencyExpected");
+
+    QTest::newRow("all disabled") << false << false << false << false;
+    QTest::newRow("only Depends enabled") << false << false << true << false;
+    QTest::newRow("only inner Group enabled") << false << true << false << false;
+    QTest::newRow("inner Group and Depends enabled") << false << true << true << false;
+    QTest::newRow("only outer Group enabled") << true << false << false << false;
+    QTest::newRow("only outer Group and Depends enabled") << true << false << true << false;
+    QTest::newRow("only Groups enabled") << true << true << false << false;
+    QTest::newRow("everything enabled") << true << true << true << true;
+}
+
+void TestLanguage::dependsItemInGroup()
+{
+    QFETCH(bool, enableGroup1);
+    QFETCH(bool, enableGroup2);
+    QFETCH(bool, enableDepends);
+    QFETCH(bool, dependencyExpected);
+
+    bool exceptionCaught = false;
+    try {
+        const QVariantMap overriddenValues{
+            std::make_pair("products.main.enableGroup1", enableGroup1),
+            std::make_pair("products.main.enableGroup2", enableGroup2),
+            std::make_pair("products.main.enableDepends", enableDepends)};
+        defaultParameters.setOverriddenValues(overriddenValues);
+        resolveProject("depends-item-in-group.qbs");
+        QVERIFY(project);
+        const ResolvedProductConstPtr mainProduct = productsFromProject(project).value("main");
+        QVERIFY(mainProduct);
+        QCOMPARE(mainProduct->dependencies.empty(), !dependencyExpected);
+    } catch (const ErrorInfo &e) {
+        exceptionCaught = true;
+        qDebug() << e.toString();
+    }
+    QCOMPARE(exceptionCaught, false);
+}
+
 void TestLanguage::derivedSubProject()
 {
     bool exceptionCaught = false;
@@ -623,6 +666,106 @@ void TestLanguage::derivedSubProject()
         qDebug() << e.toString();
     }
     QCOMPARE(exceptionCaught, false);
+}
+
+void TestLanguage::disabledPropertiesItem_data()
+{
+    QTest::addColumn<bool>("setInProduct");
+    QTest::addColumn<bool>("setInHigher1");
+    QTest::addColumn<bool>("setInHigher2");
+    QTest::addColumn<bool>("setInLower");
+    QTest::addColumn<QString>("expectedValue");
+    QTest::addColumn<QStringList>("expectedListValue");
+    QTest::addColumn<QStringList>("expectedProductValue");
+
+    QTest::newRow("default")
+        << false << false << false << false << QString("default")
+        << QStringList{"N_GREATER_7", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition2"};
+    QTest::newRow("lower only")
+        << false << false << false << true << QString("default_fromLower")
+        << QStringList{"N_GREATER_7", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "WITH_LOWER_PROP", "N_NON_ZERO"}
+        << QStringList{"condition2"};
+    QTest::newRow("higher2 only")
+        << false << false << true << false << QString()
+        << QStringList{"N_GREATER_7", "WITH_HIGHER2_PROP", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition2"};
+    QTest::newRow("lower and higher2")
+        << false << false << true << true << QString()
+        << QStringList{"N_GREATER_7", "WITH_HIGHER2_PROP", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "WITH_LOWER_PROP", "N_NON_ZERO"}
+        << QStringList{"condition2"};
+    QTest::newRow("higher1 only")
+        << false << true << false << false << QString("fromHigher1")
+        << QStringList{"N_GREATER_7", "N_GREATER_6", "WITH_HIGHER1_PROP", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition2"};
+    QTest::newRow("lower and higher1")
+        << false << true << false << true << QString("fromHigher1")
+        << QStringList{"N_GREATER_7", "N_GREATER_6", "WITH_HIGHER1_PROP", "N_GREATER_5", "N_LESS_20", "WITH_LOWER_PROP", "N_NON_ZERO"}
+        << QStringList{"condition2"};
+    QTest::newRow("product only")
+        << true << false << false << false << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+    QTest::newRow("product and lower")
+        << true << false << false << true << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "WITH_LOWER_PROP", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+    QTest::newRow("product and higher2")
+        << true << false << true << false << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "WITH_HIGHER2_PROP", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+    QTest::newRow("product, higher2 and lower")
+        << true << false << true << true << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "WITH_HIGHER2_PROP", "N_GREATER_6", "N_GREATER_5", "N_LESS_20", "WITH_LOWER_PROP", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+    QTest::newRow("product and higher1")
+        << true << true << false << false << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "N_GREATER_6", "WITH_HIGHER1_PROP", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+    QTest::newRow("product, higher1 and higher2")
+        << true << true << true << false << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "WITH_HIGHER2_PROP", "N_GREATER_6", "WITH_HIGHER1_PROP", "N_GREATER_5", "N_LESS_20", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+    QTest::newRow("all")
+        << true << true << true << true << QString("fromProduct")
+        << QStringList{"WITH_PRODUCT_PROP", "N_GREATER_7", "WITH_HIGHER2_PROP", "N_GREATER_6", "WITH_HIGHER1_PROP", "N_GREATER_5", "N_LESS_20", "WITH_LOWER_PROP", "N_NON_ZERO"}
+        << QStringList{"condition1", "condition2"};
+}
+
+void TestLanguage::disabledPropertiesItem()
+{
+    QFETCH(bool, setInLower);
+    QFETCH(bool, setInHigher1);
+    QFETCH(bool, setInHigher2);
+    QFETCH(bool, setInProduct);
+    QFETCH(QString, expectedValue);
+    QFETCH(QStringList, expectedListValue);
+    QFETCH(QStringList, expectedProductValue);
+
+    QVariantMap overriddenValues;
+    overriddenValues.insert("modules.lower.setProp", setInLower);
+    overriddenValues.insert("modules.higher1.setProp", setInHigher1);
+    overriddenValues.insert("modules.higher2.setProp", setInHigher2);
+    overriddenValues.insert("products.p.setProp", setInProduct);
+    defaultParameters.setOverriddenValues(overriddenValues);
+
+    bool exceptionCaught = false;
+    try {
+        resolveProject("disabled-properties-item/disabled-properties-item.qbs");
+    } catch (const ErrorInfo &e) {
+        exceptionCaught = true;
+        qDebug() << e.toString();
+    }
+    QCOMPARE(exceptionCaught, false);
+
+    QVERIFY(!!project);
+    const QHash<QString, ResolvedProductPtr> products = productsFromProject(project);
+    QCOMPARE(products.size(), 1);
+    const ResolvedProductConstPtr &p = *products.constBegin();
+    QCOMPARE(p->moduleProperties->moduleProperty("lower", "prop").toString(), expectedValue);
+    QCOMPARE(
+        p->moduleProperties->moduleProperty("lower", "listProp").toStringList(), expectedListValue);
+    QCOMPARE(p->productProperties.value("productProp").toStringList(), expectedProductValue);
 }
 
 void TestLanguage::disabledSubProject()
@@ -739,10 +882,11 @@ void TestLanguage::enumerateProjectProperties()
         auto products = productsFromProject(project);
         QCOMPARE(products.size(), 1);
         auto product = products.values().front();
-        auto files = product->groups.front()->allFiles();
+        auto files = product->groups.front()->files;
         QCOMPARE(product->groups.size(), size_t(1));
-        QCOMPARE(files.size(), size_t(1));
-        auto fileName = FileInfo::fileName(files.front()->absoluteFilePath);
+        QVERIFY(files);
+        QCOMPARE(files->size(), size_t(1));
+        auto fileName = FileInfo::fileName(files->front()->absoluteFilePath);
         QCOMPARE(fileName, QString("dummy.txt"));
     } catch (const ErrorInfo &e) {
         exceptionCaught = true;
@@ -907,7 +1051,7 @@ void TestLanguage::erroneousFiles_data()
     QTest::newRow("dependency_cycle4")
             << "Cyclic dependencies detected.";
     QTest::newRow("references_cycle")
-            << "Cycle detected while referencing file 'references_cycle.qbs'.";
+            << "Cycle detected while referencing file '.*references_cycle.qbs'.";
     QTest::newRow("subproject_cycle")
             << "Cycle detected while loading subproject file 'subproject_cycle.qbs'.";
     QTest::newRow("invalid_stringlist_element")
@@ -956,10 +1100,6 @@ void TestLanguage::erroneousFiles_data()
                "cannot read property 'includes' of undefined";
     QTest::newRow("misused-inherited-property") << "Binding to non-item property";
     QTest::newRow("undeclared_property_in_Properties_item") << "Item 'blubb' is not declared";
-    QTest::newRow("same-module-prefix1") << "The name of module 'prefix1' is equal to the first "
-                                            "component of the name of module 'prefix1.suffix'";
-    QTest::newRow("same-module-prefix2") << "The name of module 'prefix2' is equal to the first "
-                                            "component of the name of module 'prefix2.suffix'";
     QTest::newRow("conflicting-properties-in-export-items")
             << "Export item in inherited item redeclares property 'theProp' with different type.";
     QTest::newRow("invalid-property-option")
@@ -1021,6 +1161,9 @@ void TestLanguage::erroneousFiles_data()
     QTest::newRow("frozen-object-list") << "object is not extensible";
     QTest::newRow("module-property-binding-in-project")
         << "Module properties cannot be set in Project items";
+    QTest::newRow("module-with-id") << "Module items cannot have an id property";
+    QTest::newRow("module-var-in-product")
+        << "module-var-in-product.qbs:4:19 Use of 'module' is only allowed in Module items";
 }
 
 void TestLanguage::erroneousFiles()
@@ -1047,8 +1190,22 @@ void TestLanguage::exports()
 {
     bool exceptionCaught = false;
     try {
+        defaultParameters.setDeprecationWarningMode(DeprecationWarningMode::On);
         resolveProject("exports.qbs");
         QVERIFY(!!project);
+        Set<CodeLocation> warningLocations;
+        for (const ErrorInfo &e : std::as_const(project->warningsEncountered)) {
+            const QString errStr = e.toString();
+            QVERIFY2(
+                errStr.contains("Resolving path properties relative to the exporting "
+                                "product's location is deprecated"),
+                qPrintable(errStr));
+            for (const ErrorItem &ei : e.items())
+                warningLocations << ei.codeLocation();
+        }
+        QCOMPARE(int(warningLocations.size()), 2);
+        for (const CodeLocation &loc : warningLocations)
+            QVERIFY(loc.line() == 12 || loc.line() == 9);
         QHash<QString, ResolvedProductPtr> products = productsFromProject(project);
         QCOMPARE(products.size(), 22);
         ResolvedProductPtr product;
@@ -1478,6 +1635,8 @@ void TestLanguage::idUsage()
         QVERIFY(!!product5);
         QCOMPARE(product5->moduleProperties->moduleProperty("deepdummy.deep.moat", "zort")
                  .toString(), QString("zort in dummy"));
+        QCOMPARE(int(product5->allEnabledFiles().size()), 1);
+        QVERIFY(product5->allEnabledFiles().at(0)->absoluteFilePath.endsWith("dummy.txt"));
     } catch (const ErrorInfo &e) {
         exceptionCaught = true;
         qDebug() << e.toString();
@@ -1614,6 +1773,33 @@ void TestLanguage::invalidOverrides_data()
             << "products.MyOtherProduct.cpp.useRPaths" << QString();
 }
 
+void TestLanguage::invalidPropOnNonRequiredModule_data()
+{
+    QTest::addColumn<bool>("useExistingModule");
+    QTest::addColumn<bool>("errorExpected");
+
+    QTest::newRow("existing module") << true << true;
+    QTest::newRow("non-existing module") << false << false;
+}
+
+void TestLanguage::invalidPropOnNonRequiredModule()
+{
+    QFETCH(bool, useExistingModule);
+    QFETCH(bool, errorExpected);
+
+    try {
+        defaultParameters.setOverriddenValues(
+                    {std::make_pair("project.useExistingModule", useExistingModule)});
+        resolveProject("invalid-prop-on-non-required-module");
+        QVERIFY(!errorExpected);
+    } catch (const ErrorInfo &e) {
+        const QString errorString = e.toString();
+        QVERIFY2(errorExpected, qPrintable(errorString));
+        QVERIFY2(errorString.contains("Property 'nosuchprop' is not declared"),
+                 qPrintable(errorString));
+    }
+}
+
 void TestLanguage::itemPrototype()
 {
     FileContextPtr fileContext = FileContext::create();
@@ -1706,6 +1892,21 @@ void TestLanguage::jsImportUsedInMultipleScopes()
     QVERIFY(!exceptionCaught);
 }
 
+void TestLanguage::keepLoadingDependencies()
+{
+    QString error;
+    try {
+        resolveProject("keep-loading-dependencies.qbs");
+        QFAIL("Should not get here!");
+    } catch (const ErrorInfo &e) {
+        error = e.toString();
+    }
+    QVERIFY2(error.contains("Dependency 'none.m1' not found"), qPrintable(error));
+    QVERIFY2(error.contains("Dependency 'none.m2' not found"), qPrintable(error));
+    QVERIFY2(error.contains("Dependency 'none.m3' not found"), qPrintable(error));
+    QVERIFY2(!error.contains("QBS_CHECK"), qPrintable(error));
+}
+
 void TestLanguage::localProfileAsTopLevelProfile()
 {
     bool exceptionCaught = false;
@@ -1736,6 +1937,34 @@ void TestLanguage::moduleMergingVariantValues()
         qDebug() << e.toString();
     }
     QCOMPARE(exceptionCaught, false);
+}
+
+void TestLanguage::moduleNameCollisions_data()
+{
+    QTest::addColumn<QString>("projectFile");
+    QTest::addColumn<bool>("collisionExpected");
+
+    QTest::newRow("simple collision (one order)") << "simple-collision1.qbs" << true;
+    QTest::newRow("simple collision (other order)") << "simple-collision2.qbs" << true;
+    QTest::newRow("collision with more components") << "complex-collision.qbs" << true;
+    QTest::newRow("no collision (same length)") << "no-collision1.qbs" << false;
+    QTest::newRow("no collision (different length)") << "no-collision2.qbs" << false;
+}
+
+void TestLanguage::moduleNameCollisions()
+{
+    QFETCH(QString, projectFile);
+    QFETCH(bool, collisionExpected);
+
+    try {
+        const QString compositeProjectFilePath = QString("module-name-collisions/") + projectFile;
+        QVERIFY(resolveProject(qPrintable(compositeProjectFilePath)));
+        QVERIFY(!collisionExpected);
+    } catch (const ErrorInfo &e) {
+        const QString errorString = e.toString();
+        QVERIFY2(collisionExpected, qPrintable(errorString));
+        QVERIFY2(errorString.contains("not allowed"), qPrintable(errorString));
+    }
 }
 
 void TestLanguage::moduleParameters_data()
@@ -1877,7 +2106,7 @@ void TestLanguage::moduleParameters()
             };
             const QVariantMap actual = findInProduct(it.key());
             const QVariantMap expected = it.value().toMap();
-            const bool same = actual == expected;
+            const bool same = qVariantMapsEqual(actual, expected);
             if (!same) {
                 qDebug().noquote() << "---" << expected;
                 qDebug().noquote() << "+++" << actual;
@@ -2498,15 +2727,17 @@ void TestLanguage::outerInGroup()
         GroupPtr group = product->groups.at(0);
         QVERIFY(!!group);
         QCOMPARE(group->name, product->name);
-        QCOMPARE(group->files.size(), size_t(1));
-        SourceArtifactConstPtr artifact = group->files.front();
+        QVERIFY(group->files);
+        QCOMPARE(group->files->size(), size_t(1));
+        SourceArtifactConstPtr artifact = group->files->front();
         QVariant installDir = artifact->properties->qbsPropertyValue("installDir");
         QCOMPARE(installDir.toString(), QString("/somewhere"));
         group = product->groups.at(1);
         QVERIFY(!!group);
         QCOMPARE(group->name, QString("Special Group"));
-        QCOMPARE(group->files.size(), size_t(1));
-        artifact = group->files.front();
+        QVERIFY(group->files);
+        QCOMPARE(group->files->size(), size_t(1));
+        artifact = group->files->front();
         installDir = artifact->properties->qbsPropertyValue("installDir");
         QCOMPARE(installDir.toString(), QString("/somewhere/else"));
     } catch (const ErrorInfo &e) {
@@ -2833,9 +3064,8 @@ void TestLanguage::propertiesBlocks_data()
             << QString("OVERWRITTEN");
 
     QTest::newRow("ambiguous_properties")
-            << QString("dummy.defines")
-            << QVariant(QStringList() << QString("ONE") << QString("TWO"))
-            << QString();
+        << QString("dummy.defines") << QVariant(QStringList{"ONE", "TWO", "ONE", "THREE"})
+        << QString();
     QTest::newRow("inheritance_overwrite_in_subitem")
             << QString("dummy.defines")
             << QVariant(QStringList() << QString("OVERWRITTEN_IN_SUBITEM"))
@@ -2883,11 +3113,27 @@ void TestLanguage::propertiesBlocks_data()
 
 void TestLanguage::propertiesBlocks()
 {
+    defaultParameters.setDeprecationWarningMode(DeprecationWarningMode::On);
     HANDLE_INIT_CLEANUP_DATATAGS("propertiesblocks.qbs");
     QFETCH(QString, propertyName);
     QFETCH(QVariant, expectedValue);
     QFETCH(QString, expectedStringValue);
     QVERIFY(!!project);
+
+    Set<CodeLocation> warningLocations;
+    for (const ErrorInfo &e : std::as_const(project->warningsEncountered)) {
+        const QString errStr = e.toString();
+        QVERIFY2(
+            errStr.contains("Using list properties as fallback values is deprecated"),
+            qPrintable(errStr));
+        for (const ErrorItem &ei : e.items())
+            warningLocations << ei.codeLocation();
+    }
+    const QList<int> lines{7, 8, 29, 38, 54, 61, 67, 102, 114};
+    QCOMPARE(int(warningLocations.size()), int(lines.size()));
+    for (const CodeLocation &loc : warningLocations)
+        QVERIFY2(lines.contains(loc.line()), qPrintable(QString::number(loc.line())));
+
     QHash<QString, ResolvedProductPtr> products = productsFromProject(project);
     const QString productName = QString::fromLocal8Bit(QTest::currentDataTag());
     ResolvedProductPtr product = products.value(productName);
@@ -2901,23 +3147,50 @@ void TestLanguage::propertiesBlocks()
     }
 }
 
+void TestLanguage::propertiesBlockInGroup_data()
+{
+    QTest::addColumn<bool>("withGroup");
+    QTest::addColumn<QString>("moduleGroup");
+    QTest::addColumn<QStringList>("expectedValue");
+
+    QTest::newRow("with group, use primary module group")
+        << true << "module_group"
+        << QStringList{"BASEDEF", "FEATURE_ENABLED", "THE_GROUP", "MODULE_DEFINE", "MODULE_GROUP"};
+    QTest::newRow("with group, use alternative module group")
+        << true << "module_group_alt"
+        << QStringList{
+               "BASEDEF", "FEATURE_ENABLED", "THE_GROUP", "MODULE_DEFINE", "MODULE_GROUP_ALT"};
+    QTest::newRow("without group, use primary module group")
+        << false << "module_group" << QStringList{"BASEDEF", "MODULE_DEFINE", "MODULE_GROUP"};
+    QTest::newRow("without group, use alternative module group")
+        << false << "module_group_alt"
+        << QStringList{"BASEDEF", "MODULE_DEFINE", "MODULE_GROUP_ALT"};
+}
+
 void TestLanguage::propertiesBlockInGroup()
 {
+    QFETCH(bool, withGroup);
+    QFETCH(QString, moduleGroup);
+    QFETCH(QStringList, expectedValue);
+
     bool exceptionCaught = false;
     try {
+        defaultParameters.setOverriddenValues(
+            {std::make_pair(QString("products.in-group.featureEnabled"), withGroup),
+             std::make_pair(QString("modules.module_with_group.group"), moduleGroup)});
         resolveProject("properties-block-in-group.qbs");
         QVERIFY(!!project);
         QCOMPARE(project->allProducts().size(), size_t(1));
         const ResolvedProductConstPtr product = project->allProducts().front();
+        const QStringList productValue
+            = moduleProperty(product->moduleProperties->value(), "dummy", "defines").toStringList();
+        QCOMPARE(productValue, expectedValue);
         const auto groupIt = std::find_if(product->groups.cbegin(), product->groups.cend(),
                 [](const GroupConstPtr &g) { return g->name == "the group"; });
         QVERIFY(groupIt != product->groups.cend());
-        const QVariantMap propertyMap = (*groupIt)->properties->value();
-        const QVariantList value = moduleProperty(propertyMap, "dummy", "defines").toList();
-        QStringList stringListValue;
-        std::transform(value.constBegin(), value.constEnd(), std::back_inserter(stringListValue),
-                       [](const QVariant &v) { return v.toString(); });
-        QCOMPARE(stringListValue, QStringList() << "BASEDEF" << "FEATURE_ENABLED");
+        const QStringList groupValue
+            = moduleProperty((*groupIt)->properties->value(), "dummy", "defines").toStringList();
+        QCOMPARE(groupValue, QStringList{"GROUP_ONLY"});
     } catch (const ErrorInfo &e) {
         exceptionCaught = true;
         qDebug() << e.toString();
@@ -3049,7 +3322,8 @@ void TestLanguage::relaxedErrorMode()
         QVERIFY(missingFile->enabled);
         QCOMPARE(missingFile->groups.size(), size_t(1));
         QVERIFY(missingFile->groups.front()->enabled);
-        QCOMPARE(missingFile->groups.front()->allFiles().size(), size_t(2));
+        QVERIFY(missingFile->groups.front()->files);
+        QCOMPARE(missingFile->groups.front()->files->size(), size_t(2));
         const ResolvedProductConstPtr fine = productMap.value("fine");
         QVERIFY(fine->enabled);
         QCOMPARE(fine->allFiles().size(), size_t(1));
@@ -3205,8 +3479,9 @@ void TestLanguage::fileTags()
     QCOMPARE(product->groups.size(), numberOfGroups);
     GroupPtr group = *(product->groups.end() - 1);
     QVERIFY(!!group);
-    QCOMPARE(group->files.size(), size_t(1));
-    SourceArtifactConstPtr sourceFile = group->files.front();
+    QVERIFY(group->files);
+    QCOMPARE(group->files->size(), size_t(1));
+    SourceArtifactConstPtr sourceFile = group->files->front();
     QStringList fileTags = sourceFile->fileTags.toStringList();
     fileTags.sort();
     QCOMPARE(fileTags, expectedFileTags);
@@ -3433,7 +3708,7 @@ void TestLanguage::wildcards()
         QVERIFY(!!product);
         GroupPtr group;
         if (useGroup) {
-            QCOMPARE(product->groups.size(), size_t(HostOsInfo::isMacosHost() ? 3 : 2));
+            QCOMPARE(product->groups.size(), size_t(HostOsInfo::isMacosHost() ? 4 : 2));
             for (const GroupPtr &rg : product->groups) {
                 if (rg->name == groupName) {
                     group = rg;
@@ -3441,14 +3716,15 @@ void TestLanguage::wildcards()
                 }
             }
         } else {
-            QCOMPARE(product->groups.size(), size_t(HostOsInfo::isMacosHost() ? 2 : 1));
+            QCOMPARE(product->groups.size(), size_t(HostOsInfo::isMacosHost() ? 3 : 1));
             group = product->groups.front();
         }
         QVERIFY(!!group);
-        QCOMPARE(group->files.size(), size_t(0));
+        QVERIFY(group->files);
+        QCOMPARE(group->files->size(), expected.size()); // we assume all files are wildcards
         QVERIFY(!!group->wildcards);
         QStringList actualFilePaths;
-        for (const SourceArtifactPtr &artifact : group->wildcards->files) {
+        for (const SourceArtifactPtr &artifact : *group->files) {
             QString str = artifact->absoluteFilePath;
             int idx = str.indexOf(m_wildcardsTestDirPath);
             if (idx != -1)

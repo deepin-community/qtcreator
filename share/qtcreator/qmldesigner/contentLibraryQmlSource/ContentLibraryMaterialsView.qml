@@ -14,24 +14,30 @@ HelperWidgets.ScrollView {
     interactive: !ctxMenu.opened && !ContentLibraryBackend.rootView.isDragging
                  && !HelperWidgets.Controller.contextMenuOpened
 
-    readonly property int cellWidth: 100
-    readonly property int cellHeight: 120
+    property real cellWidth: 100
+    property real cellHeight: 120
+    property int numColumns: 4
 
-    property var currMaterialItem: null
-    property var rootItem: null
+    property int count: 0
+    function assignMaxCount() {
+        let c = 0
+        for (let i = 0; i < categoryRepeater.count; ++i)
+            c = Math.max(c, categoryRepeater.itemAt(i)?.count ?? 0)
+
+        root.count = c
+    }
+
     property var materialsModel: ContentLibraryBackend.materialsModel
 
     required property var searchBox
 
-    signal unimport(var bundleMat);
+    signal unimport(var bundleMat)
 
-    function closeContextMenu()
-    {
+    function closeContextMenu() {
         ctxMenu.close()
     }
 
-    function expandVisibleSections()
-    {
+    function expandVisibleSections() {
         for (let i = 0; i < categoryRepeater.count; ++i) {
             let cat = categoryRepeater.itemAt(i)
             if (cat.visible && !cat.expanded)
@@ -40,27 +46,31 @@ HelperWidgets.ScrollView {
     }
 
     Column {
-        ContentLibraryMaterialContextMenu {
+        ContentLibraryItemContextMenu {
             id: ctxMenu
 
-            hasModelSelection: materialsModel.hasModelSelection
-            importerRunning: materialsModel.importerRunning
+            onApplyToSelected: (add) => root.materialsModel.applyToSelected(ctxMenu.targetItem, add)
 
-            onUnimport: (bundleMat) => root.unimport(bundleMat)
-            onAddToProject: (bundleMat) => materialsModel.addToProject(bundleMat)
+            onUnimport: root.unimport(ctxMenu.targetItem)
+            onAddToProject: root.materialsModel.addToProject(ctxMenu.targetItem)
         }
 
         Repeater {
             id: categoryRepeater
 
-            model: materialsModel
+            model: root.materialsModel
 
             delegate: HelperWidgets.Section {
+                id: section
+
                 width: root.width
+                leftPadding: StudioTheme.Values.sectionPadding
+                rightPadding: StudioTheme.Values.sectionPadding
+                topPadding: StudioTheme.Values.sectionPadding
+                bottomPadding: StudioTheme.Values.sectionPadding
+
                 caption: bundleCategoryName
-                addTopPadding: false
-                sectionBackgroundColor: "transparent"
-                visible: bundleCategoryVisible && !materialsModel.isEmpty
+                visible: bundleCategoryVisible && !root.materialsModel.isEmpty
                 expanded: bundleCategoryExpanded
                 expandOnClick: false
                 category: "ContentLib_Mat"
@@ -73,14 +83,17 @@ HelperWidgets.ScrollView {
                     bundleCategoryExpanded = true
                 }
 
+                property alias count: repeater.count
+
+                onCountChanged: root.assignMaxCount()
+
                 Grid {
-                    width: root.width
-                    leftPadding: 5
-                    rightPadding: 5
-                    bottomPadding: 5
-                    columns: root.width / root.cellWidth
+                    width: section.width - section.leftPadding - section.rightPadding
+                    spacing: StudioTheme.Values.sectionGridSpacing
+                    columns: root.numColumns
 
                     Repeater {
+                        id: repeater
                         model: bundleCategoryMaterials
 
                         delegate: ContentLibraryMaterial {
@@ -88,7 +101,10 @@ HelperWidgets.ScrollView {
                             height: root.cellHeight
 
                             onShowContextMenu: ctxMenu.popupMenu(modelData)
+                            onAddToProject: root.materialsModel.addToProject(modelData)
                         }
+
+                        onCountChanged: root.assignMaxCount()
                     }
                 }
             }
@@ -97,16 +113,16 @@ HelperWidgets.ScrollView {
         Text {
             id: infoText
             text: {
-                if (!materialsModel.matBundleExists)
-                    qsTr("No materials available. Make sure you have internet connection.")
-                else if (!ContentLibraryBackend.rootView.isQt6Project)
+                if (!ContentLibraryBackend.rootView.isQt6Project)
                     qsTr("<b>Content Library</b> materials are not supported in Qt5 projects.")
                 else if (!ContentLibraryBackend.rootView.hasQuick3DImport)
                     qsTr("To use <b>Content Library</b>, first add the QtQuick3D module in the <b>Components</b> view.")
-                else if (!materialsModel.hasRequiredQuick3DImport)
+                else if (!root.materialsModel.hasRequiredQuick3DImport)
                     qsTr("To use <b>Content Library</b>, version 6.3 or later of the QtQuick3D module is required.")
                 else if (!ContentLibraryBackend.rootView.hasMaterialLibrary)
                     qsTr("<b>Content Library</b> is disabled inside a non-visual component.")
+                else if (!root.materialsModel.bundleExists)
+                    qsTr("No materials available. Make sure you have an internet connection.")
                 else if (!searchBox.isEmpty())
                     qsTr("No match found.")
                 else
@@ -116,7 +132,7 @@ HelperWidgets.ScrollView {
             font.pixelSize: StudioTheme.Values.baseFontSize
             topPadding: 10
             leftPadding: 10
-            visible: materialsModel.isEmpty
+            visible: root.materialsModel.isEmpty
         }
     }
 }

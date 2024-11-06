@@ -3,7 +3,7 @@
     "supportedProjectTypes": [ "PythonProject" ],
     "id": "F.QtForPythonApplicationWindowWidget",
     "category": "F.ApplicationPySide",
-    "trDescription": "Creates a Qt for Python application that includes a Qt Designer-based widget (ui file). Requires .ui to Python conversion.",
+    "trDescription": "Creates a Qt for Python application that includes a Qt Widgets Designer-based widget (ui file). Requires .ui to Python conversion.",
     "trDisplayName": "Window UI",
     "trDisplayCategory": "Application (Qt for Python)",
     "icon": "../icons/icon.png",
@@ -13,7 +13,8 @@
     "options":
     [
         { "key": "SrcFileName", "value": "%{MainFileName}" },
-        { "key": "PyProjectFile", "value": "%{ProjectFileName}" }
+        { "key": "PyProjectFile", "value": "%{ProjectFileName}" },
+        { "key": "ProjectFilePath", "value": "%{ProjectDirectory}/%{PyProjectFile}" }
     ],
 
     "pages":
@@ -94,6 +95,15 @@
             }
         },
         {
+            "trDisplayName": "Kit Selection",
+            "trShortTitle": "Kits",
+            "typeId": "Kits",
+            "data": {
+                 "projectFilePath": "%{ProjectFilePath}",
+                 "requiredFeatures": [ "Python.Interpreter" ]
+            }
+        },
+        {
             "trDisplayName": "Project Management",
             "trShortTitle": "Summary",
             "typeId": "Summary"
@@ -118,6 +128,10 @@
                 {
                     "source": "../main_widget.ui",
                     "target": "form.ui"
+                },
+                {
+                    "source": "../requirements.txt",
+                    "target": "requirements.txt"
                 },
                 {
                     "source": "../../git.ignore",

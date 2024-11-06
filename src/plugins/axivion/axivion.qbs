@@ -4,36 +4,33 @@ QtcPlugin {
     name: "Axivion"
 
     Depends { name: "Core" }
+    Depends { name: "Debugger" }
+    Depends { name: "ExtensionSystem" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "TextEditor" }
-    Depends { name: "ExtensionSystem" }
     Depends { name: "Utils" }
     Depends { name: "Qt.widgets" }
     Depends { name: "Qt.network" }
 
     files: [
         "axivion.qrc",
-        "axivionoutputpane.cpp",
-        "axivionoutputpane.h",
+        "axivionperspective.cpp",
+        "axivionperspective.h",
         "axivionplugin.cpp",
         "axivionplugin.h",
-        "axivionprojectsettings.h",
-        "axivionprojectsettings.cpp",
-        "axivionquery.h",
-        "axivionquery.cpp",
-        "axivionresultparser.h",
-        "axivionresultparser.cpp",
         "axivionsettings.cpp",
         "axivionsettings.h",
         "axiviontr.h",
-        "dashboard/dashboardclient.cpp",
-        "dashboard/dashboardclient.h",
+        "dynamiclistmodel.cpp",
+        "dynamiclistmodel.h",
+        "issueheaderview.cpp",
+        "issueheaderview.h",
     ]
 
     cpp.includePaths: base.concat(["."]) // needed for the generated stuff below
 
     Group {
-        name: "Generated DTOs"
+        name: "Dashboard Communication"
         prefix: "dashboard/"
 
         files: [
@@ -41,6 +38,14 @@ QtcPlugin {
             "concat.h",
             "dto.cpp",
             "dto.h",
+            "error.cpp",
+            "error.h",
         ]
+    }
+
+    Group {
+        name: "long description"
+        files: "AxivionDescription.md"
+        fileTags: "pluginjson.longDescription"
     }
 }

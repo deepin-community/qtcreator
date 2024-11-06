@@ -9,7 +9,7 @@
 
 #include <utils/fileutils.h>
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcsettings.h>
 #include <utils/styledbar.h>
 #include <utils/stylehelper.h>
@@ -324,7 +324,7 @@ CropWidget::CropWidget(QWidget *parent)
             saveImageButton,
             copyImageToClipboardButton,
         },
-        noMargin(),
+        noMargin,
     }.attachTo(this);
 
     connect(m_xSpinBox, &QSpinBox::valueChanged, this, &CropWidget::onSpinBoxChanged);
@@ -526,22 +526,22 @@ TrimWidget::TrimWidget(const ClipInfo &clip, QWidget *parent)
 
     using namespace Layouting;
     Column {
-        Row { m_frameSlider, m_currentTime, "/", m_clipDuration },
+        Row { m_frameSlider, m_currentTime, QString("/"), m_clipDuration },
         Group {
             title(Tr::tr("Trimming")),
             Row {
                 m_trimStart.button, m_trimStart.timeLabel,
                 Space(20),
                 m_trimEnd.button, m_trimEnd.timeLabel,
-                Stretch(), Space(20),
+                st, Space(20),
                 Tr::tr("Range:"), m_trimRange,
                 m_trimResetButton,
             },
         },
-        noMargin(),
+        noMargin,
     }.attachTo(this);
 
-    connect(m_frameSlider, &QSlider::valueChanged, this, [this]() {
+    connect(m_frameSlider, &QSlider::valueChanged, this, [this] {
         m_currentTime->setFrame(currentFrame());
         updateTrimWidgets();
         emit positionChanged();
@@ -637,10 +637,11 @@ private:
 };
 
 CropAndTrimDialog::CropAndTrimDialog(const ClipInfo &clip, QWidget *parent)
-    : QDialog(parent, Qt::Window)
+    : QDialog(parent)
     , m_clipInfo(clip)
 {
     setWindowTitle(Tr::tr("Crop and Trim"));
+    setWindowFlags(Qt::Dialog | Qt::WindowMinMaxButtonsHint); // Make maximizable
 
     m_cropWidget = new CropWidget;
 
@@ -651,7 +652,7 @@ CropAndTrimDialog::CropAndTrimDialog(const ClipInfo &clip, QWidget *parent)
     using namespace Layouting;
     Column {
         Group {
-            title("Cropping"),
+            title(Tr::tr("Cropping")),
             Column { m_cropWidget },
         },
         Space(16),
@@ -662,8 +663,7 @@ CropAndTrimDialog::CropAndTrimDialog(const ClipInfo &clip, QWidget *parent)
     m_process = new Process(this);
     connect(m_process, &Process::done, this, [this] {
         if (m_process->exitCode() != 0) {
-            FFmpegUtils::reportError(m_process->commandLine(),
-                                     m_process->readAllRawStandardError());
+            FFmpegUtils::reportError(m_process->commandLine(), m_process->rawStdErr());
             return;
         }
         const QByteArray &imageData = m_process->rawStdOut();
@@ -698,7 +698,7 @@ void CropAndTrimDialog::startFrameFetch()
     if (m_nextFetchFrame == -1)
         return;
 
-    const CommandLine cl = {
+    const CommandLine cl{
         Internal::settings().ffmpegTool(),
         {
             "-v", "error",
@@ -760,7 +760,7 @@ CropAndTrimWidget::CropAndTrimWidget(QWidget *parent)
     Row {
         m_button,
         m_cropSizeWarningIcon,
-        noMargin(), spacing(0),
+        noMargin, spacing(0),
     }.attachTo(this);
 
     connect(m_button, &QPushButton::clicked, this, [this] {

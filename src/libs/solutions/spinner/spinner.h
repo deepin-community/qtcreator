@@ -6,7 +6,8 @@
 
 #include "spinner_global.h"
 
-#include <QObject>
+#include <QPointer>
+#include <QWidget>
 
 namespace SpinnerSolution {
 
@@ -15,21 +16,42 @@ Q_NAMESPACE_EXPORT(SPINNER_EXPORT)
 enum class SpinnerSize { Small, Medium, Large };
 Q_ENUM_NS(SpinnerSize)
 
+enum class SpinnerState { NotRunning, Running };
+Q_ENUM_NS(SpinnerState)
+
 // TODO: SpinnerOverlay and SpinnerWidget?
+
+class SpinnerOverlay;
 
 class SPINNER_EXPORT Spinner : public QObject
 {
     Q_OBJECT
+
 public:
     explicit Spinner(SpinnerSize size, QWidget *parent = nullptr);
+    ~Spinner() override;
     void setSize(SpinnerSize size);
+    void setColor(const QColor &color);
     void show();
     void hide();
     bool isVisible() const;
     void setVisible(bool visible);
 
 private:
-    class SpinnerWidget *m_widget = nullptr;
+    QPointer<SpinnerOverlay> m_widget;
+};
+
+class SPINNER_EXPORT SpinnerWidget : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit SpinnerWidget(QWidget *parent = nullptr);
+    void setState(SpinnerState state);
+    void setDecorated(bool on);
+
+private:
+    class SpinnerWidgetPrivate *d;
 };
 
 } // namespace SpinnerSolution

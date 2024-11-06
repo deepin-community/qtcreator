@@ -39,6 +39,7 @@
 
 #include "evaluator.h"
 
+#include "builtindeclarations.h"
 #include "filecontext.h"
 #include "filetags.h"
 #include "item.h"
@@ -52,9 +53,10 @@
 #include <logging/translator.h>
 #include <tools/error.h>
 #include <tools/fileinfo.h>
-#include <tools/scripttools.h>
 #include <tools/qbsassert.h>
 #include <tools/qttools.h>
+#include <tools/scripttools.h>
+#include <tools/span.h>
 #include <tools/stringconstants.h>
 
 #include <QtCore/qdebug.h>
@@ -65,14 +67,21 @@ namespace Internal {
 class EvaluationData
 {
 public:
-    Evaluator *evaluator = nullptr;
     const Item *item = nullptr;
     mutable QHash<QString, JSValue> valueCache;
 };
 
+enum class ConversionType { Full, ElementsOnly };
 static void convertToPropertyType_impl(
-    ScriptEngine *engine, const QString &pathPropertiesBaseDir, const Item *item,
-    const PropertyDeclaration& decl, const Value *value, const CodeLocation &location, JSValue &v);
+    ScriptEngine *engine,
+    const QString &pathPropertiesBaseDir,
+    const Item *item,
+    const PropertyDeclaration &decl,
+    const Value *value,
+    const CodeLocation &location,
+    ConversionType conversionType,
+    JSValue &v);
+
 static int getEvalPropertyNames(JSContext *ctx, JSPropertyEnum **ptab, uint32_t *plen,
                                 JSValueConst obj);
 static int getEvalProperty(JSContext *ctx, JSPropertyDescriptor *desc,
@@ -82,12 +91,28 @@ static int getEvalPropertySafe(JSContext *ctx, JSPropertyDescriptor *desc,
 
 static bool debugProperties = false;
 
+static JSValue handleDeprecatedPathResolving(ScriptEngine &engine, const Value &val)
+{
+    const QString warning = Tr::tr(
+        "Resolving path properties relative to the exporting product's location is "
+        "deprecated.\nIn future versions of qbs, such properties will be resolved relative to the "
+        "importing product's location.\n"
+        "Explicitly use exportingProduct.sourceDirectory instead.");
+    try {
+        engine.handleDeprecation(Version(2, 7), warning, val.location());
+    } catch (const ErrorInfo &e) {
+        return engine.throwError(e.toString());
+    }
+    return JS_UNDEFINED;
+}
+
 Evaluator::Evaluator(ScriptEngine *scriptEngine)
     : m_scriptEngine(scriptEngine)
     , m_scriptClass(scriptEngine->registerClass("Evaluator", nullptr, nullptr, JS_UNDEFINED,
                                                 getEvalPropertyNames, getEvalPropertySafe))
 {
     scriptEngine->registerEvaluator(this);
+    scriptEngine->logger().storeWarnings();
 }
 
 Evaluator::~Evaluator()
@@ -118,9 +143,7 @@ JSValue Evaluator::property(const Item *item, const QString &name)
 
 JSValue Evaluator::value(const Item *item, const QString &name, bool *propertyWasSet)
 {
-    JSValue v;
-    evaluateProperty(&v, item, name, propertyWasSet);
-    return v;
+    return evaluateProperty(item, name, propertyWasSet);
 }
 
 bool Evaluator::boolValue(const Item *item, const QString &name,
@@ -133,8 +156,8 @@ bool Evaluator::boolValue(const Item *item, const QString &name,
 int Evaluator::intValue(const Item *item, const QString &name, int defaultValue,
                         bool *propertyWasSet)
 {
-    JSValue v;
-    if (!evaluateProperty(&v, item, name, propertyWasSet))
+    const JSValue v = evaluateProperty(item, name, propertyWasSet);
+    if (JS_IsUndefined(v))
         return defaultValue;
     qint32 n;
     JS_ToInt32(m_scriptEngine->context(), &n, v);
@@ -149,12 +172,8 @@ FileTags Evaluator::fileTagsValue(const Item *item, const QString &name, bool *p
 QString Evaluator::stringValue(const Item *item, const QString &name,
                                const QString &defaultValue, bool *propertyWasSet)
 {
-    JSValue v;
-    if (!evaluateProperty(&v, item, name, propertyWasSet))
-        return defaultValue;
-    QString str = getJsString(m_scriptEngine->context(), v);
-    JS_FreeValue(m_scriptEngine->context(), v);
-    return str;
+    const ScopedJsValue v(m_scriptEngine->context(), evaluateProperty(item, name, propertyWasSet));
+    return JS_IsUndefined(v) ? defaultValue : getJsString(m_scriptEngine->context(), v);
 }
 
 static QStringList toStringList(ScriptEngine *engine, const JSValue &scriptValue)
@@ -213,7 +232,8 @@ bool Evaluator::isNonDefaultValue(const Item *item, const QString &name) const
 void Evaluator::convertToPropertyType(const PropertyDeclaration &decl, const CodeLocation &loc,
                                       JSValue &v)
 {
-    convertToPropertyType_impl(engine(), QString(), nullptr, decl, nullptr, loc, v);
+    convertToPropertyType_impl(
+        engine(), QString(), nullptr, decl, nullptr, loc, ConversionType::Full, v);
 }
 
 JSValue Evaluator::scriptValue(const Item *item)
@@ -225,7 +245,6 @@ JSValue Evaluator::scriptValue(const Item *item)
     }
 
     const auto edata = new EvaluationData;
-    edata->evaluator = this;
     edata->item = item;
     edata->item->addObserver(this);
 
@@ -242,16 +261,15 @@ void Evaluator::handleEvaluationError(const Item *item, const QString &name)
     });
 }
 
-bool Evaluator::evaluateProperty(JSValue *result, const Item *item, const QString &name,
-        bool *propertyWasSet)
+JSValue Evaluator::evaluateProperty(const Item *item, const QString &name, bool *propertyWasSet)
 {
-    *result = property(item, name);
-    ScopedJsValue valMgr(m_scriptEngine->context(), *result);
+    const JSValue result = property(item, name);
+    ScopedJsValue valMgr(m_scriptEngine->context(), result);
     handleEvaluationError(item, name);
     valMgr.release();
     if (propertyWasSet)
         *propertyWasSet = isNonDefaultValue(item, name);
-    return !JS_IsUndefined(*result);
+    return result;
 }
 
 Evaluator::FileContextScopes Evaluator::fileContextScopes(const FileContextConstPtr &file)
@@ -335,29 +353,58 @@ static void makeTypeError(ScriptEngine *engine, const PropertyDeclaration &decl,
     makeTypeError(engine, error, v);
 }
 
-static QString overriddenSourceDirectory(const Item *item, const QString &defaultValue)
-{
-    const VariantValuePtr v = item->variantProperty
-            (StringConstants::qbsSourceDirPropertyInternal());
-    return v ? v->value().toString() : defaultValue;
-}
-
-static void convertToPropertyType_impl(ScriptEngine *engine,
-                                       const QString &pathPropertiesBaseDir, const Item *item,
-                                       const PropertyDeclaration& decl,
-                                       const Value *value, const CodeLocation &location, JSValue &v)
+static void convertToPropertyType_impl(
+    ScriptEngine *engine,
+    const QString &pathPropertiesBaseDir,
+    const Item *item,
+    const PropertyDeclaration &decl,
+    const Value *value,
+    const CodeLocation &location,
+    ConversionType conversionType,
+    JSValue &v)
 {
     JSContext * const ctx = engine->context();
-    if (JS_IsUndefined(v) || JS_IsError(ctx, v) || JS_IsException(v))
+    if (JS_IsUninitialized(v) || JS_IsUndefined(v) || JS_IsError(ctx, v) || JS_IsException(v))
         return;
-    QString srcDir;
-    QString actualBaseDir;
-    const Item * const srcDirItem = value && value->scope() ? value->scope() : item;
-    if (item && !pathPropertiesBaseDir.isEmpty()) {
-        const VariantValueConstPtr itemSourceDir
-                = item->variantProperty(QStringLiteral("sourceDirectory"));
-        actualBaseDir = itemSourceDir ? itemSourceDir->value().toString() : pathPropertiesBaseDir;
+
+    if (!decl.isScalar() && !JS_IsArray(ctx, v) && conversionType == ConversionType::ElementsOnly) {
+        const auto correspondingType = [](const PropertyDeclaration &decl) {
+            switch (decl.type()) {
+            case PropertyDeclaration::StringList:
+                return PropertyDeclaration::String;
+            case PropertyDeclaration::PathList:
+                return PropertyDeclaration::Path;
+            case PropertyDeclaration::VariantList:
+                return PropertyDeclaration::Variant;
+            default:
+                QBS_CHECK(false);
+            };
+        };
+        PropertyDeclaration elemDecl = decl;
+        elemDecl.setType(correspondingType(decl));
+        convertToPropertyType_impl(
+            engine, pathPropertiesBaseDir, item, elemDecl, value, location, conversionType, v);
     }
+
+    QString actualBaseDir;
+    bool baseDirIsFromExport = false;
+    if (decl.type() == PropertyDeclaration::Path || decl.type() == PropertyDeclaration::PathList) {
+        actualBaseDir = pathPropertiesBaseDir;
+        if (const Item * const baseDirItem = value && value->scope() ? value->scope() : item) {
+            if (const VariantValueConstPtr v = baseDirItem->variantProperty(
+                    StringConstants::qbsSourceDirPropertyInternal())) {
+                actualBaseDir = v->value().toString();
+                baseDirIsFromExport = true;
+            }
+            if (actualBaseDir.isEmpty() && baseDirItem->type() == ItemType::Product) {
+                if (const VariantValueConstPtr itemSourceDir = baseDirItem->variantProperty(
+                        StringConstants::sourceDirectoryProperty())) {
+                    actualBaseDir = itemSourceDir->value().toString();
+                }
+            }
+        }
+    }
+
     switch (decl.type()) {
     case PropertyDeclaration::UnknownType:
     case PropertyDeclaration::Variant:
@@ -371,28 +418,29 @@ static void convertToPropertyType_impl(ScriptEngine *engine,
             makeTypeError(engine, decl, location, v);
         break;
     case PropertyDeclaration::Path:
-    {
         if (!JS_IsString(v)) {
             makeTypeError(engine, decl, location, v);
             break;
         }
-        const QString srcDir = srcDirItem ? overriddenSourceDirectory(srcDirItem, actualBaseDir)
-                                          : pathPropertiesBaseDir;
-        if (!srcDir.isEmpty()) {
-            v = engine->toScriptValue(QDir::cleanPath(FileInfo::resolvePath(srcDir,
-                                                                            getJsString(ctx, v))));
+        if (!actualBaseDir.isEmpty()) {
+            const QString rawPath = getJsString(ctx, v);
+            if (baseDirIsFromExport && !FileInfo::isAbsolute(rawPath)) {
+                const JSValue error = handleDeprecatedPathResolving(*engine, *value);
+                if (JS_IsError(engine->context(), error)) {
+                    v = error;
+                    return;
+                }
+            }
+            v = engine->toScriptValue(
+                QDir::cleanPath(FileInfo::resolvePath(actualBaseDir, rawPath)));
             JS_FreeValue(ctx, v);
         }
         break;
-    }
     case PropertyDeclaration::String:
         if (!JS_IsString(v))
             makeTypeError(engine, decl, location, v);
         break;
     case PropertyDeclaration::PathList:
-        srcDir = srcDirItem ? overriddenSourceDirectory(srcDirItem, actualBaseDir)
-                            : pathPropertiesBaseDir;
-        // Fall-through.
     case PropertyDeclaration::StringList:
     {
         if (!JS_IsArray(ctx, v)) {
@@ -421,10 +469,18 @@ static void convertToPropertyType_impl(ScriptEngine *engine,
                 makeTypeError(engine, error, v);
                 break;
             }
-            if (srcDir.isEmpty())
+            if (actualBaseDir.isEmpty())
                 continue;
+            const QString rawPath = getJsString(ctx, elem);
+            if (baseDirIsFromExport && !FileInfo::isAbsolute(rawPath)) {
+                const JSValue error = handleDeprecatedPathResolving(*engine, *value);
+                if (JS_IsError(engine->context(), error)) {
+                    v = error;
+                    return;
+                }
+            }
             const JSValue newElem = engine->toScriptValue(
-                        QDir::cleanPath(FileInfo::resolvePath(srcDir, getJsString(ctx, elem))));
+                QDir::cleanPath(FileInfo::resolvePath(actualBaseDir, rawPath)));
             JS_SetPropertyUint32(ctx, v, i, newElem);
         }
         break;
@@ -459,6 +515,29 @@ static int getEvalPropertyNames(JSContext *ctx, JSPropertyEnum **ptab, uint32_t 
         *ptab = nullptr;
     }
     return 0;
+}
+
+static void convertToPropertyType(
+    ScriptEngine *engine,
+    const Item *item,
+    const PropertyDeclaration &decl,
+    const Value *value,
+    ConversionType conversionType,
+    JSValue &v)
+{
+    if (value->type() == Value::VariantValueType && JS_IsUndefined(v) && !decl.isScalar()) {
+        v = engine->newArray(0, JsValueOwner::ScriptEngine); // QTBUG-51237
+        return;
+    }
+    convertToPropertyType_impl(
+        engine,
+        engine->evaluator()->pathPropertiesBaseDir(),
+        item,
+        decl,
+        value,
+        value->location(),
+        conversionType,
+        v);
 }
 
 class PropertyStackManager
@@ -497,103 +576,106 @@ private:
     bool m_stackUpdate = false;
 };
 
-class SVConverter : ValueHandler
+class ValueEvaluator : ValueHandler<JSValue>
 {
-    ScriptEngine * const engine;
-    const JSValue * const object;
-    Value * const valuePtr;
-    const Item * const itemOfProperty;
-    const QString * const propertyName;
-    const EvaluationData * const data;
-    JSValue * const result;
-    JSValueList scopeChain;
-    char pushedScopesCount;
-
 public:
-
-    SVConverter(ScriptEngine *engine, const JSValue *obj, const ValuePtr &v,
-                const Item *_itemOfProperty, const QString *propertyName,
-                const EvaluationData *data, JSValue *result)
-        : engine(engine)
-        , object(obj)
-        , valuePtr(v.get())
-        , itemOfProperty(_itemOfProperty)
-        , propertyName(propertyName)
-        , data(data)
-        , result(result)
-        , pushedScopesCount(0)
+    ValueEvaluator(
+        Evaluator &evaluator,
+        JSValue obj,
+        const ValuePtr &v,
+        const Item &item,
+        const Item &itemOfProperty,
+        const PropertyDeclaration &decl)
+        : m_evaluator(evaluator)
+        , m_engine(*evaluator.engine())
+        , m_object(obj)
+        , m_value(*v)
+        , m_item(item)
+        , m_itemOfProperty(itemOfProperty)
+        , m_decl(decl)
     {
     }
 
-    void start()
+    JSValue eval()
     {
-        valuePtr->apply(this);
+        JSValue result = m_value.apply(this);
+        if (JS_IsUninitialized(result))
+            result = JS_UNDEFINED;
+        convertToPropertyType(&m_engine, &m_item, m_decl, &m_value, ConversionType::Full, result);
+        return result;
     }
 
 private:
-    friend class AutoScopePopper;
-
-    class AutoScopePopper
+    class ScopeChain
     {
     public:
-        AutoScopePopper(SVConverter *converter)
-            : m_converter(converter)
+        ScopeChain(Evaluator &evaluator)
+            : m_evaluator(evaluator)
+        {}
+
+        void pushScope(const JSValue &scope)
         {
+            if (JS_IsObject(scope))
+                m_chain << scope;
         }
 
-        ~AutoScopePopper()
+        void pushScopeRecursively(const Item *scope)
         {
-            m_converter->popScopes();
+            if (scope) {
+                pushScopeRecursively(scope->scope());
+                pushScope(m_evaluator.scriptValue(scope));
+            }
         }
+
+        qbs::Internal::span<const JSValue> chain() const { return m_chain; }
 
     private:
-        SVConverter *m_converter;
+        Evaluator &m_evaluator;
+        QVarLengthArray<JSValue, 16> m_chain;
     };
 
     void setupConvenienceProperty(const QString &conveniencePropertyName, JSValue *extraScope,
                                   const JSValue &scriptValue)
     {
         if (!JS_IsObject(*extraScope))
-            *extraScope = engine->newObject();
-        const PropertyDeclaration::Type type
-                = itemOfProperty->propertyDeclaration(*propertyName).type();
+            *extraScope = m_engine.newObject();
+        const PropertyDeclaration::Type type = m_decl.type();
         const bool isArray = type == PropertyDeclaration::StringList
                 || type == PropertyDeclaration::PathList
                 || type == PropertyDeclaration::Variant // TODO: Why?
                 || type == PropertyDeclaration::VariantList;
-        JSValue valueToSet = JS_DupValue(engine->context(), scriptValue);
-        if (isArray && JS_IsUndefined(valueToSet))
-            valueToSet = engine->newArray(0, JsValueOwner::Caller);
-        setJsProperty(engine->context(), *extraScope, conveniencePropertyName, valueToSet);
+        JSValue valueToSet = JS_DupValue(m_engine.context(), scriptValue);
+        if (isArray && (JS_IsUninitialized(valueToSet) || JS_IsUndefined(valueToSet)))
+            valueToSet = m_engine.newArray(0, JsValueOwner::Caller);
+        setJsProperty(m_engine.context(), *extraScope, conveniencePropertyName, valueToSet);
     }
 
-    std::pair<JSValue, bool> createExtraScope(const JSSourceValue *value, Item *outerItem,
-                                              JSValue *outerScriptValue)
+    JSValue createExtraScope(const JSSourceValue *value, Item *outerItem, JSValue *outerScriptValue)
     {
-        std::pair<JSValue, bool> result;
-        auto &extraScope = result.first;
-        result.second = true;
+        JSValue extraScope = JS_UNINITIALIZED;
         if (value->sourceUsesBase()) {
-            JSValue baseValue = JS_UNDEFINED;
+            JSValue baseValue = JS_UNINITIALIZED;
             if (value->baseValue()) {
-                SVConverter converter(engine, object, value->baseValue(), itemOfProperty,
-                                      propertyName, data, &baseValue);
-                converter.start();
+                baseValue = ValueEvaluator(
+                                m_evaluator,
+                                m_object,
+                                value->baseValue(),
+                                m_item,
+                                m_itemOfProperty,
+                                m_decl)
+                                .eval();
             }
             setupConvenienceProperty(StringConstants::baseVar(), &extraScope, baseValue);
         }
         if (value->sourceUsesOuter()) {
-            JSValue v = JS_UNDEFINED;
+            JSValue v = JS_UNINITIALIZED;
             bool doSetup = false;
             if (outerItem) {
-                v = data->evaluator->property(outerItem, *propertyName);
-                if (JsException ex = engine->checkAndClearException({})) {
-                    extraScope = engine->throwError(ex.toErrorInfo().toString());
-                    result.second = false;
-                    return result;
-                }
+                v = m_evaluator.property(outerItem, m_decl.name());
+                if (JsException ex = m_engine.checkAndClearException({}))
+                    return m_engine.throwError(ex.toErrorInfo().toString());
                 doSetup = true;
-                JS_FreeValue(engine->context(), v);
+                JS_FreeValue(m_engine.context(), v);
             } else if (outerScriptValue) {
                 doSetup = true;
                 v = *outerScriptValue;
@@ -602,30 +684,26 @@ private:
                 setupConvenienceProperty(StringConstants::outerVar(), &extraScope, v);
         }
         if (value->sourceUsesOriginal()) {
-            JSValue originalJs = JS_UNDEFINED;
-            ScopedJsValue originalMgr(engine->context(), JS_UNDEFINED);
-            if (data->item->propertyDeclaration(*propertyName).isScalar()) {
-                const Item *item = itemOfProperty;
+            JSValue originalJs = JS_UNINITIALIZED;
+            ScopedJsValue originalMgr(m_engine.context(), JS_UNDEFINED);
+            if (m_decl.isScalar()) {
+                const Item *item = &m_itemOfProperty;
 
                 if (item->type() != ItemType::ModuleInstance
                     && item->type() != ItemType::ModuleInstancePlaceholder) {
                     const QString errorMessage = Tr::tr("The special value 'original' can only "
                                                         "be used with module properties.");
-                    extraScope = throwError(engine->context(), errorMessage);
-                    result.second = false;
-                    return result;
+                    return throwError(m_engine.context(), errorMessage);
                 }
 
                 if (!value->scope()) {
                     const QString errorMessage = Tr::tr("The special value 'original' cannot "
                         "be used on the right-hand side of a property declaration.");
-                    extraScope = throwError(engine->context(), errorMessage);
-                    result.second = false;
-                    return result;
+                    return throwError(m_engine.context(), errorMessage);
                 }
 
                 ValuePtr original;
-                for (const ValuePtr &v : value->candidates()) {
+                for (const ValuePtr &v : m_value.candidates()) {
                     if (!v->scope()) {
                         original = v;
                         break;
@@ -636,121 +714,184 @@ private:
                 // in that case.
                 if (!original) {
                     const QString errorMessage = Tr::tr("Error setting up 'original'.");
-                    extraScope = throwError(engine->context(), errorMessage);
-                    result.second = false;
-                    return result;
+                    return throwError(m_engine.context(), errorMessage);
                 }
-
-                SVConverter converter(engine, object, original, item, propertyName, data,
-                                      &originalJs);
-                converter.start();
+                originalJs
+                    = ValueEvaluator(m_evaluator, m_object, original, m_item, *item, m_decl).eval();
             } else {
-                originalJs = engine->newArray(0, JsValueOwner::Caller);
+                originalJs = m_engine.newArray(0, JsValueOwner::Caller);
                 originalMgr.setValue(originalJs);
             }
             setupConvenienceProperty(StringConstants::originalVar(), &extraScope, originalJs);
         }
+        return extraScope;
+    }
+
+    JSValue mergeValues(const JSValueList &lst)
+    {
+        JSValue result = m_engine.newArray(int(lst.size()), JsValueOwner::ScriptEngine);
+        quint32 k = 0;
+        JSContext * const ctx = m_engine.context();
+        for (const JSValue &v : std::as_const(lst)) {
+            QBS_ASSERT(!JS_IsError(ctx, v), continue);
+            if (JS_IsArray(ctx, v)) {
+                const quint32 vlen = getJsIntProperty(ctx, v, StringConstants::lengthProperty());
+                for (quint32 j = 0; j < vlen; ++j)
+                    JS_SetPropertyUint32(ctx, result, k++, JS_GetPropertyUint32(ctx, v, j));
+                JS_FreeValue(ctx, v);
+            } else {
+                JS_SetPropertyUint32(ctx, result, k++, v);
+            }
+        }
+        setJsProperty(ctx, result, StringConstants::lengthProperty(), JS_NewInt32(ctx, k));
         return result;
     }
 
-    void pushScope(const JSValue &scope)
+    JSValue handleAlternatives(JSSourceValue *value)
     {
-        if (JS_IsObject(scope)) {
-            scopeChain << scope;
-            ++pushedScopesCount;
+        if (!m_decl.isScalar() && !value->createdByPropertiesBlock()
+            && !value->alternatives().empty()) {
+            const QString warning
+                = Tr::tr("Using list properties as fallback values is deprecated.\n"
+                         "In future versions of qbs, such properties will be considered "
+                         "unconditionally.\n"
+                         "If you want to keep the current semantics for this value, use a fallback "
+                         "%1 item.")
+                      .arg(BuiltinDeclarations::instance().nameForType(ItemType::Properties));
+            try {
+                m_engine.handleDeprecation(Version(2, 7), warning, value->location());
+            } catch (const ErrorInfo &e) {
+                return m_engine.throwError(e.toString());
+            }
         }
-    }
 
-    void pushScopeRecursively(const Item *scope)
-    {
-        if (scope) {
-            pushScopeRecursively(scope->scope());
-            pushScope(data->evaluator->scriptValue(scope));
-        }
-    }
-    void pushItemScopes(const Item *item)
-    {
-        const Item *scope = item->scope();
-        if (scope) {
-            pushItemScopes(scope);
-            pushScope(data->evaluator->scriptValue(scope));
-        }
-    }
-
-    void popScopes()
-    {
-        for (; pushedScopesCount; --pushedScopesCount)
-            scopeChain.pop_back();
-    }
-
-    void handle(JSSourceValue *value) override
-    {
         JSValue outerScriptValue = JS_UNDEFINED;
+        JSValueList lst;
         for (const JSSourceValue::Alternative &alternative : value->alternatives()) {
-            if (alternative.value->sourceUsesOuter()
-                    && !data->item->outerItem()
-                    && JS_IsUndefined(outerScriptValue)) {
-                JSSourceValueEvaluationResult sver = evaluateJSSourceValue(value, nullptr);
-                if (sver.hasError) {
-                    *result = sver.scriptValue;
-                    return;
+            if (alternative.value->isFallback() && !lst.empty())
+                break;
+            if (alternative.value->sourceUsesOuter() && !m_item.outerItem()
+                && JS_IsUndefined(outerScriptValue)) {
+                outerScriptValue = evaluateJSSourceValue(value, nullptr);
+                if (JS_IsError(m_engine.context(), outerScriptValue)) {
+                    const ScopedJsValueList l(m_engine.context(), lst);
+                    return outerScriptValue;
                 }
-                outerScriptValue = sver.scriptValue;
             }
-            JSSourceValueEvaluationResult sver = evaluateJSSourceValue(alternative.value.get(),
-                                                                       data->item->outerItem(),
-                                                                       &alternative,
-                                                                       value, &outerScriptValue);
-            if (!sver.tryNextAlternative || sver.hasError) {
-                *result = sver.scriptValue;
-                return;
-            }
+            const JSValue v = evaluateJSSourceValue(
+                alternative.value.get(),
+                m_item.outerItem(),
+                &alternative,
+                value,
+                &outerScriptValue);
+            if (JS_IsUninitialized(v))
+                continue;
+            if (m_decl.isScalar())
+                return v;
+            if (!JS_IsUndefined(v))
+                lst << JS_DupValue(m_engine.context(), v);
         }
-        *result = evaluateJSSourceValue(value, data->item->outerItem()).scriptValue;
+
+        return lst.empty() ? JS_UNINITIALIZED : mergeValues(lst);
     }
 
-    struct JSSourceValueEvaluationResult
+    JSValue mergeWithCandidates(const JSSourceValue *value, JSValue result)
     {
-        JSValue scriptValue = JS_UNDEFINED;
-        bool tryNextAlternative = true;
-        bool hasError = false;
-    };
+        if (value->candidates().empty())
+            return result;
 
-    JSSourceValueEvaluationResult evaluateJSSourceValue(const JSSourceValue *value, Item *outerItem,
-            const JSSourceValue::Alternative *alternative = nullptr,
-            JSSourceValue *elseCaseValue = nullptr, JSValue *outerScriptValue = nullptr)
+        JSValueList lst;
+        if (!JS_IsUninitialized(result) && !JS_IsUndefined(result))
+            lst << JS_DupValue(m_engine.context(), result);
+        for (const ValuePtr &next : value->candidates()) {
+            JSValue v = next->apply(this);
+            if (JsException ex = m_engine.checkAndClearException({})) {
+                const ScopedJsValueList l(m_engine.context(), lst);
+                return m_engine.throwError(ex.toErrorInfo().toString());
+            }
+            if (JS_IsUninitialized(v) || JS_IsUndefined(v))
+                continue;
+
+            convertToPropertyType(
+                &m_engine, &m_item, m_decl, next.get(), ConversionType::ElementsOnly, v);
+
+            lst.push_back(JS_DupValue(m_engine.context(), v));
+        }
+
+        return lst.empty() ? result : mergeValues(lst);
+    }
+
+    JSValue doHandle(JSSourceValue *value) override
     {
-        JSSourceValueEvaluationResult result;
-        QBS_ASSERT(!alternative || value == alternative->value.get(), return result);
-        AutoScopePopper autoScopePopper(this);
-        auto maybeExtraScope = createExtraScope(value, outerItem, outerScriptValue);
-        if (!maybeExtraScope.second) {
-            result.scriptValue = maybeExtraScope.first;
-            result.hasError = true;
+        JSValue result = handleAlternatives(value);
+        if (JS_IsUninitialized(result)) {
+            result = evaluateJSSourceValue(value, m_item.outerItem());
+            if (JS_IsError(m_engine.context(), result))
+                return result;
+        } else if (value->isExclusiveListValue()) {
             return result;
         }
-        const ScopedJsValue extraScopeMgr(engine->context(), maybeExtraScope.first);
-        const Evaluator::FileContextScopes fileCtxScopes
-                = data->evaluator->fileContextScopes(value->file());
-        if (JsException ex = engine->checkAndClearException({})) {
-            result.scriptValue = engine->throwError(ex.toErrorInfo().toString());
-            result.hasError = true;
-            return result;
+
+        if (m_decl.isScalar()) {
+            if (!JS_IsUninitialized(result) || !value->createdByPropertiesBlock())
+                return result;
+            for (const ValuePtr &candidate : value->candidates()) {
+                const JSValue v = candidate->apply(this);
+                if (!JS_IsUninitialized(v))
+                    return v;
+            }
+            return JS_UNINITIALIZED;
         }
-        pushScope(fileCtxScopes.fileScope);
-        pushItemScopes(data->item);
-        if ((itemOfProperty->type() != ItemType::ModuleInstance
-             && itemOfProperty->type() != ItemType::ModuleInstancePlaceholder) || !value->scope()) {
-            pushScope(*object);
+
+        return mergeWithCandidates(value, result);
+    }
+
+    JSValue evaluateJSSourceValue(
+        const JSSourceValue *value,
+        Item *outerItem,
+        const JSSourceValue::Alternative *alternative = nullptr,
+        JSSourceValue *elseCaseValue = nullptr,
+        JSValue *outerScriptValue = nullptr)
+    {
+        QBS_ASSERT(!alternative || value == alternative->value.get(), return JS_UNINITIALIZED);
+
+        for (Item *group = alternative ? alternative->value->scope() : nullptr;
+             group && group->type() == ItemType::Group;
+             group = group->parent()) {
+            if (!m_evaluator.boolValue(group, StringConstants::conditionProperty()))
+                return JS_UNINITIALIZED;
         }
-        pushScopeRecursively(value->scope());
-        pushScope(maybeExtraScope.first);
-        pushScope(fileCtxScopes.importScope);
+
+        ScopeChain scopeChain(m_evaluator);
+        const JSValue maybeExtraScope = createExtraScope(value, outerItem, outerScriptValue);
+        if (JS_IsError(m_engine.context(), maybeExtraScope))
+            return maybeExtraScope;
+        const ScopedJsValue extraScopeMgr(m_engine.context(), maybeExtraScope);
+        const Evaluator::FileContextScopes fileCtxScopes = m_evaluator.fileContextScopes(
+            value->file());
+        if (JsException ex = m_engine.checkAndClearException({}))
+            return m_engine.throwError(ex.toErrorInfo().toString());
+        scopeChain.pushScope(fileCtxScopes.fileScope);
+        scopeChain.pushScopeRecursively(m_item.scope());
+        if ((m_itemOfProperty.type() != ItemType::ModuleInstance
+             && m_itemOfProperty.type() != ItemType::ModuleInstancePlaceholder)
+            || !value->scope()) {
+            scopeChain.pushScope(m_object);
+        }
+        scopeChain.pushScopeRecursively(value->scope());
+        scopeChain.pushScope(maybeExtraScope);
+        scopeChain.pushScope(fileCtxScopes.importScope);
         if (alternative) {
-            ScopedJsValue sv(engine->context(), engine->evaluate(JsValueOwner::Caller,
-                    alternative->condition.value, {}, 1, scopeChain));
-            if (JsException ex = engine->checkAndClearException(alternative->condition.location)) {
-
+            ScopedJsValue sv(
+                m_engine.context(),
+                alternative->value->isFallback() ? JS_NewBool(m_engine.context(), 1)
+                                                 : m_engine.evaluate(
+                                                       JsValueOwner::Caller,
+                                                       alternative->condition.value,
+                                                       {},
+                                                       1,
+                                                       scopeChain.chain()));
+            if (JsException ex = m_engine.checkAndClearException(alternative->condition.location)) {
                 // This handles cases like the following:
                 //   Depends { name: "cpp" }
                 //   Properties {
@@ -763,68 +904,60 @@ private:
                 //       there are currently several contexts where we do that, e.g. Export
                 //       and Group items. Perhaps change that, or try to collect all such
                 //       exceptions and don't try to evaluate other cases.
-                if (itemOfProperty->type() == ItemType::ModuleInstancePlaceholder) {
-                    result.scriptValue = JS_UNDEFINED;
-                    result.tryNextAlternative = false;
-                    return result;
-                }
+                if (m_itemOfProperty.type() == ItemType::ModuleInstancePlaceholder)
+                    return JS_UNDEFINED;
 
-                result.scriptValue = engine->throwError(ex.toErrorInfo().toString());
-                //result.scriptValue = JS_Throw(engine->context(), ex.takeValue());
-                //result.scriptValue = ex.takeValue();
-                result.hasError = true;
-                return result;
+                return m_engine.throwError(ex.toErrorInfo().toString());
             }
-            if (JS_ToBool(engine->context(), sv)) {
-                // The condition is true. Continue evaluating the value.
-                result.tryNextAlternative = false;
-            } else {
-                // The condition is false. Try the next alternative or the else value.
-                result.tryNextAlternative = true;
-                return result;
+
+            // The condition is false. Try the next alternative or the else value.
+            if (!JS_ToBool(m_engine.context(), sv))
+                return JS_UNINITIALIZED;
+
+            sv.reset(m_engine.evaluate(
+                JsValueOwner::Caller,
+                alternative->overrideListProperties.value,
+                {},
+                1,
+                scopeChain.chain()));
+            if (JsException ex = m_engine.checkAndClearException(
+                    alternative->overrideListProperties.location)) {
+                return m_engine.throwError(ex.toErrorInfo().toString());
             }
-            sv.reset(engine->evaluate(JsValueOwner::Caller,
-                                  alternative->overrideListProperties.value, {}, 1, scopeChain));
-            if (JsException ex = engine->checkAndClearException(
-                        alternative->overrideListProperties.location)) {
-                result.scriptValue = engine->throwError(ex.toErrorInfo().toString());
-                //result.scriptValue = JS_Throw(engine->context(), ex.takeValue());
-                result.hasError = true;
-                return result;
-            }
-            if (JS_ToBool(engine->context(), sv))
+            if (JS_ToBool(m_engine.context(), sv))
                 elseCaseValue->setIsExclusiveListValue();
         }
-        result.scriptValue = engine->evaluate(JsValueOwner::ScriptEngine,
-                value->sourceCodeForEvaluation(), value->file()->filePath(), value->line(),
-                scopeChain);
+        return m_engine.evaluate(
+            JsValueOwner::ScriptEngine,
+            value->sourceCodeForEvaluation(),
+            value->file()->filePath(),
+            value->line(),
+            scopeChain.chain());
+    }
+
+    JSValue doHandle(ItemValue *value) override
+    {
+        const JSValue result = m_evaluator.scriptValue(value->item());
+        if (JS_IsUninitialized(result))
+            qDebug() << "SVConverter returned invalid script value.";
         return result;
     }
 
-    void handle(ItemValue *value) override
+    JSValue doHandle(VariantValue *variantValue) override
     {
-        *result = data->evaluator->scriptValue(value->item());
-        if (JS_IsUninitialized(*result))
-            qDebug() << "SVConverter returned invalid script value.";
+        const JSValue result = m_engine.toScriptValue(variantValue->value(), variantValue->id());
+        m_engine.takeOwnership(result);
+        return result;
     }
 
-    void handle(VariantValue *variantValue) override
-    {
-        *result = engine->toScriptValue(variantValue->value(), variantValue->id());
-        engine->takeOwnership(*result);
-    }
+    Evaluator &m_evaluator;
+    ScriptEngine &m_engine;
+    const JSValue m_object;
+    Value &m_value;
+    const Item &m_item;
+    const Item &m_itemOfProperty;
+    const PropertyDeclaration m_decl;
 };
-
-static void convertToPropertyType(ScriptEngine *engine, const Item *item,
-                                  const PropertyDeclaration& decl, const Value *value, JSValue &v)
-{
-    if (value->type() == Value::VariantValueType && JS_IsUndefined(v) && !decl.isScalar()) {
-        v = engine->newArray(0, JsValueOwner::ScriptEngine); // QTBUG-51237
-        return;
-    }
-    convertToPropertyType_impl(engine, engine->evaluator()->pathPropertiesBaseDir(), item, decl,
-                               value, value->location(), v);
-}
 
 static QString resultToString(JSContext *ctx, const JSValue &scriptValue)
 {
@@ -839,60 +972,11 @@ static QString resultToString(JSContext *ctx, const JSValue &scriptValue)
     return getJsVariant(ctx, scriptValue).toString();
 }
 
-static void collectValuesFromNextChain(
-        ScriptEngine *engine, JSValue obj, const ValuePtr &value, const Item *itemOfProperty, const QString &name,
-        const EvaluationData *data, JSValue *result)
-{
-    JSValueList lst;
-    for (ValuePtr next = value; next; next = next->next()) {
-        JSValue v = JS_UNDEFINED;
-        SVConverter svc(engine, &obj, next, itemOfProperty, &name, data, &v);
-        svc.start();
-        if (JsException ex = engine->checkAndClearException({})) {
-            const ScopedJsValueList l(engine->context(), lst);
-            *result = engine->throwError(ex.toErrorInfo().toString());
-            return;
-        }
-        if (JS_IsUndefined(v))
-            continue;
-        const PropertyDeclaration decl = data->item->propertyDeclaration(name);
-        convertToPropertyType(engine, data->item, decl, next.get(), v);
-        lst.push_back(JS_DupValue(engine->context(), v));
-        if (next->type() == Value::JSSourceValueType
-                && std::static_pointer_cast<JSSourceValue>(next)->isExclusiveListValue()) {
-            // TODO: Why on earth do we keep the last _2_ elements?
-            auto keepIt = lst.rbegin();
-            for (int i = 0; i < 2 && keepIt != lst.rend(); ++i)
-                ++keepIt;
-            for (auto it = lst.begin(); it < keepIt.base(); ++it)
-                JS_FreeValue(engine->context(), *it);
-            lst.erase(lst.begin(), keepIt.base());
-            break;
-        }
-    }
-
-    *result = engine->newArray(int(lst.size()), JsValueOwner::ScriptEngine);
-    quint32 k = 0;
-    JSContext * const ctx = engine->context();
-    for (const JSValue &v : std::as_const(lst)) {
-        QBS_ASSERT(!JS_IsError(ctx, v), continue);
-        if (JS_IsArray(ctx, v)) {
-            const quint32 vlen = getJsIntProperty(ctx, v, StringConstants::lengthProperty());
-            for (quint32 j = 0; j < vlen; ++j)
-                JS_SetPropertyUint32(ctx, *result, k++, JS_GetPropertyUint32(ctx, v, j));
-            JS_FreeValue(ctx, v);
-        } else {
-            JS_SetPropertyUint32(ctx, *result, k++, v);
-        }
-    }
-    setJsProperty(ctx, *result, StringConstants::lengthProperty(), JS_NewInt32(ctx, k));
-}
-
 struct EvalResult { JSValue v = JS_UNDEFINED; bool found = false; };
-static EvalResult getEvalProperty(ScriptEngine *engine, JSValue obj, const Item *item,
-                                  const QString &name, EvaluationData *data)
+static EvalResult getEvalProperty(
+    Evaluator &evaluator, JSValue obj, const Item *item, const QString &name, EvaluationData *data)
 {
-    Evaluator * const evaluator = data->evaluator;
+    ScriptEngine &engine = *evaluator.engine();
     const bool isModuleInstance = item->type() == ItemType::ModuleInstance
             || item->type() == ItemType::ModuleInstancePlaceholder;
     for (; item; item = item->prototype()) {
@@ -904,41 +988,43 @@ static EvalResult getEvalProperty(ScriptEngine *engine, JSValue obj, const Item 
         if (!value)
             continue;
         const Item * const itemOfProperty = item;     // The item that owns the property.
-        PropertyStackManager propStackmanager(itemOfProperty, name, value.get(),
-                                              evaluator->requestedProperties(),
-                                              evaluator->propertyDependencies());
-        JSValue result;
-        if (evaluator->cachingEnabled()) {
-            data->evaluator->clearCacheIfInvalidated(*data);
+        PropertyStackManager propStackmanager(
+            itemOfProperty,
+            name,
+            value.get(),
+            evaluator.requestedProperties(),
+            evaluator.propertyDependencies());
+        if (evaluator.cachingEnabled()) {
+            evaluator.clearCacheIfInvalidated(*data);
             const auto result = data->valueCache.constFind(name);
             if (result != data->valueCache.constEnd()) {
                 if (debugProperties)
                     qDebug() << "[SC] cache hit " << name << ": "
-                             << resultToString(engine->context(), *result);
+                             << resultToString(engine.context(), *result);
                 return {*result, true};
             }
         }
 
-        if (value->next()) {
-            collectValuesFromNextChain(engine, obj, value, itemOfProperty, name, data, &result);
-        } else {
-            SVConverter converter(engine, &obj, value, itemOfProperty, &name, data, &result);
-            converter.start();
-            const PropertyDeclaration decl = data->item->propertyDeclaration(name);
-            convertToPropertyType(engine, data->item, decl, value.get(), result);
-        }
+        const JSValue result = ValueEvaluator(
+                                   evaluator,
+                                   obj,
+                                   value,
+                                   *data->item,
+                                   *itemOfProperty,
+                                   data->item->propertyDeclaration(name))
+                                   .eval();
 
         if (debugProperties)
             qDebug() << "[SC] cache miss " << name << ": "
-                     << resultToString(engine->context(), result);
-        if (evaluator->cachingEnabled()) {
-            data->evaluator->clearCacheIfInvalidated(*data);
+                     << resultToString(engine.context(), result);
+        if (evaluator.cachingEnabled()) {
+            evaluator.clearCacheIfInvalidated(*data);
             const auto it = data->valueCache.find(name);
             if (it != data->valueCache.end()) {
-                JS_FreeValue(engine->context(), it.value());
-                it.value() = JS_DupValue(engine->context(), result);
+                JS_FreeValue(engine.context(), it.value());
+                it.value() = JS_DupValue(engine.context(), result);
             } else {
-                data->valueCache.insert(name, JS_DupValue(engine->context(), result));
+                data->valueCache.insert(name, JS_DupValue(engine.context(), result));
             }
         }
         return {result, true};
@@ -952,9 +1038,9 @@ static int getEvalProperty(JSContext *ctx, JSPropertyDescriptor *desc, JSValue o
         desc->getter = desc->setter = desc->value = JS_UNDEFINED;
         desc->flags = JS_PROP_ENUMERABLE;
     }
-    ScriptEngine * const engine = ScriptEngine::engineForContext(ctx);
-    Evaluator * const evaluator = engine->evaluator();
-    const auto data = attachedPointer<EvaluationData>(obj, evaluator->classId());
+    ScriptEngine &engine = *ScriptEngine::engineForContext(ctx);
+    Evaluator &evaluator = *engine.evaluator();
+    const auto data = attachedPointer<EvaluationData>(obj, evaluator.classId());
     const QString name = getJsString(ctx, prop);
     if (debugProperties)
         qDebug() << "[SC] queryProperty " << jsObjectId(obj) << " " << name;
@@ -962,9 +1048,8 @@ static int getEvalProperty(JSContext *ctx, JSPropertyDescriptor *desc, JSValue o
     if (name == QStringLiteral("parent")) {
         if (desc) {
             Item * const parent = data->item->parent();
-            desc->value = parent
-                    ? JS_DupValue(ctx, data->evaluator->scriptValue(data->item->parent()))
-                    : JS_UNDEFINED;
+            desc->value = parent ? JS_DupValue(ctx, evaluator.scriptValue(data->item->parent()))
+                                 : JS_UNDEFINED;
         }
         return 1;
     }
@@ -972,28 +1057,28 @@ static int getEvalProperty(JSContext *ctx, JSPropertyDescriptor *desc, JSValue o
     if (!data) {
         if (debugProperties)
             qDebug() << "[SC] queryProperty: no data attached";
-        engine->setLastLookupStatus(false);
+        engine.setLastLookupStatus(false);
         return -1;
     }
 
-    EvalResult result = getEvalProperty(engine, obj, data->item, name, data);
+    EvalResult result = getEvalProperty(evaluator, obj, data->item, name, data);
     if (!result.found && data->item->parent()) {
         if (debugProperties)
             qDebug() << "[SC] queryProperty: query parent";
         const Item * const parentItem = data->item->parent();
-        result = getEvalProperty(engine, evaluator->scriptValue(parentItem), parentItem,
-                                 name, data);
+        result = getEvalProperty(
+            evaluator, evaluator.scriptValue(parentItem), parentItem, name, data);
     }
     if (result.found) {
         if (desc)
             desc->value = JS_DupValue(ctx, result.v);
-        engine->setLastLookupStatus(true);
+        engine.setLastLookupStatus(true);
         return 1;
     }
 
     if (debugProperties)
         qDebug() << "[SC] queryProperty: no such property";
-    engine->setLastLookupStatus(false);
+    engine.setLastLookupStatus(false);
     return 0;
 }
 

@@ -346,7 +346,7 @@ CMakeConfig CMakeConfig::fromArguments(const QStringList &list, QStringList &unk
 CMakeConfig CMakeConfig::fromFile(const Utils::FilePath &cacheFile, QString *errorMessage)
 {
     CMakeConfig result;
-    QFile cache(cacheFile.toString());
+    QFile cache(cacheFile.toFSPathString());
     if (!cache.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (errorMessage)
             *errorMessage = Tr::tr("Failed to open %1 for reading.").arg(cacheFile.toUserOutput());
@@ -472,18 +472,24 @@ size_t qHash(const CMakeConfigItem &it)
     return ::qHash(it.key) ^ ::qHash(it.value) ^ ::qHash(it.isUnset) ^ ::qHash(it.isInitial);
 }
 
-#if WITH_TESTS
-
 } // namespace CMakeProjectManager
 
-#include "cmakeprojectplugin.h"
+#if WITH_TESTS
 
 #include <QTest>
 
-namespace CMakeProjectManager {
-namespace Internal {
+namespace CMakeProjectManager::Internal {
 
-void CMakeProjectPlugin::testCMakeSplitValue_data()
+class CMakeConfigTest final : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void testCMakeSplitValue_data();
+    void testCMakeSplitValue();
+};
+
+void CMakeConfigTest::testCMakeSplitValue_data()
 {
     QTest::addColumn<QString>("input");
     QTest::addColumn<bool>("keepEmpty");
@@ -526,7 +532,7 @@ void CMakeProjectPlugin::testCMakeSplitValue_data()
             << "C:/something;;/second/path" << true << QStringList({"C:/something", "", "/second/path"});
 }
 
-void CMakeProjectPlugin::testCMakeSplitValue()
+void CMakeConfigTest::testCMakeSplitValue()
 {
     QFETCH(QString, input);
     QFETCH(bool, keepEmpty);
@@ -537,7 +543,13 @@ void CMakeProjectPlugin::testCMakeSplitValue()
     QCOMPARE(expectedOutput, realOutput);
 }
 
-} // namespace Internal
+QObject *createCMakeConfigTest()
+{
+    return new CMakeConfigTest();
+}
+
+} // CMakeProjectManager::Internal
+
 #endif
 
-} // namespace CMakeProjectManager
+#include "cmakeconfigitem.moc"

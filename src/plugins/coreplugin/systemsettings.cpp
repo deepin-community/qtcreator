@@ -7,7 +7,6 @@
 #include "coreplugin.h"
 #include "coreplugintr.h"
 #include "editormanager/editormanager_p.h"
-#include "dialogs/restartdialog.h"
 #include "dialogs/ioptionspage.h"
 #include "fileutils.h"
 #include "icore.h"
@@ -105,7 +104,7 @@ SystemSettings::SystemSettings()
 
     autoSuspendMinDocumentCount.setSettingsKey("EditorManager/AutoSuspendMinDocuments");
     autoSuspendMinDocumentCount.setRange(1, 500);
-    autoSuspendMinDocumentCount.setDefaultValue(30);
+    autoSuspendMinDocumentCount.setDefaultValue(10);
     autoSuspendMinDocumentCount.setLabelText(Tr::tr("Files to keep open:"));
     autoSuspendMinDocumentCount.setToolTip(
         Tr::tr("Minimum number of open documents that should be kept in memory. Increasing this "
@@ -130,7 +129,7 @@ SystemSettings::SystemSettings()
     reloadSetting.addOption(Tr::tr("Always Ask"));
     reloadSetting.addOption(Tr::tr("Reload All Unchanged Editors"));
     reloadSetting.addOption(Tr::tr("Ignore Modifications"));
-    reloadSetting.setDefaultValue(IDocument::AlwaysAsk);
+    reloadSetting.setDefaultValue(IDocument::ReloadUnmodified);
     reloadSetting.setLabelText(Tr::tr("When files are externally modified:"));
 
     askBeforeExit.setSettingsKey("AskBeforeExit");
@@ -153,16 +152,15 @@ SystemSettings::SystemSettings()
     autoSuspendMinDocumentCount.setEnabler(&autoSuspendEnabled);
     bigFileSizeLimitInMB.setEnabler(&warnBeforeOpeningBigFiles);
 
-    connect(&autoSaveModifiedFiles, &BaseAspect::changed,
-            this, &EditorManagerPrivate::updateAutoSave);
-    connect(&autoSaveInterval, &BaseAspect::changed, this, &EditorManagerPrivate::updateAutoSave);
+    autoSaveModifiedFiles.addOnChanged(this, &EditorManagerPrivate::updateAutoSave);
+    autoSaveInterval.addOnChanged(this, &EditorManagerPrivate::updateAutoSave);
 }
 
 class SystemSettingsWidget : public IOptionsPageWidget
 {
 public:
     SystemSettingsWidget()
-        : m_fileSystemCaseSensitivityChooser(new QComboBox)
+        : m_fileSystemCaseSensitivityChooser(HostOsInfo::isMacHost() ? new QComboBox : nullptr)
         , m_externalFileBrowserEdit(new QLineEdit)
         , m_terminalComboBox(new QComboBox)
         , m_terminalOpenArgs(new QLineEdit)
@@ -189,9 +187,6 @@ public:
         m_terminalOpenArgs->setToolTip(
             Tr::tr("Command line arguments used for \"%1\".").arg(FileUtils::msgTerminalHereAction()));
 
-        auto fileSystemCaseSensitivityLabel = new QLabel(Tr::tr("File system case sensitivity:"));
-        fileSystemCaseSensitivityLabel->setToolTip(
-            Tr::tr("Influences how file names are matched to decide if they are the same."));
         auto resetFileBrowserButton = new QPushButton(Tr::tr("Reset"));
         resetFileBrowserButton->setToolTip(Tr::tr("Reset to default."));
         auto helpExternalFileBrowserButton = new QToolButton;
@@ -224,6 +219,9 @@ public:
         }
         grid.addRow({Span(4, s.patchCommand)});
         if (HostOsInfo::isMacHost()) {
+            auto fileSystemCaseSensitivityLabel = new QLabel(Tr::tr("File system case sensitivity:"));
+            fileSystemCaseSensitivityLabel->setToolTip(
+                Tr::tr("Influences how file names are matched to decide if they are the same."));
             grid.addRow({fileSystemCaseSensitivityLabel,
                          m_fileSystemCaseSensitivityChooser});
         }
@@ -277,21 +275,29 @@ public:
         connect(helpCrashReportingButton, &QAbstractButton::clicked, this, [this] {
             showHelpDialog(Tr::tr("Crash Reporting"), CorePlugin::msgCrashpadInformation());
         });
-        connect(&s.enableCrashReporting, &BaseAspect::changed, this, [this] {
-            const QString restartText = Tr::tr("The change will take effect after restart.");
-            Core::RestartDialog restartDialog(Core::ICore::dialogParent(), restartText);
-            restartDialog.exec();
-            if (restartDialog.result() == QDialog::Accepted)
-                apply();
-        });
 
-        updateClearCrashWidgets();
-        connect(m_clearCrashReportsButton, &QPushButton::clicked, this, [&] {
-            const FilePaths &crashFiles = ICore::crashReportsPath().dirEntries(QDir::Files);
+        const FilePath reportsPath = ICore::crashReportsPath()
+                                     / QLatin1String(
+                                         HostOsInfo::isMacHost() ? "completed" : "reports");
+        const auto updateClearCrashWidgets = [this, reportsPath] {
+            qint64 size = 0;
+            const FilePaths crashFiles = reportsPath.dirEntries(QDir::Files);
             for (const FilePath &file : crashFiles)
-                file.removeFile();
-            updateClearCrashWidgets();
-        });
+                size += file.fileSize();
+            m_clearCrashReportsButton->setEnabled(!crashFiles.isEmpty());
+            m_crashReportsSizeText->setText(formatSize(size));
+        };
+        updateClearCrashWidgets();
+        connect(
+            m_clearCrashReportsButton,
+            &QPushButton::clicked,
+            this,
+            [updateClearCrashWidgets, reportsPath] {
+                const FilePaths &crashFiles = reportsPath.dirEntries(QDir::Files);
+                for (const FilePath &file : crashFiles)
+                    file.removeFile();
+                updateClearCrashWidgets();
+            });
 #endif
 
         if (HostOsInfo::isAnyUnixHost()) {
@@ -364,8 +370,6 @@ private:
     void updateTerminalUi(const Utils::TerminalCommand &term);
     void updatePath();
     void updateEnvironmentChangesLabel();
-    void updateClearCrashWidgets();
-
     void showHelpDialog(const QString &title, const QString &helpText);
 
     QComboBox *m_fileSystemCaseSensitivityChooser;
@@ -406,10 +410,8 @@ void SystemSettingsWidget::apply()
             m_fileSystemCaseSensitivityChooser->currentData().toInt());
         if (selectedSensitivity != sensitivity) {
             EditorManagerPrivate::writeFileSystemSensitivity(settings, selectedSensitivity);
-            RestartDialog dialog(
-                ICore::dialogParent(),
+            ICore::askForRestart(
                 Tr::tr("The file system case sensitivity change will take effect after restart."));
-            dialog.exec();
         }
     }
 
@@ -468,20 +470,6 @@ void SystemSettingsWidget::showHelpDialog(const QString &title, const QString &h
     m_dialog = mb;
     mb->show();
 }
-
-#ifdef ENABLE_CRASHPAD
-void SystemSettingsWidget::updateClearCrashWidgets()
-{
-    QDir crashReportsDir(ICore::crashReportsPath().path());
-    crashReportsDir.setFilter(QDir::Files);
-    qint64 size = 0;
-    const FilePaths crashFiles = ICore::crashReportsPath().dirEntries(QDir::Files);
-    for (const FilePath &file : crashFiles)
-        size += file.fileSize();
-    m_clearCrashReportsButton->setEnabled(!crashFiles.isEmpty());
-    m_crashReportsSizeText->setText(formatSize(size));
-}
-#endif
 
 void SystemSettingsWidget::showHelpForFileBrowser()
 {

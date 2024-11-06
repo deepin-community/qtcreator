@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "helpmanager.h"
+#include "localhelpmanager.h"
 
 #include "helptr.h"
 
@@ -54,6 +55,7 @@ struct HelpManagerPrivate
 
     // data for delayed initialization
     QSet<QString> m_filesToRegister;
+    QSet<QString> m_blockedDocumentation;
     QSet<QString> m_filesToUnregister;
     QHash<QString, QVariant> m_customValues;
 
@@ -137,6 +139,7 @@ void HelpManager::registerDocumentation(const QStringList &files)
     }
 
     QFuture<bool> future = Utils::asyncRun(&registerDocumentationNow, collectionFilePath(), files);
+    Utils::futureSynchronizer()->addFuture(future);
     Utils::onResultReady(future, this, [](bool docsChanged){
         if (docsChanged) {
             d->m_helpEngine->setupData();
@@ -144,6 +147,12 @@ void HelpManager::registerDocumentation(const QStringList &files)
         }
     });
     ProgressManager::addTask(future, Tr::tr("Update Documentation"), kUpdateDocumentationTask);
+}
+
+void HelpManager::setBlockedDocumentation(const QStringList &fileNames)
+{
+    for (const QString &filePath : fileNames)
+        d->m_blockedDocumentation.insert(filePath);
 }
 
 static void unregisterDocumentationNow(QPromise<bool> &promise,
@@ -193,6 +202,7 @@ void HelpManager::unregisterDocumentation(const QStringList &files)
 
     d->m_userRegisteredFiles.subtract(Utils::toSet(files));
     QFuture<bool> future = Utils::asyncRun(&unregisterDocumentationNow, collectionFilePath(), files);
+    Utils::futureSynchronizer()->addFuture(future);
     Utils::onResultReady(future, this, [](bool docsChanged){
         if (docsChanged) {
             d->m_helpEngine->setupData();
@@ -273,6 +283,11 @@ void HelpManager::showHelpUrl(const QUrl &url, Core::HelpManager::HelpViewerLoca
     emit m_instance->helpRequested(url, location);
 }
 
+void HelpManager::addOnlineHelpHandler(const Core::HelpManager::OnlineHelpHandler &handler)
+{
+    LocalHelpManager::addOnlineHelpHandler(handler);
+}
+
 QStringList HelpManager::registeredNamespaces()
 {
     QTC_ASSERT(!d->m_needsSetup, return {});
@@ -333,6 +348,12 @@ void HelpManager::setupHelpManager()
 
     for (const QString &filePath : d->documentationFromInstaller())
         d->m_filesToRegister.insert(filePath);
+
+    // The online installer registers documentation for Qt versions explicitly via an install
+    // setting, which defeats that we only register the Qt versions matching the setting.
+    // So the Qt support explicitly blocks the files that we do _not_ want to register, so the
+    // Help plugin knows about this.
+    d->m_filesToRegister -= d->m_blockedDocumentation;
 
     d->cleanUpDocumentation();
 

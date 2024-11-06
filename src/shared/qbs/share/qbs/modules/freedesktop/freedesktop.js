@@ -34,7 +34,7 @@ function parseDesktopFile(filePath) {
     var file = new TextFile(filePath);
     var fileValues = {};
     var currentSection = {};
-    var sectionRex = /\[(.+)\]/g;
+    var sectionRex = /^\[(.+)\]$/g;
     while (!file.atEof()) {
         var line = file.readLine().trim();
         if (line.length == 0) continue;
@@ -66,4 +66,32 @@ function dumpDesktopFile(filePath, keys) {
         file.writeLine('');
     }
     file.close();
+}
+
+function generateDesktopFileCommands(project, product, inputs, outputs, input, output,
+                                     explicitlyDependsOn)
+{
+    var cmd = new JavaScriptCommand();
+    cmd.description = "generating " + output.fileName + " from " + input.fileName;
+    cmd.highlight = "codegen";
+    cmd.sourceCode = function() {
+        var aggregateDesktopKeys = parseDesktopFile(input.filePath);
+        var desktopKeys = ModUtils.moduleProperty(product, "desktopKeys") || {}
+        var mainSection = aggregateDesktopKeys['Desktop Entry'];
+        for (key in desktopKeys) {
+            if (desktopKeys.hasOwnProperty(key)) {
+                mainSection[key] = desktopKeys[key];
+            }
+        }
+
+        var defaultValues = product.freedesktop.defaultDesktopKeys
+        for (key in defaultValues) {
+            if (!(key in mainSection)) {
+                mainSection[key] = defaultValues[key];
+            }
+        }
+
+        dumpDesktopFile(output.filePath, aggregateDesktopKeys);
+    }
+    return [cmd];
 }

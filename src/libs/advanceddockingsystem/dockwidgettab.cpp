@@ -35,7 +35,6 @@
 
 namespace ADS {
 
-static const char *const g_locationProperty = "Location";
 using TabLabelType = ElidingLabel;
 
 /**
@@ -106,7 +105,7 @@ public:
             return new FloatingDockContainer(widget);
         } else {
             auto w = new FloatingDragPreview(widget);
-            QObject::connect(w, &FloatingDragPreview::draggingCanceled, q, [=]() {
+            QObject::connect(w, &FloatingDragPreview::draggingCanceled, q, [this] {
                 m_dragState = DraggingInactive;
             });
             return w;
@@ -181,8 +180,9 @@ public:
     QAction *createAutoHideToAction(const QString &title, SideBarLocation location, QMenu *menu)
     {
         auto action = menu->addAction(title);
-        action->setProperty("Location", location);
-        QObject::connect(action, &QAction::triggered, q, &DockWidgetTab::onAutoHideToActionClicked);
+        QObject::connect(action, &QAction::triggered, q, [this, location] {
+            m_dockWidget->toggleAutoHide(location);
+        });
         return action;
     }
 
@@ -374,10 +374,12 @@ void DockWidgetTab::mouseReleaseEvent(QMouseEvent *event)
             break;
 
         default:
-            if (DockManager::testConfigFlag(DockManager::FocusHighlighting))
-                d->focusController()->setDockWidgetTabPressed(false);
             break;
         }
+
+        if (DockManager::testConfigFlag(DockManager::FocusHighlighting))
+            d->focusController()->setDockWidgetTabPressed(false);
+
     } else if (event->button() == Qt::MiddleButton) {
         if (DockManager::testConfigFlag(DockManager::MiddleMouseButtonClosesTab)
             && d->m_dockWidget->features().testFlag(DockWidget::DockWidgetClosable)) {
@@ -420,22 +422,21 @@ void DockWidgetTab::mouseMoveEvent(QMouseEvent *event)
     int dragDistanceY = qAbs(d->m_globalDragStartMousePosition.y()
                              - event->globalPosition().toPoint().y());
     if (dragDistanceY >= DockManager::startDragDistance() || mouseOutsideBar) {
-        // If this is the last dock area in a dock container with only
-        // one single dock widget it does not make  sense to move it to a new
-        // floating widget and leave this one empty
+        // If this is the last dock area in a dock container with only one single dock widget it
+        // does not make sense to move it to a new floating widget and leave this one empty
         if (d->m_dockArea->dockContainer()->isFloating()
             && d->m_dockArea->openDockWidgetsCount() == 1
             && d->m_dockArea->dockContainer()->visibleDockAreaCount() == 1) {
             return;
         }
 
-        // Floating is only allowed for widgets that are floatable
-        // We can create the drag preview if the widget is movable.
+        // Floating is only allowed for widgets that are floatable. We can create the drag preview
+        // if the widget is movable.
         auto features = d->m_dockWidget->features();
         if (features.testFlag(DockWidget::DockWidgetFloatable)
-            || (features.testFlag(DockWidget::DockWidgetMovable))) {
-            // If we undock, we need to restore the initial position of this
-            // tab because it looks strange if it remains on its dragged position
+            || features.testFlag(DockWidget::DockWidgetMovable)) {
+            // If we undock, we need to restore the initial position of this tab because it looks
+            // strange if it remains on its dragged position
             if (d->isDraggingState(DraggingTab))
                 parentWidget()->layout()->update();
 
@@ -460,6 +461,9 @@ void DockWidgetTab::mouseMoveEvent(QMouseEvent *event)
 
 void DockWidgetTab::contextMenuEvent(QContextMenuEvent *event)
 {
+    if (DockManager::testConfigFlag(DockManager::HideContextMenuDockWidgetTab))
+        return;
+
     event->accept();
     if (d->isDraggingState(DraggingFloatingWidget))
         return;
@@ -654,12 +658,6 @@ void DockWidgetTab::detachDockWidget()
 void DockWidgetTab::autoHideDockWidget()
 {
     d->m_dockWidget->setAutoHide(true);
-}
-
-void DockWidgetTab::onAutoHideToActionClicked()
-{
-    int location = sender()->property(g_locationProperty).toInt();
-    d->m_dockWidget->toggleAutoHide((SideBarLocation) location);
 }
 
 bool DockWidgetTab::event(QEvent *event)

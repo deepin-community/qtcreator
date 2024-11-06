@@ -3,8 +3,8 @@
 
 #include "plugindialog.h"
 
+#include "coreplugin.h"
 #include "coreplugintr.h"
-#include "dialogs/restartdialog.h"
 #include "icore.h"
 #include "plugininstallwizard.h"
 
@@ -14,6 +14,7 @@
 #include <extensionsystem/pluginspec.h>
 #include <extensionsystem/pluginview.h>
 
+#include <utils/algorithm.h>
 #include <utils/fancylineedit.h>
 #include <utils/layoutbuilder.h>
 
@@ -21,13 +22,34 @@
 #include <QDialogButtonBox>
 #include <QPushButton>
 
+using namespace ExtensionSystem;
 using namespace Utils;
 
-namespace Core {
-namespace Internal {
+namespace Core::Internal {
 
-PluginDialog::PluginDialog(QWidget *parent)
-    : QDialog(parent),
+class PluginDialog final : public QDialog
+{
+public:
+    explicit PluginDialog();
+
+private:
+    void updateButtons();
+    void openDetails(ExtensionSystem::PluginSpec *spec);
+    void openErrorDetails();
+    void closeDialog();
+    void showInstallWizard();
+
+    ExtensionSystem::PluginView *m_view;
+
+    QPushButton *m_detailsButton;
+    QPushButton *m_errorDetailsButton;
+    QPushButton *m_installButton;
+    bool m_isRestartRequired = false;
+    QSet<ExtensionSystem::PluginSpec *> m_softLoad;
+};
+
+PluginDialog::PluginDialog()
+    : QDialog(ICore::dialogParent()),
       m_view(new ExtensionSystem::PluginView(this))
 {
     auto filterEdit = new Utils::FancyLineEdit(this);
@@ -59,8 +81,16 @@ PluginDialog::PluginDialog(QWidget *parent)
             this, &PluginDialog::updateButtons);
     connect(m_view, &ExtensionSystem::PluginView::pluginActivated,
             this, &PluginDialog::openDetails);
-    connect(m_view, &ExtensionSystem::PluginView::pluginSettingsChanged, this, [this] {
-        m_isRestartRequired = true;
+    connect(m_view, &ExtensionSystem::PluginView::pluginsChanged,
+            this, [this](const QSet<PluginSpec *> &plugins, bool enable) {
+        for (PluginSpec *plugin : plugins) {
+            if (enable && plugin->isSoftLoadable()) {
+                m_softLoad.insert(plugin);
+            } else {
+                m_softLoad.remove(plugin); // In case it was added, harmless otherwise.
+                m_isRestartRequired = true;
+            }
+        }
     });
     connect(m_detailsButton, &QAbstractButton::clicked, this,
             [this]  { openDetails(m_view->currentPlugin()); });
@@ -75,18 +105,20 @@ PluginDialog::PluginDialog(QWidget *parent)
 
 void PluginDialog::closeDialog()
 {
-    ExtensionSystem::PluginManager::writeSettings();
-    if (m_isRestartRequired) {
-        RestartDialog restartDialog(ICore::dialogParent(),
-                                    Tr::tr("Plugin changes will take effect after restart."));
-        restartDialog.exec();
-    }
+    PluginManager::writeSettings();
+
+    PluginManager::loadPluginsAtRuntime(m_softLoad);
+    for (PluginSpec *plugin : std::as_const(m_softLoad))
+        CorePlugin::loadMimeFromPlugin(plugin);
+
+    if (m_isRestartRequired)
+        ICore::askForRestart(Tr::tr("Plugin changes will take effect after restart."));
     accept();
 }
 
 void PluginDialog::showInstallWizard()
 {
-    if (PluginInstallWizard::exec())
+    if (executePluginInstallWizard())
         m_isRestartRequired = true;
 }
 
@@ -106,22 +138,7 @@ void PluginDialog::openDetails(ExtensionSystem::PluginSpec *spec)
 {
     if (!spec)
         return;
-    QDialog dialog(this);
-    dialog.setWindowTitle(Tr::tr("Plugin Details of %1").arg(spec->name()));
-    auto details = new ExtensionSystem::PluginDetailsView(&dialog);
-    details->update(spec);
-    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close, Qt::Horizontal, &dialog);
-
-    using namespace Layouting;
-    Column {
-        details,
-        buttons,
-    }.attachTo(&dialog);
-
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    dialog.resize(400, 500);
-    dialog.exec();
+    PluginDetailsView::showModal(this, spec);
 }
 
 void PluginDialog::openErrorDetails()
@@ -147,5 +164,10 @@ void PluginDialog::openErrorDetails()
     dialog.exec();
 }
 
-} // namespace Internal
-} // namespace Core
+void showAboutPlugins()
+{
+    PluginDialog dialog;
+    dialog.exec();
+}
+
+} // Core::Internal

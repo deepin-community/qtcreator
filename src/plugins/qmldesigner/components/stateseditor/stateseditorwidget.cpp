@@ -59,7 +59,7 @@ void StatesEditorWidget::setCurrentStateInternalId(int internalId)
     rootObject()->setProperty("currentStateInternalId", internalId);
 }
 
-void StatesEditorWidget::setNodeInstanceView(const NodeInstanceView *nodeInstanceView)
+void StatesEditorWidget::setNodeInstanceView(const AbstractView *nodeInstanceView)
 {
     m_imageProvider->setNodeInstanceView(nodeInstanceView);
 }
@@ -91,8 +91,7 @@ StatesEditorWidget::StatesEditorWidget(StatesEditorView *statesEditorView,
     Theme::setupTheme(engine());
 
     setWindowTitle(tr("States", "Title of Editor widget"));
-    setMinimumWidth(195);
-    setMinimumHeight(195);
+    setMinimumSize(QSize(195, 195));
 
     // init the first load of the QML UI elements
     reloadQmlSource();

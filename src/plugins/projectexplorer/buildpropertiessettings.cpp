@@ -8,6 +8,7 @@
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
+#include <utils/environment.h>
 #include <utils/layoutbuilder.h>
 
 using namespace Utils;
@@ -16,7 +17,9 @@ namespace ProjectExplorer {
 
 static QString defaultBuildDirectoryTemplate()
 {
-    return "../%{JS: Util.asciify(\"build-%{Project:Name}-%{Kit:FileSystemName}-%{BuildConfig:Name}\")}";
+    return qtcEnvironmentVariable(
+        Constants::QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE,
+        "./build/%{Asciify:%{Kit:FileSystemName}-%{BuildConfig:Name}}");
 }
 
 BuildPropertiesSettings &buildPropertiesSettings()
@@ -51,7 +54,11 @@ BuildPropertiesSettings::BuildPropertiesSettings()
     buildDirectoryTemplate.setSettingsKey("Directories/BuildDirectory.TemplateV2");
     buildDirectoryTemplate.setDefaultValue(defaultBuildDirectoryTemplate());
     buildDirectoryTemplate.setLabelText(Tr::tr("Default build directory:"));
-    buildDirectoryTemplate.setUseGlobalMacroExpander();
+    buildDirectoryTemplate.setToolTip(
+        Tr::tr("Template used to construct the default build directory.<br><br>"
+               "The default value can be set using the environment variable "
+               "<tt>%1</tt>.")
+            .arg(Constants::QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE));
     buildDirectoryTemplate.setUseResetButton();
 
     separateDebugInfo.setSettingsKey("ProjectExplorer/Settings/SeparateDebugInfo");

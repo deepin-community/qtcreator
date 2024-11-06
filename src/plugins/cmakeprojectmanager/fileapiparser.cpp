@@ -4,12 +4,14 @@
 #include "fileapiparser.h"
 
 #include "cmakeprocess.h"
+#include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
 
 #include <coreplugin/messagemanager.h>
 #include <projectexplorer/rawprojectpart.h>
 
 #include <utils/algorithm.h>
+#include <utils/filepath.h>
 #include <utils/qtcassert.h>
 
 #include <QGuiApplication>
@@ -230,7 +232,7 @@ static std::vector<CMakeFileInfo> readCMakeFilesFile(const FilePath &cmakeFilesF
 
         info.isCMake = input.value("isCMake").toBool();
         const QString filename = info.path.fileName();
-        info.isCMakeListsDotTxt = (filename.compare("CMakeLists.txt",
+        info.isCMakeListsDotTxt = (filename.compare(Constants::CMAKE_LISTS_TXT,
                                                     HostOsInfo::fileNameCaseSensitivity())
                                    == 0);
 
@@ -649,6 +651,19 @@ static TargetDetails extractTargetDetails(const QJsonObject &root, QString &erro
                                                             };
                                                         });
     }
+    {
+        const QJsonArray launchers = root.value("launchers").toArray();
+        if (launchers.size() > 0) {
+            t.launcherInfos = transform<QList>(launchers, [](const QJsonValue &v) {
+                const QJsonObject o = v.toObject();
+                QList<QString> arguments;
+                for (const QJsonValue &arg : o.value("arguments").toArray())
+                    arguments.append(arg.toString());
+                FilePath command = FilePath::fromString(o.value("command").toString());
+                return ProjectExplorer::LauncherInfo { o.value("type").toString(), command, arguments };
+            });
+        }
+    }
 
     return t;
 }
@@ -838,6 +853,7 @@ static QStringList uniqueTargetFiles(const Configuration &config)
 
 FileApiData FileApiParser::parseData(QPromise<std::shared_ptr<FileApiQtcData>> &promise,
                                      const FilePath &replyFilePath,
+                                     const Utils::FilePath &buildDir,
                                      const QString &cmakeBuildType,
                                      QString &errorMessage)
 {
@@ -857,7 +873,11 @@ FileApiData FileApiParser::parseData(QPromise<std::shared_ptr<FileApiQtcData>> &
     result.replyFile = readReplyFile(replyFilePath, errorMessage);
     if (cancelCheck())
         return {};
-    result.cache = readCacheFile(result.replyFile.jsonFile("cache", replyDir), errorMessage);
+    const FilePath cachePathFromReply = result.replyFile.jsonFile("cache", replyDir);
+    if (cachePathFromReply.isEmpty())
+        result.cache = CMakeConfig::fromFile(buildDir / Constants::CMAKE_CACHE_TXT, &errorMessage);
+    else
+        result.cache = readCacheFile(cachePathFromReply, errorMessage);
     if (cancelCheck())
         return {};
     result.cmakeFiles = readCMakeFilesFile(result.replyFile.jsonFile("cmakeFiles", replyDir),
@@ -868,8 +888,10 @@ FileApiData FileApiParser::parseData(QPromise<std::shared_ptr<FileApiQtcData>> &
                                          errorMessage);
 
     if (codeModels.size() == 0) {
-        errorMessage = Tr::tr("CMake project configuration failed. No CMake configuration for "
-                              "build type \"%1\" found.")
+        //: General Messages refers to the output view
+        errorMessage = Tr::tr(
+                           "CMake project configuration failed. No CMake configuration for "
+                           "build type \"%1\" found. Check General Messages for more information.")
                            .arg(cmakeBuildType);
         return result;
     }

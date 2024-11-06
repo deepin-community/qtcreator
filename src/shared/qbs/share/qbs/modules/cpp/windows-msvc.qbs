@@ -55,7 +55,10 @@ MsvcBaseModule {
         winSdkVersion: windowsSdkVersion
     }
 
-    qbs.architecture: msvcProbe.found ? msvcProbe.architecture : original
+    Properties {
+        condition: msvcProbe.found
+        qbs.architecture: msvcProbe.architecture
+    }
 
     compilerVersionMajor: msvcProbe.versionMajor
     compilerVersionMinor: msvcProbe.versionMinor
@@ -68,4 +71,8 @@ MsvcBaseModule {
     buildEnv: msvcProbe.buildEnv
 
     enableCxxLanguageMacro: true
+
+    compiledModuleSuffix: ".ifc"
+    moduleOutputFlag: "-ifcOutput "
+    moduleFileFlag: "-reference %module%="
 }

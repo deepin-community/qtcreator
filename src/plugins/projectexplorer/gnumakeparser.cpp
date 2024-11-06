@@ -103,7 +103,7 @@ OutputLineParser::Result GnuMakeParser::handleLine(const QString &line, OutputFo
         if (!m_suppressIssues) {
             const FilePath file = absoluteFilePath(FilePath::fromUserInput(match.captured(1)));
             const int lineNo = match.captured(4).toInt();
-            addLinkSpecForAbsoluteFilePath(linkSpecs, file, lineNo, match, 1);
+            addLinkSpecForAbsoluteFilePath(linkSpecs, file, lineNo, -1, match, 1);
             emitTask(BuildSystemTask(res.type, res.description, file, lineNo));
         }
         return {Status::Done, linkSpecs};
@@ -131,24 +131,29 @@ bool GnuMakeParser::hasFatalErrors() const
 #ifdef WITH_TESTS
 #   include <QTest>
 
-#   include <QUuid>
-
 #   include "outputparser_test.h"
-#   include "projectexplorer.h"
+#   include "projectexplorer_test.h"
 
-namespace ProjectExplorer {
+namespace ProjectExplorer::Internal {
 
-GnuMakeParserTester::GnuMakeParserTester(GnuMakeParser *p, QObject *parent) :
-    QObject(parent),
-    parser(p)
-{ }
-
-void GnuMakeParserTester::parserIsAboutToBeDeleted()
+class GnuMakeParserTester : public QObject
 {
-    directories = parser->searchDirectories();
-}
+public:
+    explicit GnuMakeParserTester(GnuMakeParser *p, QObject *parent = nullptr) :
+        QObject(parent),
+        parser(p)
+    { }
 
-void ProjectExplorerPlugin::testGnuMakeParserParsing_data()
+    void parserIsAboutToBeDeleted()
+    {
+        directories = parser->searchDirectories();
+    }
+
+    FilePaths directories;
+    GnuMakeParser *parser;
+};
+
+void ProjectExplorerTest::testGnuMakeParserParsing_data()
 {
     QTest::addColumn<QStringList>("extraSearchDirs");
     QTest::addColumn<QString>("input");
@@ -325,7 +330,7 @@ void ProjectExplorerPlugin::testGnuMakeParserParsing_data()
             << QStringList();
 }
 
-void ProjectExplorerPlugin::testGnuMakeParserParsing()
+void ProjectExplorerTest::testGnuMakeParserParsing()
 {
     OutputParserTester testbench;
     auto *childParser = new GnuMakeParser;
@@ -371,7 +376,7 @@ void ProjectExplorerPlugin::testGnuMakeParserParsing()
     delete tester;
 }
 
-void ProjectExplorerPlugin::testGnuMakeParserTaskMangling()
+void ProjectExplorerTest::testGnuMakeParserTaskMangling()
 {
     TemporaryFile theMakeFile("Makefile.XXXXXX");
     QVERIFY2(theMakeFile.open(), qPrintable(theMakeFile.errorString()));
@@ -391,6 +396,6 @@ void ProjectExplorerPlugin::testGnuMakeParserTaskMangling()
         QString(), QString(), QString());
 }
 
-} // ProjectExplorer
+} // ProjectExplorer::Internal
 
-#endif
+#endif // WITH_TESTS

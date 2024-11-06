@@ -1,5 +1,3 @@
 # shipped here because of Debian changes, see debian_paths.diff
 qtcreator-doc: package-contains-documentation-outside-usr-share-doc [usr/share/qtcreator/doc/qtcreator/*]
-# shipped here because of Debian changes, see debian_paths.diff
-qtcreator-doc: package-contains-documentation-outside-usr-share-doc [usr/share/qtcreator/doc/qtcreator-dev/*]
 qtcreator-doc: repeated-path-segment qtcreator [usr/share/qtcreator/doc/qtcreator/]

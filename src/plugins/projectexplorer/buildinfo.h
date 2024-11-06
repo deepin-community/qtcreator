@@ -7,7 +7,6 @@
 
 #include "buildconfiguration.h"
 
-#include <utils/fileutils.h>
 #include <utils/id.h>
 
 namespace ProjectExplorer {
@@ -22,6 +21,8 @@ public:
     QString displayName;
     QString typeName;
     Utils::FilePath buildDirectory;
+    bool showBuildDirConfigWidget = true;
+    bool enabledByDefault = true;
     Utils::Id kitId;
     BuildConfiguration::BuildType buildType = BuildConfiguration::Unknown;
 

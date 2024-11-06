@@ -12,7 +12,6 @@
 #include <designer/cpp/formclasswizardpage.h>
 
 #include <cppeditor/cppeditorconstants.h>
-#include <cppeditor/cppeditorplugin.h>
 #include <cppeditor/cppeditorwidget.h>
 #include <cppeditor/cppmodelmanager.h>
 #include <cppeditor/cppsemanticinfo.h>
@@ -38,27 +37,34 @@
 #include <texteditor/texteditor.h>
 #include <texteditor/textdocument.h>
 
+#include <qtsupport/qtkitaspect.h>
+
 #include <utils/algorithm.h>
+#include <utils/fileutils.h>
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 #include <utils/temporaryfile.h>
 
 #include <QDesignerFormWindowInterface>
+#include <QDesignerFormWindowManagerInterface>
 #include <QDesignerFormEditorInterface>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QLibraryInfo>
 #include <QLoggingCategory>
 #include <QMessageBox>
 #include <QHash>
+#include <QVersionNumber>
 #include <QUrl>
 
 #include <memory>
+#include <optional>
 
-enum { indentation = 4 };
-
+namespace Designer::Internal {
 Q_LOGGING_CATEGORY(log, "qtc.designer", QtWarningMsg);
+} // namespace Designer::Internal
 
 using namespace Designer::Internal;
 using namespace CPlusPlus;
@@ -84,6 +90,17 @@ static void reportRenamingError(const QString &oldName, const QString &reason)
     Core::MessageManager::writeFlashing(
                 Designer::Tr::tr("Cannot rename UI symbol \"%1\" in C++ files: %2")
                 .arg(oldName, reason));
+}
+
+static std::optional<QVersionNumber> qtVersionFromProject(const Project *project)
+{
+    if (const auto *target = project->activeTarget()) {
+        if (const auto *kit = target->kit(); kit->isValid()) {
+            if (const auto *qtVersion = QtSupport::QtKitAspect::qtVersion(kit))
+                return qtVersion->qtVersion();
+        }
+    }
+    return std::nullopt;
 }
 
 class QtCreatorIntegration::Private
@@ -145,6 +162,10 @@ QtCreatorIntegration::QtCreatorIntegration(QDesignerFormEditorInterface *core, Q
             }
         }
     });
+
+    auto *fwm = core->formWindowManager();
+    connect(fwm, &QDesignerFormWindowManagerInterface::activeFormWindowChanged,
+            this, &QtCreatorIntegration::slotActiveFormWindowChanged);
 }
 
 QtCreatorIntegration::~QtCreatorIntegration()
@@ -435,6 +456,40 @@ static ClassDocumentPtrPair
     return ClassDocumentPtrPair(0, Document::Ptr());
 }
 
+void QtCreatorIntegration::slotActiveFormWindowChanged(QDesignerFormWindowInterface *formWindow)
+{
+    if (formWindow == nullptr
+        || !setQtVersionFromFile(Utils::FilePath::fromString(formWindow->fileName()))) {
+        resetQtVersion();
+    }
+}
+
+// Set the file's Qt version on the integration for Qt Designer to write
+// it out in the appropriate format (PYSIDE-2492, scoped enum support).
+bool QtCreatorIntegration::setQtVersionFromFile(const Utils::FilePath &filePath)
+{
+    if (const auto *uiProject = ProjectManager::projectForFile(filePath)) {
+        if (auto versionOpt = qtVersionFromProject(uiProject)) {
+            setQtVersion(versionOpt.value());
+            return true;
+        }
+    }
+    return false;
+}
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
+// FIXME: To be replaced by a real property setter on QDesignerIntegration
+void QtCreatorIntegration::setQtVersion(const QVersionNumber &version)
+{
+    setProperty("qtVersion", QVariant::fromValue(version));
+}
+#endif // < 6.9
+
+void QtCreatorIntegration::resetQtVersion()
+{
+    setQtVersion(QLibraryInfo::version());
+}
+
 void QtCreatorIntegration::slotNavigateToSlot(const QString &objectName, const QString &signalSignature,
         const QStringList &parameterNames)
 {
@@ -625,12 +680,20 @@ bool QtCreatorIntegration::navigateToSlot(const QString &objectName,
         Overview o;
         const QString className = o.prettyName(cl->name());
         const QString definition = location.prefix() + "void " + className + "::"
-            + functionNameWithParameterNames + "\n{\n" + QString(indentation, ' ') + "\n}\n"
+            + functionNameWithParameterNames + "\n{\n\n}\n"
             + location.suffix();
-        editor->insert(definition);
-        Core::EditorManager::openEditorAt({location.filePath(),
-                                           int(location.line() + location.prefix().count('\n') + 2),
-                                           indentation});
+        const RefactoringFilePtr file = refactoring.file(location.filePath());
+        const int insertionPos = Utils::Text::positionInText(file->document(),
+                                                             location.line(), location.column());
+        file->apply(ChangeSet::makeInsert(insertionPos, definition));
+        const int indentationPos = file->document()->toPlainText().indexOf('}', insertionPos) - 1;
+        QTextCursor cursor(editor->textDocument()->document());
+        cursor.setPosition(indentationPos);
+        editor->textDocument()->autoIndent(cursor);
+        const int openPos = file->document()->toPlainText().indexOf('}', indentationPos) - 1;
+        int line, column;
+        Utils::Text::convertPosition(file->document(), openPos, &line, &column);
+        Core::EditorManager::openEditorAt({location.filePath(), line, column});
         return true;
     }
 
@@ -739,7 +802,8 @@ void QtCreatorIntegration::handleSymbolRenameStage2(
     // In the case of clangd, this entails doing a "virtual rename" on the TextDocument,
     // as the LanguageClient cannot be forced into taking a document and assuming a different
     // file path.
-    const bool usesClangd = CppEditor::CppModelManager::usesClangd(editorWidget->textDocument());
+    const bool usesClangd
+        = CppEditor::CppModelManager::usesClangd(editorWidget->textDocument()).has_value();
     if (usesClangd)
         editorWidget->textDocument()->setFilePath(uiHeader);
     editorWidget->textDocument()->setPlainText(QString::fromUtf8(virtualContent));
@@ -761,7 +825,7 @@ void QtCreatorIntegration::handleSymbolRenameStage2(
             Symbol * const symbol = scope->memberAt(i);
             if (const Scope * const s = symbol->asScope())
                 scopes << s;
-            if (symbol->asNamespace())
+            if (symbol->asNamespace() || !symbol->name())
                 continue;
             qCDebug(log) << '\t' << Overview().prettyName(symbol->name());
             if (!symbol->name()->match(&oldIdentifier))

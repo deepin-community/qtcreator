@@ -7,7 +7,7 @@
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
-#include <projectexplorer/projectsettingswidget.h>
+#include <utils/layoutbuilder.h>
 
 #include <QAbstractItemModel>
 #include <QCoreApplication>
@@ -71,13 +71,14 @@ public:
     LanguageFilter m_languageFilter;
     QString m_initializationOptions;
     QString m_configuration;
+    bool m_showInSettings = true;
 
     QJsonObject initializationOptions() const;
     QJsonValue configuration() const;
 
     virtual bool applyFromSettingsWidget(QWidget *widget);
     virtual QWidget *createSettingsWidget(QWidget *parent = nullptr) const;
-    virtual BaseSettings *copy() const { return new BaseSettings(*this); }
+    virtual BaseSettings *copy() const = 0;
     virtual bool isValid() const;
     Client *createClient() const;
     Client *createClient(ProjectExplorer::Project *project) const;
@@ -85,16 +86,13 @@ public:
     virtual void fromMap(const Utils::Store &map);
 
 protected:
-    virtual BaseClientInterface *createInterface(ProjectExplorer::Project *) const;
+    virtual BaseClientInterface *createInterface(ProjectExplorer::Project *) const = 0;
     virtual Client *createClient(BaseClientInterface *interface) const;
 
     BaseSettings(const BaseSettings &other) = default;
     BaseSettings(BaseSettings &&other) = default;
     BaseSettings &operator=(const BaseSettings &other) = default;
     BaseSettings &operator=(BaseSettings &&other) = default;
-
-private:
-    bool canStart(QList<const Core::IDocument *> documents) const;
 };
 
 class LANGUAGECLIENT_EXPORT StdIOSettings : public BaseSettings
@@ -129,6 +127,7 @@ struct ClientType {
     QString name;
     using SettingsGenerator = std::function<BaseSettings*()>;
     SettingsGenerator generator = nullptr;
+    bool userAddable = true;
 };
 
 class LANGUAGECLIENT_EXPORT LanguageClientSettings
@@ -138,6 +137,8 @@ public:
     static QList<BaseSettings *> fromSettings(Utils::QtcSettings *settings);
     static QList<BaseSettings *> pageSettings();
     static QList<BaseSettings *> changedSettings();
+
+    static QList<Utils::Store> storesBySettingsType(Utils::Id settingsTypeId);
 
     /**
      * must be called before the delayed initialize phase
@@ -156,7 +157,11 @@ class LANGUAGECLIENT_EXPORT BaseSettingsWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit BaseSettingsWidget(const BaseSettings* settings, QWidget *parent = nullptr);
+    explicit BaseSettingsWidget(
+        const BaseSettings *settings,
+        QWidget *parent = nullptr,
+        Layouting::LayoutModifier additionalItems = {});
+
     ~BaseSettingsWidget() override = default;
 
     QString name() const;
@@ -208,15 +213,8 @@ private:
     QByteArray m_json;
 };
 
-class ProjectSettingsWidget : public ProjectExplorer::ProjectSettingsWidget
-{
-public:
-    explicit ProjectSettingsWidget(ProjectExplorer::Project *project);
+LANGUAGECLIENT_EXPORT TextEditor::BaseTextEditor *createJsonEditor(QObject *parent = nullptr);
 
-private:
-    ProjectSettings m_settings;
-};
-
-LANGUAGECLIENT_EXPORT TextEditor::BaseTextEditor *jsonEditor();
+void setupLanguageClientProjectPanel();
 
 } // namespace LanguageClient

@@ -7,7 +7,7 @@
 #include <bindingproperty.h>
 #include <designeralgorithm.h>
 #include <exception.h>
-#include <model/modelutils.h>
+#include <modelutils.h>
 #include <nodeabstractproperty.h>
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
@@ -72,9 +72,7 @@ const std::vector<PropertyName> blockListSlots = {"childAt",
                                                   "inputMethodQuery",
                                                   "positionAt",
                                                   "positionToRectangle",
-                                                  "isRightToLeft"
-
-};
+                                                  "isRightToLeft"};
 
 const std::vector<PropertyName> priorityListSignals = {"clicked",
                                                        "doubleClicked",
@@ -99,7 +97,8 @@ const std::vector<PropertyName> priorityListSignals = {"clicked",
                                                        "enabledChanged",
                                                        "visibleChanged",
                                                        "opacityChanged",
-                                                       "rotationChanged"};
+                                                       "rotationChanged",
+                                                       "positionChanged"};
 
 const std::vector<PropertyName> priorityListProperties = {"opacity",
                                                           "checked",
@@ -164,8 +163,8 @@ std::vector<PropertyName> properityLists()
     return result;
 }
 
-PropertyTreeModel::PropertyTreeModel(ConnectionView *parent)
-    : QAbstractItemModel(parent), m_connectionView(parent)
+PropertyTreeModel::PropertyTreeModel(ConnectionView *view)
+    : m_connectionView(view)
 {}
 
 void PropertyTreeModel::resetModel()
@@ -494,7 +493,9 @@ const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredPropertyName
         return returnValue;
 
     if (m_type == SignalType) {
-        returnValue = sortedAndFilteredSignalNames(modelNode.metaInfo());
+        auto list = sortedAndFilteredSignalNames(modelNode.metaInfo());
+        returnValue = getDynamicSignals(modelNode);
+        std::move(list.begin(), list.end(), std::back_inserter(returnValue));
     } else if (m_type == SlotType) {
         returnValue = sortedAndFilteredSlotNames(modelNode.metaInfo());
     } else {
@@ -518,35 +519,49 @@ const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredPropertyName
 const std::vector<PropertyName> PropertyTreeModel::getDynamicProperties(
     const ModelNode &modelNode) const
 {
-    QList<PropertyName> list = Utils::transform(modelNode.dynamicProperties(),
-                                                [](const AbstractProperty &property) {
-                                                    return property.name();
-                                                });
+    auto dynamicProperties = modelNode.dynamicProperties();
+    auto dynamicPropertyNames = Utils::transform<PropertyNameViews>(dynamicProperties,
+                                                                    &AbstractProperty::name);
 
-    QList<PropertyName> filtered
-        = Utils::filtered(list, [this, modelNode](const PropertyName &propertyName) {
-              PropertyName propertyType = modelNode.property(propertyName).dynamicTypeName();
-              switch (m_type) {
-              case AllTypes:
-                  return true;
-              case NumberType:
-                  return propertyType == "float" || propertyType == "double"
-                         || propertyType == "int";
-              case StringType:
-                  return propertyType == "string";
-              case UrlType:
-                  return propertyType == "url";
-              case ColorType:
-                  return propertyType == "color";
-              case BoolType:
-                  return propertyType == "bool";
-              default:
-                  break;
-              }
-              return true;
-          });
+    auto filtered = Utils::filtered(dynamicPropertyNames, [this, modelNode](PropertyNameView propertyName) {
+        TypeName propertyType = modelNode.property(propertyName).dynamicTypeName();
+        switch (m_type) {
+        case AllTypes:
+            return true;
+        case NumberType:
+            return propertyType == "float" || propertyType == "double" || propertyType == "int";
+        case StringType:
+            return propertyType == "string";
+        case UrlType:
+            return propertyType == "url";
+        case ColorType:
+            return propertyType == "color";
+        case BoolType:
+            return propertyType == "bool";
+        default:
+            break;
+        }
+        return true;
+    });
 
-    return Utils::sorted(std::vector<PropertyName>(filtered.begin(), filtered.end()));
+    auto sorted = Utils::sorted(filtered);
+
+    return Utils::transform<std::vector<PropertyName>>(sorted, &PropertyNameView::toByteArray);
+}
+
+const std::vector<PropertyName> PropertyTreeModel::getDynamicSignals(const ModelNode &modelNode) const
+{
+    auto list = Utils::transform<std::vector<PropertyName>>(
+        modelNode.dynamicProperties(), [](const AbstractProperty &property) -> PropertyName {
+            if (property.isSignalDeclarationProperty())
+                return property.name().toByteArray();
+
+            return property.name().toByteArray() + "Changed";
+        });
+
+    std::sort(list.begin(), list.end());
+
+    return list;
 }
 
 const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredPropertyNames(
@@ -558,17 +573,13 @@ const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredPropertyName
 
                                         const PropertyName name = metaInfo.name();
 
-                                        if (!m_includeDotPropertiesOnFirstLevel
-                                            && name.contains("."))
+                                        if (!m_includeDotPropertiesOnFirstLevel && name.contains("."))
                                             return false;
 
                                         return filterProperty(name, metaInfo, recursive);
                                     });
 
-    auto sorted = Utils::sorted(
-        Utils::transform(filtered, [](const PropertyMetaInfo &metaInfo) -> PropertyName {
-            return metaInfo.name();
-        }));
+    auto sorted = Utils::sorted(Utils::transform(filtered, &PropertyMetaInfo::name));
 
     std::set<PropertyName> set(std::make_move_iterator(sorted.begin()),
                                std::make_move_iterator(sorted.end()));
@@ -592,8 +603,8 @@ const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredPropertyName
     return checkedPriorityList;
 }
 
-const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredSignalNames(
-    const NodeMetaInfo &metaInfo, bool recursive) const
+std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredSignalNames(const NodeMetaInfo &metaInfo,
+                                                                          bool recursive)
 {
     Q_UNUSED(recursive);
 
@@ -613,15 +624,14 @@ const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredSignalNames(
     std::set<PropertyName> set(std::make_move_iterator(sorted.begin()),
                                std::make_move_iterator(sorted.end()));
 
-    auto checkedPriorityList = Utils::filtered(priorityListSignals,
-                                               [&set](const PropertyName &name) {
-                                                   auto it = set.find(name);
-                                                   const bool b = it != set.end();
-                                                   if (b)
-                                                       set.erase(it);
+    auto checkedPriorityList = Utils::filtered(priorityListSignals, [&set](const PropertyName &name) {
+        auto it = set.find(name);
+        const bool b = it != set.end();
+        if (b)
+            set.erase(it);
 
-                                                   return b;
-                                               });
+        return b;
+    });
 
     //const int priorityLength = checkedPriorityList.size(); We eventually require this to get the prioproperties
 
@@ -634,8 +644,8 @@ const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredSignalNames(
     return checkedPriorityList;
 }
 
-const std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredSlotNames(
-    const NodeMetaInfo &metaInfo, bool recursive) const
+std::vector<PropertyName> PropertyTreeModel::sortedAndFilteredSlotNames(const NodeMetaInfo &metaInfo,
+                                                                        bool recursive)
 {
     Q_UNUSED(recursive);
 
@@ -872,12 +882,13 @@ QString PropertyListProxyModel::parentName() const
     return m_treeModel->data(m_parentIndex, PropertyTreeModel::UserRoles::PropertyNameRole).toString();
 }
 
-PropertyTreeModelDelegate::PropertyTreeModelDelegate(ConnectionView *parent) : m_model(parent)
+PropertyTreeModelDelegate::PropertyTreeModelDelegate(ConnectionView *view)
+    : m_model(view)
 {
-    connect(&m_nameCombboBox, &StudioQmlComboBoxBackend::activated, this, [this]() {
+    connect(&m_nameCombboBox, &StudioQmlComboBoxBackend::activated, this, [this] {
         handleNameChanged();
     });
-    connect(&m_idCombboBox, &StudioQmlComboBoxBackend::activated, this, [this]() {
+    connect(&m_idCombboBox, &StudioQmlComboBoxBackend::activated, this, [this] {
         handleIdChanged();
     });
 
@@ -893,8 +904,7 @@ void PropertyTreeModelDelegate::setPropertyType(PropertyTreeModel::PropertyTypes
 void PropertyTreeModelDelegate::setup(const QString &id, const QString &name, bool *nameExists)
 {
     m_model.resetModel();
-    QStringList idLists = Utils::transform(m_model.nodeList(),
-                                           [](const ModelNode &node) { return node.id(); });
+    QStringList idLists = Utils::transform(m_model.nodeList(), &ModelNode::id);
 
     if (!idLists.contains(id))
         idLists.prepend(id);

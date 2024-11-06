@@ -3,8 +3,6 @@
 
 #include "perfprofilerflamegraphmodel.h"
 #include "perfprofilerflamegraphview.h"
-#include "perfprofilertool.h"
-#include "perftimelinemodel.h"
 
 #include <tracing/flamegraph.h>
 #include <tracing/timelinetheme.h>
@@ -16,12 +14,12 @@
 namespace PerfProfiler {
 namespace Internal {
 
-PerfProfilerFlameGraphView::PerfProfilerFlameGraphView(QWidget *parent, PerfProfilerTool *tool) :
-    QQuickWidget(parent)
+PerfProfilerFlameGraphView::PerfProfilerFlameGraphView(QWidget *parent)
+    : QQuickWidget(parent)
 {
     setObjectName(QLatin1String("PerfProfilerFlameGraphView"));
 
-    PerfProfilerTraceManager *manager = tool->traceManager();
+    PerfProfilerTraceManager *manager = &traceManager();
     m_model = new PerfProfilerFlameGraphModel(manager);
 
     engine()->addImportPath(":/qt/qml/");
@@ -30,7 +28,7 @@ PerfProfilerFlameGraphView::PerfProfilerFlameGraphView(QWidget *parent, PerfProf
     rootContext()->setContextProperty(QStringLiteral("flameGraphModel"), m_model);
     setSource(QUrl(QStringLiteral(
                        "qrc:/qt/qml/QtCreator/PerfProfiler/PerfProfilerFlameGraphView.qml")));
-    setClearColor(Utils::creatorTheme()->color(Utils::Theme::Timeline_BackgroundColor1));
+    setClearColor(Utils::creatorColor(Utils::Theme::Timeline_BackgroundColor1));
 
     setResizeMode(QQuickWidget::SizeRootObjectToView);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);

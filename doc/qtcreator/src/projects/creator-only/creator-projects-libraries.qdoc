@@ -91,7 +91,7 @@
     For more information about the project file settings, see
     \l{Declaring Other Libraries}{qmake Manual: Declaring Other Libraries}.
 
-    \sa {Adding an Internal Library to a qmake Project}{Tutorial: Adding an Internal Library to a qmake Project},
+    \sa {Tutorial: Use internal libraries with qmake},
     {Add subprojects to projects}, {Add libraries to CMake projects},
     {Use project wizards}, {Creating Projects}
 */
@@ -99,11 +99,11 @@
 /*!
     \page creator-tutorial-adding-internal-libraries-to-projects.html
     \previouspage creator-tutorials.html
-    \nextpage creator-project-managing.html
+    \nextpage creator-how-tos.html
 
     \ingroup creator-tutorials
 
-    \title Adding an Internal Library to a qmake Project
+    \title Tutorial: Use internal libraries with qmake
 
     \brief How to create your own library and link your application against it
     when using qmake as the build system.
@@ -114,13 +114,13 @@
     \note This tutorial only applies when you select qmake as the build
     system for the subdirs project.
 
-    \section1 Creating a shared library
+    \section1 Create a shared library
 
     To create a shared library:
 
     \list 1
 
-        \li Select \uicontrol File > \uicontrol {New Project} >
+        \li Go to \uicontrol File > \uicontrol {New Project}, and select
             \uicontrol Library > \uicontrol {C++ Library}. If your top level
             project is a subdirs project or contains one, you may add the library
             to the project. However, this does not link other libraries from
@@ -131,16 +131,16 @@
 
             \image qtcreator-add-library-internal-project-location.webp {Project Location dialog}
 
-        \li In the \uicontrol Name field, give a name for the library. For example,
+        \li In \uicontrol Name, give a name for the library. For example,
             \e MyLibrary.
 
         \li Select \uicontrol Next (on Windows and Linux) or \uicontrol Continue
             (on \macos) to open the \uicontrol {Define Build System} dialog.
 
-        \li Select \uicontrol Next or \uicontrol Continue to use CMake as the
-            build system.
+        \li In \uicontrol {Build system}, select \uicontrol qmake.
 
-            The \uicontrol {Define Project Details} dialog opens.
+        \li Select \uicontrol Next or \uicontrol Continue to open the
+            \uicontrol {Define Project Details} dialog.
 
             \image qtcreator-add-library-internal-project-details.webp {Define Project Details dialog}
 
@@ -154,7 +154,7 @@
             list, select a subdirs project. For example, \e MyApplication.
     \endlist
 
-    \section1 Linking an application to the library
+    \section1 Link an application to the library
 
     To link a project to the shared library:
 
@@ -170,7 +170,7 @@
 
             \image qtcreator-add-library-internal.webp {Adding an internal library}
 
-        \li In the \uicontrol Library field, select \e mylibrary, and then select
+        \li In \uicontrol Library, select \e mylibrary, and then select
             \uicontrol Next.
 
         \li Select \uicontrol Finish to add the library declaration to the
@@ -178,15 +178,7 @@
 
     \endlist
 
-    When using CMake, the \c target_link_libraries command is added to the
-    CMakeLists.txt file:
-
-    \badcode
-    target_link_libraries(myapplication PRIVATE mylibrary)
-    \endcode
-
-    When using qmake, the following library declaration is added to the .pro
-    file:
+    The wizard adds the following library declaration to the .pro file:
 
     \badcode
     win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../../../projects/mylib/release/ -lmylib

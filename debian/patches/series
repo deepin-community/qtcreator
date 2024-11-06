@@ -2,3 +2,4 @@
 
 # Debian patches.
 debian_paths.diff
+Utils-fix-conflict-of-withSuffix-int-and-withSuffix-.patch

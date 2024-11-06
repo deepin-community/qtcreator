@@ -106,6 +106,22 @@ MetaInfo {
     }
 
     Type {
+        name: "QtQuick.DropArea"
+        icon: ":/qtquickplugin/images/drop-area-16px.png"
+
+        ItemLibraryEntry {
+            name: "Drop Area"
+            category: "a.Qt Quick - Basic"
+            libraryIcon: ":/qtquickplugin/images/drop-area-24px.png"
+            version: "2.0"
+
+            Property { name: "width"; type: "int"; value: 100; }
+            Property { name: "height"; type: "int"; value: 100; }
+            toolTip: qsTr("Sets an area that serves as a drag target.")
+    }
+}
+
+    Type {
         name: "QtQuick.Image"
         icon: ":/qtquickplugin/images/image-icon16.png"
 
@@ -137,6 +153,26 @@ MetaInfo {
             Property { name: "height"; type: "int"; value: 100; }
             Property { name: "source"; type: "QUrl"; value:"qrc:/qtquickplugin/images/template_image.png"; }
             toolTip: qsTr("Animates a series of images.")
+        }
+    }
+
+    Type {
+        name: "QtQuick.AnimatedSprite"
+        icon: ":/qtquickplugin/images/animated-image-icon16.png"
+
+        ItemLibraryEntry {
+            name: "Animated Sprite"
+            category: "a.Qt Quick - Basic"
+            libraryIcon: ":/qtquickplugin/images/animated-image-icon.png"
+            version: "2.0"
+
+            Property { name: "frameWidth"; type: "int"; value: 64; }
+            Property { name: "frameHeight"; type: "int"; value: 64; }
+            Property { name: "frameCount"; type: "int"; value: 4; }
+            Property { name: "frameDuration"; type: "int"; value: 500; }
+            Property { name: "source"; type: "QUrl"; value:"animatedsprite-loading.png"; }
+            ExtraFile { source: ":/qtquickplugin/images/animatedsprite-loading.png" }
+            toolTip: qsTr("Draws a sprite animation.")
         }
     }
 
@@ -338,7 +374,6 @@ MetaInfo {
             name: "Keyframe"
             category: "none"
             version: "1.0"
-            requiredImport: "none"
         }
     }
 
@@ -350,7 +385,6 @@ MetaInfo {
             name: "KeyframeGroup"
             category: "none"
             version: "1.0"
-            requiredImport: "none"
         }
     }
 
@@ -511,6 +545,26 @@ MetaInfo {
             Property { name: "to"; type: "int"; value: 0; }
             Property { name: "from"; type: "int"; value: 0; }
             toolTip: qsTr("Animates a numerical property of an item.")
+        }
+    }
+
+    Type {
+        name: "QtQuick.FrameAnimation"
+        icon: ":/qtquickplugin/images/frame-animation-16px.png"
+
+        Hints {
+            visibleInNavigator: true
+            canBeDroppedInNavigator: true
+            canBeDroppedInFormEditor: false
+            canBeContainer: false
+        }
+
+        ItemLibraryEntry {
+            name: "Frame Animation"
+            category: "d.Qt Quick - Animation"
+            libraryIcon: ":/qtquickplugin/images/frame-animation-24px.png"
+            version: "2.0"
+            toolTip: qsTr("Triggers a handler at every animation frame update.")
         }
     }
 
@@ -812,6 +866,21 @@ MetaInfo {
             toolTip: qsTr("An object to specify details about baked lightmap of a model.")
 
             Property { name: "loadPrefix"; type: "string"; value: "lightmaps"; }
+        }
+    }
+
+    Type {
+        name: "QtQuick3D.View3D"
+        icon: ":/qtquickplugin/images/extended-view3d-16px.png"
+
+        ItemLibraryEntry {
+            name: "Extended View3D"
+            category: "Items"
+            libraryIcon: ":/qtquickplugin/images/extended-view3d-24px.png"
+            version: "6.5"
+            requiredImport: "QtQuick3D"
+            QmlSource { source: ":/qtquickplugin/source/extendedview3D_template.qml" }
+            toolTip: qsTr("A 2D surface where a 3D scene can be rendered. Includes ExtendedSceneEnvironment.")
         }
     }
 }

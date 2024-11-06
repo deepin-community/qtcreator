@@ -3,23 +3,10 @@
 
 #pragma once
 
-#include <projectexplorer/extracompiler.h>
-#include <utils/filepath.h>
+#include <QObject>
 
-namespace QtSupport {
+namespace QtSupport::Internal {
 
-class UicGeneratorFactory : public ProjectExplorer::ExtraCompilerFactory
-{
-public:
-    UicGeneratorFactory() = default;
+void setupUicGenerator(QObject *guard);
 
-    ProjectExplorer::FileType sourceType() const override;
-
-    QString sourceTag() const override;
-
-    ProjectExplorer::ExtraCompiler *create(const ProjectExplorer::Project *project,
-                                           const Utils::FilePath &source,
-                                           const Utils::FilePaths &targets) override;
-};
-
-} // QtSupport
+} // QtSupport::Internal

@@ -32,21 +32,37 @@
 
 #include "../shared.h"
 
-// #include <tools/hostosinfo.h>
-// #include <tools/profile.h>
-// #include <tools/qttools.h>
-
-// #include <QtCore/qdir.h>
-// #include <QtCore/qregularexpression.h>
-
-// using qbs::Internal::HostOsInfo;
-// using qbs::Profile;
-
 #define WAIT_FOR_NEW_TIMESTAMP() waitForNewTimestamp(testDataDir)
 
 TestBlackboxProviders::TestBlackboxProviders()
     : TestBlackboxBase(SRCDIR "/testdata-providers", "blackbox-providers")
 {
+}
+
+void TestBlackboxProviders::allowedValues()
+{
+    QFETCH(QStringList, arguments);
+    QFETCH(bool, expectFailure);
+
+    QDir::setCurrent(testDataDir + "/allowed-values");
+    rmDirR(relativeBuildDir());
+    QbsRunParameters params;
+    params.arguments = arguments;
+    params.expectFailure = expectFailure;
+
+    QVERIFY2(runQbs(params) == int(expectFailure), m_qbsStderr);
+}
+
+void TestBlackboxProviders::allowedValues_data()
+{
+    QTest::addColumn<QStringList>("arguments");
+    QTest::addColumn<bool>("expectFailure");
+
+    QTest::newRow("invalid js value") << QStringList{} << true;
+    QTest::newRow("invalid variant value")
+        << QStringList{"moduleProviders.provider.aProperty:three"} << true;
+    QTest::newRow("valid variant value")
+        << QStringList{"moduleProviders.provider.aProperty:one"} << false;
 }
 
 void TestBlackboxProviders::brokenProvider()
@@ -61,58 +77,64 @@ void TestBlackboxProviders::brokenProvider()
     QCOMPARE(m_qbsStderr.count("This provider is broken"), 2);
 }
 
-void TestBlackboxProviders::fallbackModuleProvider_data()
+void TestBlackboxProviders::conanProvider()
 {
-    QTest::addColumn<bool>("fallbacksEnabledGlobally");
-    QTest::addColumn<bool>("fallbacksEnabledInProduct");
-    QTest::addColumn<QStringList>("pkgConfigLibDirs");
-    QTest::addColumn<bool>("successExpected");
-    QTest::newRow("without custom lib dir, fallbacks disabled globally and in product")
-            << false << false << QStringList() << false;
-    QTest::newRow("without custom lib dir, fallbacks disabled globally, enabled in product")
-            << false << true << QStringList() << false;
-    QTest::newRow("without custom lib dir, fallbacks enabled globally, disabled in product")
-            << true << false << QStringList() << false;
-    QTest::newRow("without custom lib dir, fallbacks enabled globally and in product")
-            << true << true << QStringList() << false;
-    QTest::newRow("with custom lib dir, fallbacks disabled globally and in product")
-            << false << false << QStringList(testDataDir + "/fallback-module-provider/libdir")
-            << false;
-    QTest::newRow("with custom lib dir, fallbacks disabled globally, enabled in product")
-            << false << true << QStringList(testDataDir + "/fallback-module-provider/libdir")
-            << false;
-    QTest::newRow("with custom lib dir, fallbacks enabled globally, disabled in product")
-            << true << false << QStringList(testDataDir + "/fallback-module-provider/libdir")
-            << false;
-    QTest::newRow("with custom lib dir, fallbacks enabled globally and in product")
-            << true << true << QStringList(testDataDir + "/fallback-module-provider/libdir")
-            << true;
-}
-
-void TestBlackboxProviders::fallbackModuleProvider()
-{
-    QFETCH(bool, fallbacksEnabledInProduct);
-    QFETCH(bool, fallbacksEnabledGlobally);
-    QFETCH(QStringList, pkgConfigLibDirs);
+    QFETCH(bool, generateConanFiles);
     QFETCH(bool, successExpected);
 
-    QDir::setCurrent(testDataDir + "/fallback-module-provider");
-    static const auto b2s = [](bool b) { return QString(b ? "true" : "false"); };
-    QbsRunParameters resolveParams("resolve",
-        QStringList{"modules.pkgconfig.libDirs:" + pkgConfigLibDirs.join(','),
-                    "products.p.fallbacksEnabled:" + b2s(fallbacksEnabledInProduct),
-                    "--force-probe-execution"});
-    if (!fallbacksEnabledGlobally)
-        resolveParams.arguments << "--no-fallback-module-provider";
-    QCOMPARE(runQbs(resolveParams), 0);
-    const bool pkgConfigPresent = m_qbsStdout.contains("pkg-config present: true");
-    const bool pkgConfigNotPresent = m_qbsStdout.contains("pkg-config present: false");
-    QVERIFY(pkgConfigPresent != pkgConfigNotPresent);
-    if (pkgConfigNotPresent)
-        successExpected = false;
-    QbsRunParameters buildParams;
+    const auto executable = findExecutable({"conan"});
+    if (executable.isEmpty())
+        QSKIP("conan is not installed or not available in PATH.");
+
+    const auto profilePath = QDir::homePath() + "/.conan2/profiles/qbs-test";
+    if (!QFileInfo(profilePath).exists())
+        QSKIP("conan profile is not installed, run './scripts/setup-conan-profiles.sh'.");
+
+    // install testlibdep first
+    QProcess conan;
+    QDir::setCurrent(testDataDir + "/conan-provider/testlibdep");
+    conan.start(executable, {"create", ".", "--profile:all=qbs-test"});
+    QVERIFY(waitForProcessSuccess(conan));
+
+    // install testlib second
+    QDir::setCurrent(testDataDir + "/conan-provider/testlib");
+    conan.start(executable, {"create", ".", "--profile:all=qbs-test"});
+    QVERIFY(waitForProcessSuccess(conan));
+
+    // install header lib third
+    QDir::setCurrent(testDataDir + "/conan-provider/testlibheader");
+    conan.start(executable, {"create", ".", "--profile:all=qbs-test"});
+    QVERIFY(waitForProcessSuccess(conan));
+
+    // now build an app using those libs
+    QDir::setCurrent(testDataDir + "/conan-provider");
+
+    rmDirR(relativeBuildDir());
+    rmDirR("build");
+
+    if (generateConanFiles) {
+        QStringList arguments{
+            "install", ".", "-g=QbsDeps", "--profile:all=qbs-test", "--output-folder=build"};
+        QProcess conan;
+        conan.start(executable, arguments);
+        QVERIFY(waitForProcessSuccess(conan));
+    }
+
+    QbsRunParameters buildParams(
+        "build",
+        {"--force-probe-execution",
+         "moduleProviders.conan.installDirectory:" + QDir::currentPath() + "/build"});
     buildParams.expectFailure = !successExpected;
     QCOMPARE(runQbs(buildParams) == 0, successExpected);
+}
+
+void TestBlackboxProviders::conanProvider_data()
+{
+    QTest::addColumn<bool>("generateConanFiles");
+    QTest::addColumn<bool>("successExpected");
+
+    QTest::addRow("no conan files generated") << false << false;
+    QTest::addRow("conan files generated") << true << true;
 }
 
 void TestBlackboxProviders::moduleProviders()
@@ -223,6 +245,26 @@ void TestBlackboxProviders::probeInModuleProvider()
     QVERIFY2(m_qbsStdout.contains("p.qbsmetatestmodule.boolProp: true"), m_qbsStdout);
     QVERIFY2(m_qbsStdout.contains("p.qbsmetatestmodule.prop: \"value\""), m_qbsStdout);
     QVERIFY2(!m_qbsStdout.contains("Running probe"), m_qbsStdout);
+}
+
+void TestBlackboxProviders::providersCondition()
+{
+    QDir::setCurrent(testDataDir + "/providers-condition");
+
+    QbsRunParameters params("resolve");
+    QCOMPARE(runQbs(params), 0);
+    QVERIFY2(m_qbsStdout.contains("p1.qbsmetatestmodule.prop: from_provider_a"), m_qbsStdout);
+    QVERIFY2(m_qbsStdout.contains(("p1.qbsothermodule.prop: from_provider_b")), m_qbsStdout);
+}
+
+void TestBlackboxProviders::providersConditionProbes()
+{
+    QDir::setCurrent(testDataDir + "/providers-condition-probes");
+
+    QbsRunParameters params("resolve");
+    QCOMPARE(runQbs(params), 0);
+    QVERIFY2(m_qbsStdout.contains("p1.qbsmetatestmodule.prop: from_provider_a"), m_qbsStdout);
+    QVERIFY2(m_qbsStdout.contains(("p1.qbsothermodule.prop: from_provider_b")), m_qbsStdout);
 }
 
 // Tests whether it is possible to set providers properties in a Product or from command-line
@@ -397,7 +439,9 @@ void TestBlackboxProviders::qbspkgconfigModuleProvider()
 void TestBlackboxProviders::removalVersion()
 {
     QDir::setCurrent(testDataDir + "/removal-version");
-    QCOMPARE(runQbs(), 0);
+    QbsRunParameters params;
+    params.expectFailure = true;
+    QVERIFY(runQbs(params) != 0);
     QVERIFY(m_qbsStderr.contains(
         "Property 'deprecated' was scheduled for removal in version 2.2.0, but is still present"));
 }

@@ -49,14 +49,10 @@ public:
     static TextEditorSettings *instance();
 
     static const FontSettings &fontSettings();
-    static const TypingSettings &typingSettings();
-    static const StorageSettings &storageSettings();
-    static const BehaviorSettings &behaviorSettings();
     static const MarginSettings &marginSettings();
     static const DisplaySettings &displaySettings();
     static const CompletionSettings &completionSettings();
     static const HighlighterSettings &highlighterSettings();
-    static const ExtraEncodingSettings &extraEncodingSettings();
 
     static void setCommentsSettingsRetriever(
         const std::function<CommentsSettings::Data(const Utils::FilePath &)> &);
@@ -80,6 +76,8 @@ public:
 
     static void registerMimeTypeForLanguageId(const char *mimeType, Utils::Id languageId);
     static Utils::Id languageId(const QString &mimeType);
+    static int increaseFontZoom();
+    static int decreaseFontZoom();
     static int increaseFontZoom(int step);
     static void resetFontZoom();
 
@@ -95,4 +93,9 @@ signals:
     void commentsSettingsChanged();
 };
 
-} // namespace TextEditor
+namespace Internal {
+TextEditorSettings &textEditorSettings();
+void setupTextEditorSettings();
+} // Internal
+
+} // TextEditor

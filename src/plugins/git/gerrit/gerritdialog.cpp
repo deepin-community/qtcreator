@@ -39,20 +39,17 @@
 
 using namespace Utils;
 
-namespace Gerrit {
-namespace Internal {
+namespace Gerrit::Internal {
 
 static const int maxTitleWidth = 350;
 
-GerritDialog::GerritDialog(const QSharedPointer<GerritParameters> &p,
-                           const QSharedPointer<GerritServer> &s,
+GerritDialog::GerritDialog(const std::shared_ptr<GerritServer> &s,
                            const FilePath &repository,
                            QWidget *parent)
     : QDialog(parent)
-    , m_parameters(p)
     , m_server(s)
     , m_filterModel(new QSortFilterProxyModel(this))
-    , m_model(new GerritModel(p, this))
+    , m_model(new GerritModel(this))
     , m_queryModel(new QStringListModel(this))
 {
     setWindowTitle(Git::Tr::tr("Gerrit"));
@@ -70,7 +67,7 @@ GerritDialog::GerritDialog(const QSharedPointer<GerritParameters> &p,
 
     m_queryLineEdit = new FancyLineEdit(changesGroup);
     m_queryLineEdit->setMinimumSize(QSize(400, 0));
-    m_queryLineEdit->setPlaceholderText(Git::Tr::tr("Change #, SHA-1, tr:id, owner:email or reviewer:email"));
+    m_queryLineEdit->setPlaceholderText(Git::Tr::tr("Change #, hash, tr:id, owner:email or reviewer:email"));
     m_queryLineEdit->setSpecialCompleter(new QCompleter(m_queryModel, this));
     m_queryLineEdit->setValidationFunction(
         [this](FancyLineEdit *, QString *) { return m_model->state() != GerritModel::Error; });
@@ -95,9 +92,8 @@ GerritDialog::GerritDialog(const QSharedPointer<GerritParameters> &p,
     auto queryLabel = new QLabel(Git::Tr::tr("&Query:"), changesGroup);
     queryLabel->setBuddy(m_queryLineEdit);
 
-    m_remoteComboBox->setParameters(m_parameters);
     m_remoteComboBox->setFallbackEnabled(true);
-    m_queryModel->setStringList(m_parameters->savedQueries);
+    m_queryModel->setStringList(gerritSettings().savedQueries);
     m_filterModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_filterModel->setSourceModel(m_model);
     m_filterModel->setFilterRole(GerritModel::FilterRole);
@@ -194,7 +190,7 @@ void GerritDialog::setCurrentPath(const FilePath &path)
     if (path == m_repository)
         return;
     m_repository = path;
-    m_repositoryLabel->setText(Git::Internal::GitPlugin::msgRepositoryLabel(path));
+    m_repositoryLabel->setText(Git::Internal::msgRepositoryLabel(path));
     updateRemotes();
 }
 
@@ -210,11 +206,11 @@ void GerritDialog::updateCompletions(const QString &query)
 {
     if (query.isEmpty())
         return;
-    QStringList &queries = m_parameters->savedQueries;
+    QStringList &queries = gerritSettings().savedQueries;
     queries.removeAll(query);
     queries.prepend(query);
     m_queryModel->setStringList(queries);
-    m_parameters->saveQueries(Core::ICore::settings());
+    gerritSettings().saveQueries();
 }
 
 GerritDialog::~GerritDialog() = default;
@@ -286,7 +282,7 @@ void GerritDialog::showEvent(QShowEvent *event)
 void GerritDialog::remoteChanged()
 {
     const GerritServer server = m_remoteComboBox->currentServer();
-    if (QSharedPointer<GerritServer> modelServer = m_model->server()) {
+    if (std::shared_ptr<GerritServer> modelServer = m_model->server()) {
         if (*modelServer == server)
            return;
     }
@@ -300,7 +296,7 @@ void GerritDialog::updateRemotes(bool forceReload)
     m_remoteComboBox->setRepository(m_repository);
     if (m_repository.isEmpty() || !m_repository.isDir())
         return;
-    *m_server = m_parameters->server;
+    *m_server = gerritSettings().server;
     m_remoteComboBox->updateRemotes(forceReload);
 }
 
@@ -335,7 +331,7 @@ void GerritDialog::slotCurrentChanged()
     updateButtons();
 }
 
-void GerritDialog::fetchStarted(const QSharedPointer<GerritChange> &change)
+void GerritDialog::fetchStarted(const std::shared_ptr<GerritChange> &change)
 {
     // Disable buttons to prevent parallel gerrit operations which can cause mix-ups.
     m_fetchRunning = true;
@@ -360,5 +356,4 @@ void GerritDialog::setProgressIndicatorVisible(bool v)
     m_progressIndicator->setVisible(v);
 }
 
-} // namespace Internal
-} // namespace Gerrit
+} // Gerrit::Internal

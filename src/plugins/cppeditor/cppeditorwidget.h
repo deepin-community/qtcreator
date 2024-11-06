@@ -14,6 +14,7 @@
 #include <functional>
 
 namespace TextEditor {
+class BlockRange;
 class IAssistProposal;
 class IAssistProvider;
 }
@@ -37,13 +38,15 @@ public:
     CppEditorWidget();
     ~CppEditorWidget() override;
 
+    static CppEditorWidget *fromTextDocument(TextEditor::TextDocument *doc);
+
     Internal::CppEditorDocument *cppEditorDocument() const;
 
     bool isSemanticInfoValidExceptLocalUses() const;
     bool isSemanticInfoValid() const;
     bool isRenaming() const;
 
-    QSharedPointer<Internal::FunctionDeclDefLink> declDefLink() const;
+    std::shared_ptr<Internal::FunctionDeclDefLink> declDefLink() const;
     void applyDeclDefLinkChanges(bool jumpToMatch);
 
     std::unique_ptr<TextEditor::AssistInterface> createAssistInterface(
@@ -83,6 +86,8 @@ public:
     static const QList<QTextEdit::ExtraSelection>
     unselectLeadingWhitespace(const QList<QTextEdit::ExtraSelection> &selections);
 
+    void setIfdefedOutBlocks(const QList<TextEditor::BlockRange> &blocks);
+
     bool isInTestMode() const;
     void setProposals(const TextEditor::IAssistProposal *immediateProposal,
                       const TextEditor::IAssistProposal *finalProposal);
@@ -91,6 +96,7 @@ public:
 signals:
     void proposalsReady(const TextEditor::IAssistProposal *immediateProposal,
                         const TextEditor::IAssistProposal *finalProposal);
+    void ifdefedOutBlocksChanged(const QList<TextEditor::BlockRange> &blocks);
 #endif
 
 protected:
@@ -115,7 +121,7 @@ private:
     void updateFunctionDeclDefLink();
     void updateFunctionDeclDefLinkNow();
     void abortDeclDefLink();
-    void onFunctionDeclDefLinkFound(QSharedPointer<Internal::FunctionDeclDefLink> link);
+    void onFunctionDeclDefLinkFound(std::shared_ptr<Internal::FunctionDeclDefLink> link);
 
     void onCodeWarningsUpdated(unsigned revision,
                                const QList<QTextEdit::ExtraSelection> selections,

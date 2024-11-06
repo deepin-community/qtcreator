@@ -10,6 +10,7 @@
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/documentmanager.h>
 #include <coreplugin/icore.h>
+#include <coreplugin/iwelcomepage.h>
 #include <coreplugin/helpmanager.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/welcomepagehelper.h>
@@ -20,13 +21,13 @@
 
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
+#include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
 #include <utils/qtcassert.h>
 #include <utils/stylehelper.h>
 #include <utils/theme/theme.h>
 #include <utils/winutils.h>
 
-#include <QComboBox>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
@@ -42,17 +43,27 @@
 using namespace Core;
 using namespace Utils;
 
-namespace QtSupport {
-namespace Internal {
+namespace QtSupport::Internal {
 
 const char C_FALLBACK_ROOT[] = "ProjectsFallbackRoot";
 
 Q_GLOBAL_STATIC(ExampleSetModel, s_exampleSetModel)
 
-ExamplesWelcomePage::ExamplesWelcomePage(bool showExamples)
-    : m_showExamples(showExamples)
+class ExamplesWelcomePage final : public Core::IWelcomePage
 {
-}
+public:
+    explicit ExamplesWelcomePage(bool showExamples)
+        : m_showExamples(showExamples)
+    {}
+
+    QString title() const final;
+    int priority() const final;
+    Id id() const final;
+    QWidget *createWidget() const final;
+
+private:
+    const bool m_showExamples;
+};
 
 QString ExamplesWelcomePage::title() const
 {
@@ -66,12 +77,12 @@ int ExamplesWelcomePage::priority() const
 
 Id ExamplesWelcomePage::id() const
 {
-    return m_showExamples ? "Examples" : "Tutorials";
+    return m_showExamples ? Id("Examples") : Id("Tutorials");
 }
 
-FilePath ExamplesWelcomePage::copyToAlternativeLocation(const FilePath &proFile,
-                                                        FilePaths &filesToOpen,
-                                                        const FilePaths &dependencies)
+static FilePath copyToAlternativeLocation(const FilePath &proFile,
+                                          FilePaths &filesToOpen,
+                                          const FilePaths &dependencies)
 {
     const FilePath projectDir = proFile.canonicalPath().parentDir();
     QDialog d(ICore::dialogParent());
@@ -106,12 +117,12 @@ FilePath ExamplesWelcomePage::copyToAlternativeLocation(const FilePath &proFile,
     enum { Copy = QDialog::Accepted + 1, Keep = QDialog::Accepted + 2 };
     auto bb = new QDialogButtonBox;
     QPushButton *copyBtn = bb->addButton(Tr::tr("&Copy Project and Open"), QDialogButtonBox::AcceptRole);
-    connect(copyBtn, &QAbstractButton::released, &d, [&d] { d.done(Copy); });
+    QObject::connect(copyBtn, &QAbstractButton::released, &d, [&d] { d.done(Copy); });
     copyBtn->setDefault(true);
     QPushButton *keepBtn = bb->addButton(Tr::tr("&Keep Project and Open"), QDialogButtonBox::RejectRole);
-    connect(keepBtn, &QAbstractButton::released, &d, [&d] { d.done(Keep); });
+    QObject::connect(keepBtn, &QAbstractButton::released, &d, [&d] { d.done(Keep); });
     lay->addWidget(bb, 2, 0, 1, 2);
-    connect(chooser, &PathChooser::validChanged, copyBtn, &QWidget::setEnabled);
+    QObject::connect(chooser, &PathChooser::validChanged, copyBtn, &QWidget::setEnabled);
     int code = d.exec();
     if (code == Copy) {
         const QString exampleDirName = projectDir.fileName();
@@ -128,7 +139,7 @@ FilePath ExamplesWelcomePage::copyToAlternativeLocation(const FilePath &proFile,
                                  QMessageBox::NoButton);
             return {};
         } else {
-            expected_str<void> result = projectDir.copyRecursively(targetDir);
+            Result result = projectDir.copyRecursively(targetDir);
 
             if (result) {
                 // set vars to new location
@@ -162,7 +173,7 @@ FilePath ExamplesWelcomePage::copyToAlternativeLocation(const FilePath &proFile,
     return {};
 }
 
-void ExamplesWelcomePage::openProject(const ExampleItem *item)
+static void openProject(const ExampleItem *item)
 {
     using namespace ProjectExplorer;
     FilePath proFile = item->projectPath;
@@ -192,7 +203,8 @@ void ExamplesWelcomePage::openProject(const ExampleItem *item)
     // don't try to load help and files if loading the help request is being cancelled
     if (proFile.isEmpty())
         return;
-    ProjectExplorerPlugin::OpenProjectResult result = ProjectExplorerPlugin::openProject(proFile);
+
+    OpenProjectResult result = ProjectExplorerPlugin::openProject(proFile);
     if (result) {
         ICore::openFiles(filesToOpen);
         ModeManager::activateMode(Core::Constants::MODE_EDIT);
@@ -220,7 +232,7 @@ protected:
         if (exampleItem->isVideo)
             QDesktopServices::openUrl(QUrl::fromUserInput(exampleItem->videoUrl));
         else if (exampleItem->hasSourceCode)
-            ExamplesWelcomePage::openProject(exampleItem);
+            openProject(exampleItem);
         else
             HelpManager::showHelpUrl(QUrl::fromUserInput(exampleItem->docUrl),
                                      HelpManager::ExternalHelpAlways);
@@ -237,8 +249,9 @@ protected:
             painter->setFont(option.font);
             painter->setCompositionMode(QPainter::CompositionMode_Difference);
             painter->setPen(Qt::white);
-            painter->drawText(currentPixmapRect.translated(0, -WelcomePageHelpers::ItemGap),
-                              exampleItem->videoLength, Qt::AlignBottom | Qt::AlignHCenter);
+            painter->drawText(
+                currentPixmapRect.translated(0, -StyleHelper::SpacingTokens::VPaddingXxs),
+                exampleItem->videoLength, Qt::AlignBottom | Qt::AlignHCenter);
             painter->restore();
             static const QPixmap playOverlay =
                     StyleHelper::dpiSpecificImageFile(":/qtsupport/images/icons/playoverlay.png");
@@ -262,29 +275,25 @@ public:
     {
         m_exampleDelegate.setShowExamples(isExamples);
 
-        auto searchBox = new SearchBox(this);
-        m_searcher = searchBox->m_lineEdit;
+        using namespace StyleHelper::SpacingTokens;
 
-        auto grid = new QGridLayout(this);
-        grid->setContentsMargins(0, 0, 0, WelcomePageHelpers::ItemGap);
-        grid->setHorizontalSpacing(0);
-        grid->setVerticalSpacing(WelcomePageHelpers::ItemGap);
+        using namespace Layouting;
+        Row titleRow {
+            customMargins(0, 0, ExVPaddingGapXl, 0),
+            spacing(ExVPaddingGapXl),
+        };
 
-        auto searchBar = WelcomePageHelpers::panelBar(this);
-        auto hbox = new QHBoxLayout(searchBar);
-        hbox->setContentsMargins(0, 0, 0, 0);
+        m_searcher = new SearchBox;
         if (m_isExamples) {
             m_searcher->setPlaceholderText(Tr::tr("Search in Examples..."));
 
-            auto exampleSetSelector = new QComboBox(this);
-            QPalette pal = exampleSetSelector->palette();
-            // for macOS dark mode
-            pal.setColor(QPalette::Text, Utils::creatorTheme()->color(Theme::Welcome_TextColor));
-            exampleSetSelector->setPalette(pal);
-            exampleSetSelector->setMinimumWidth(Core::WelcomePageHelpers::GridItemWidth);
-            exampleSetSelector->setMaximumWidth(Core::WelcomePageHelpers::GridItemWidth);
+            auto exampleSetSelector = new ComboBox;
+            exampleSetSelector->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+            exampleSetSelector->setMinimumWidth(ListItemDelegate::itemSize().width()
+                                                - ExVPaddingGapXl);
             exampleSetSelector->setModel(s_exampleSetModel);
             exampleSetSelector->setCurrentIndex(s_exampleSetModel->selectedExampleSet());
+            titleRow.addItem(exampleSetSelector);
             connect(exampleSetSelector,
                     &QComboBox::activated,
                     s_exampleSetModel,
@@ -293,23 +302,23 @@ public:
                     &ExampleSetModel::selectedExampleSetChanged,
                     exampleSetSelector,
                     &QComboBox::setCurrentIndex);
-
-            hbox->setSpacing(Core::WelcomePageHelpers::HSpacing);
-            hbox->addWidget(exampleSetSelector);
         } else {
             m_searcher->setPlaceholderText(Tr::tr("Search in Tutorials..."));
         }
-        hbox->addWidget(searchBox);
-        grid->addWidget(WelcomePageHelpers::panelBar(this), 0, 0);
-        grid->addWidget(searchBar, 0, 1);
-        grid->addWidget(WelcomePageHelpers::panelBar(this), 0, 2);
+        titleRow.addItem(m_searcher);
 
-        auto gridView = new SectionedGridView(this);
+        auto gridView = new SectionedGridView;
         m_viewController
             = new ExamplesViewController(s_exampleSetModel, gridView, m_searcher, isExamples, this);
 
         gridView->setItemDelegate(&m_exampleDelegate);
-        grid->addWidget(gridView, 1, 1, 1, 2);
+
+        Column {
+            titleRow,
+            gridView,
+            spacing(ExVPaddingGapXl),
+            customMargins(ExVPaddingGapXl, ExVPaddingGapXl, 0, 0),
+        }.attachTo(this);
 
         connect(&m_exampleDelegate, &ExampleDelegate::tagClicked,
                 this, &ExamplesPageWidget::onTagClicked);
@@ -345,5 +354,10 @@ QWidget *ExamplesWelcomePage::createWidget() const
     return new ExamplesPageWidget(m_showExamples);
 }
 
-} // namespace Internal
-} // namespace QtSupport
+void setupGettingStartedWelcomePage()
+{
+    static ExamplesWelcomePage examplesPage{true};
+    static ExamplesWelcomePage tutorialPage{false};
+}
+
+} // QtSupport::Internal

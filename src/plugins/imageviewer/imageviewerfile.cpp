@@ -6,16 +6,15 @@
 
 #include "imageviewerconstants.h"
 #include "imageviewertr.h"
-#include "utils/algorithm.h"
 
 #include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/editormanager/ieditor.h>
 
+#include <utils/algorithm.h>
 #include <utils/filepath.h>
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
 
-#include <QFileInfo>
 #include <QGraphicsPixmapItem>
 #include <QImageReader>
 #include <QMovie>
@@ -25,6 +24,8 @@
 #ifndef QT_NO_SVG
 #include <QGraphicsSvgItem>
 #endif
+
+using namespace Utils;
 
 namespace ImageViewer::Internal {
 
@@ -145,17 +146,17 @@ Core::IDocument::ReloadBehavior ImageViewerFile::reloadBehavior(ChangeTrigger st
     return BehaviorAsk;
 }
 
-bool ImageViewerFile::reload(QString *errorString,
-                             Core::IDocument::ReloadFlag flag,
-                             Core::IDocument::ChangeType type)
+Result ImageViewerFile::reload(Core::IDocument::ReloadFlag flag,
+                               Core::IDocument::ChangeType type)
 {
     Q_UNUSED(type)
     if (flag == FlagIgnore)
-        return true;
+        return Result::Ok;
     emit aboutToReload();
-    bool success = (openImpl(errorString, filePath()) == OpenResult::Success);
+    QString errorString;
+    bool success = (openImpl(&errorString, filePath()) == OpenResult::Success);
     emit reloadFinished(success);
-    return success;
+    return Result(success, errorString);
 }
 
 QMovie *ImageViewerFile::movie() const

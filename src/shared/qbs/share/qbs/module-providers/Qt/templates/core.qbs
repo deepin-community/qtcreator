@@ -2,7 +2,7 @@ import qbs.FileInfo
 import qbs.ModUtils
 import qbs.TextFile
 import qbs.Utilities
-import qbs.Xml
+import "core.js" as Core
 import "moc.js" as Moc
 import "qdoc.js" as Qdoc
 import "rcc.js" as Rcc
@@ -20,14 +20,15 @@ Module {
     Depends { name: "cpp" }
     Depends { name: "Sanitizers.address"; condition: config.contains("sanitize_address") }
 
-    Depends { name: "Qt.android_support"; condition: qbs.targetOS.contains("android") }
-    Properties {
+    Group {
         condition: qbs.targetOS.contains("android")
-        Qt.android_support._qtBinaryDir: FileInfo.path(binPath)
-        Qt.android_support._qtInstallDir: FileInfo.path(installPath)
-        Qt.android_support.version: version
-        Qt.android_support.rccFilePath: Rcc.fullPath(product)
+        Depends { name: "Qt.android_support" }
+        product.Qt.android_support._qtBinaryDir: FileInfo.path(binPath)
+        product.Qt.android_support._qtInstallDir: FileInfo.path(installPath)
+        product.Qt.android_support.version: version
+        product.Qt.android_support.rccFilePath: Rcc.fullPath(product)
     }
+
     // qmlImportScanner is required by androiddeployqt even if the project doesn't
     // depend on qml. That's why the scannerName must be defined here and not in the
     // qml module
@@ -40,6 +41,8 @@ Module {
     property string libInfix: @libInfix@
     property stringList config: @config@
     property stringList qtConfig: @qtConfig@
+    readonly property stringList enabledFeatures: @enabledFeatures@
+    readonly property stringList disabledFeatures: @disabledFeatures@
     property path binPath: @binPath@
     property path installPath: @installPath@
     property path incPath: @incPath@
@@ -57,6 +60,7 @@ Module {
     property string qdocName: versionMajor >= 5 ? "qdoc" : "qdoc3"
     property stringList qdocEnvironment
     property path docPath: @docPath@
+    property path translationsPath: @translationsPath@
     property string helpGeneratorLibExecPath: @helpGeneratorLibExecPath@
     property stringList helpGeneratorArgs: versionMajor >= 5 ? ["-platform", "minimal"] : []
     property var versionParts: version ? version.split('.').map(function(item) { return parseInt(item, 10); }) : []
@@ -65,6 +69,7 @@ Module {
     property int versionPatch: versionParts[2]
     property bool frameworkBuild: @frameworkBuild@
     property bool staticBuild: @staticBuild@
+    property bool multiThreading: @multiThreading@
     property stringList pluginMetaData: []
     property bool enableKeywords: true
     property bool generateMetaTypesFile
@@ -129,13 +134,15 @@ Module {
         cpp.linkerVariant: "gold"
     }
     Properties {
-        condition: !moduleConfig.contains("use_gold_linker") && qbs.toolchain.contains("gcc")
-        cpp.linkerVariant: original
+        condition: Utilities.versionCompare(version, "6") >= 0
+        cpp.cxxLanguageVersion: "c++17"
+    }
+    Properties {
+        condition: Utilities.versionCompare(version, "6") < 0
+                   && Utilities.versionCompare(version, "5.7.0") >= 0
+        cpp.cxxLanguageVersion: "c++11"
     }
 
-    cpp.cxxLanguageVersion: Utilities.versionCompare(version, "6.0.0") >= 0
-                            ? "c++17"
-                            : Utilities.versionCompare(version, "5.7.0") >= 0 ? "c++11" : original
     cpp.enableCompilerDefinesByLanguage: ["cpp"].concat(
         qbs.targetOS.contains("darwin") ? ["objcpp"] : [])
     cpp.defines: {
@@ -200,10 +207,18 @@ Module {
         return frameworks;
     }
     cpp.rpaths: useRPaths ? libPath : undefined
-    cpp.runtimeLibrary: qbs.toolchain.contains("msvc")
-        ? config.contains("static_runtime") ? "static" : "dynamic"
-        : original
-    cpp.positionIndependentCode: versionMajor >= 5 ? true : original
+    Properties {
+        condition: qbs.toolchain.contains("msvc") && config.contains("static_runtime")
+        cpp.runtimeLibrary: "static"
+    }
+    Properties {
+        condition: qbs.toolchain.contains("msvc") && !config.contains("static_runtime")
+        cpp.runtimeLibrary: "dynamic"
+    }
+    Properties {
+        condition: versionMajor >= 5
+        cpp.positionIndependentCode: true
+    }
     cpp.cxxFlags: {
         var flags = [];
         if (qbs.toolchain.contains('msvc')) {
@@ -214,14 +229,36 @@ Module {
                 flags.push("/permissive-");
             }
         }
+        if (qbs.toolchain.includes("emscripten") && multiThreading)
+            flags.push("-pthread");
         return flags;
     }
-    cpp.cxxStandardLibrary: {
-        if (qbs.targetOS.contains('darwin') && qbs.toolchain.contains('clang')
-                && config.contains('c++11'))
-            return "libc++";
-        return original;
+    Properties {
+        condition: qbs.targetOS.contains('darwin') && qbs.toolchain.contains('clang')
+                   && config.contains('c++11')
+        cpp.cxxStandardLibrary: "libc++"
     }
+
+    Properties {
+        condition: qbs.toolchain.includes("emscripten")
+        cpp.driverLinkerFlags: {
+            var flags = [
+                "-sMAX_WEBGL_VERSION=2",
+                "-sFETCH=1",
+                "-sWASM_BIGINT=1",
+                "-sMODULARIZE",
+                "-sEXPORT_NAME=createQtAppInstance",
+                "-sALLOW_MEMORY_GROWTH",
+                '-sASYNCIFY_IMPORTS=["qt_asyncify_suspend_js", "qt_asyncify_resume_js"]',
+                '-sEXPORTED_RUNTIME_METHODS=["UTF16ToString", "stringToUTF16", "JSEvents", "specialHTMLTargets", "FS"]',
+                "-lembind"
+            ];
+            if (multiThreading)
+                flags.push("-pthread")
+            return flags;
+        }
+    }
+
     cpp.minimumWindowsVersion: @minWinVersion_optional@
     cpp.minimumMacosVersion: @minMacVersion_optional@
     cpp.minimumIosVersion: @minIosVersion_optional@
@@ -308,27 +345,28 @@ Module {
     property bool enableMoc: !(product.multiplexed || product.aggregate)
                              || product.multiplexConfigurationId
 
-    Rule {
-        name: "QtCoreMocRuleCpp"
+    Group {
         condition: enableMoc
-        property string cppInput: cpp.combineCxxSources ? "cpp.combine" : "cpp"
-        property string objcppInput: cpp.combineObjcxxSources ? "objcpp.combine" : "objcpp"
-        inputs: [objcppInput, cppInput]
-        auxiliaryInputs: "qt_plugin_metadata"
-        excludedInputs: "unmocable"
-        outputFileTags: ["hpp", "unmocable", "qt.core.metatypes.in"]
-        outputArtifacts: Moc.outputArtifacts.apply(Moc, arguments)
-        prepare: Moc.commands.apply(Moc, arguments)
-    }
-    Rule {
-        name: "QtCoreMocRuleHpp"
-        condition: enableMoc
-        inputs: "hpp"
-        auxiliaryInputs: ["qt_plugin_metadata", "cpp", "objcpp"];
-        excludedInputs: "unmocable"
-        outputFileTags: ["hpp", "cpp", "moc_cpp", "unmocable", "qt.core.metatypes.in"]
-        outputArtifacts: Moc.outputArtifacts.apply(Moc, arguments)
-        prepare: Moc.commands.apply(Moc, arguments)
+        Rule {
+            name: "QtCoreMocRuleCpp"
+            property string cppInput: cpp.combineCxxSources ? "cpp.combine" : "cpp"
+            property string objcppInput: cpp.combineObjcxxSources ? "objcpp.combine" : "objcpp"
+            inputs: [objcppInput, cppInput]
+            auxiliaryInputs: "qt_plugin_metadata"
+            excludedInputs: "unmocable"
+            outputFileTags: ["hpp", "unmocable", "qt.core.metatypes.in"]
+            outputArtifacts: Moc.outputArtifacts.apply(Moc, arguments)
+            prepare: Moc.commands.apply(Moc, arguments)
+        }
+        Rule {
+            name: "QtCoreMocRuleHpp"
+            inputs: "hpp"
+            auxiliaryInputs: ["qt_plugin_metadata", "cpp", "objcpp"];
+            excludedInputs: "unmocable"
+            outputFileTags: ["hpp", "cpp", "moc_cpp", "unmocable", "qt.core.metatypes.in"]
+            outputArtifacts: Moc.outputArtifacts.apply(Moc, arguments)
+            prepare: Moc.commands.apply(Moc, arguments)
+        }
     }
 
     Rule {
@@ -338,15 +376,7 @@ Module {
             filePath: "amalgamated_moc_" + product.targetName + ".cpp"
             fileTags: ["cpp", "unmocable"]
         }
-        prepare: {
-            var cmd = new JavaScriptCommand();
-            cmd.description = "creating " + output.fileName;
-            cmd.highlight = "codegen";
-            cmd.sourceCode = function() {
-                ModUtils.mergeCFiles(inputs["moc_cpp"], output.filePath);
-            };
-            return [cmd];
-        }
+        prepare: Moc.generateMocCppCommands(inputs, output)
     }
 
     Rule {
@@ -358,16 +388,7 @@ Module {
             qbs.install: product.Qt.core.metaTypesInstallDir
             qbs.installDir: product.Qt.core.metaTypesInstallDir
         }
-        prepare: {
-            var inputFilePaths = inputs["qt.core.metatypes.in"].map(function(a) {
-                return a.filePath;
-            });
-            var cmd = new Command(Moc.fullPath(product),
-                ["--collect-json", "-o", output.filePath].concat(inputFilePaths));
-            cmd.description = "generating " + output.fileName;
-            cmd.highlight = "codegen";
-            return cmd;
-        }
+        prepare: Moc.generateMetaTypesCommands(inputs, output)
     }
 
     property path resourceSourceBase
@@ -380,77 +401,14 @@ Module {
             filePath: product.Qt.core.resourceFileBaseName + ".qrc"
             fileTags: ["qrc"]
         }
-        prepare: {
-            var cmd = new JavaScriptCommand();
-            cmd.description = "generating " + output.fileName;
-            cmd.sourceCode = function() {
-                var doc = new Xml.DomDocument("RCC");
-
-                var rccNode = doc.createElement("RCC");
-                rccNode.setAttribute("version", "1.0");
-                doc.appendChild(rccNode);
-
-                var inputsByPrefix = {}
-                for (var i = 0; i < inputs["qt.core.resource_data"].length; ++i) {
-                    var inp = inputs["qt.core.resource_data"][i];
-                    var prefix = inp.Qt.core.resourcePrefix;
-                    var inputsList = inputsByPrefix[prefix] || [];
-                    inputsList.push(inp);
-                    inputsByPrefix[prefix] = inputsList;
-                }
-
-                for (var prefix in inputsByPrefix) {
-                    var qresourceNode = doc.createElement("qresource");
-                    qresourceNode.setAttribute("prefix", prefix);
-                    rccNode.appendChild(qresourceNode);
-
-                    for (var i = 0; i < inputsByPrefix[prefix].length; ++i) {
-                        var inp = inputsByPrefix[prefix][i];
-                        var fullResPath = inp.filePath;
-                        var baseDir = inp.Qt.core.resourceSourceBase;
-                        var resAlias = baseDir
-                            ? FileInfo.relativePath(baseDir, fullResPath) : inp.fileName;
-
-                        var fileNode = doc.createElement("file");
-                        fileNode.setAttribute("alias", resAlias);
-                        qresourceNode.appendChild(fileNode);
-
-                        var fileTextNode = doc.createTextNode(fullResPath);
-                        fileNode.appendChild(fileTextNode);
-                    }
-                }
-
-                doc.save(output.filePath, 4);
-            };
-            return [cmd];
-        }
+        prepare: Rcc.generateQrcFileCommands.apply(Rcc, arguments)
     }
 
     Rule {
         inputs: ["qrc"]
         outputFileTags: ["cpp", "cpp_intermediate_object"]
-        outputArtifacts: {
-            var artifact = {
-                filePath: "qrc_" + input.completeBaseName + ".cpp",
-                fileTags: ["cpp"]
-            };
-            if (input.Qt.core.enableBigResources)
-                artifact.fileTags.push("cpp_intermediate_object");
-            return [artifact];
-        }
-        prepare: {
-            var args = [input.filePath,
-                        "-name", FileInfo.completeBaseName(input.filePath),
-                        "-o", output.filePath];
-            if (input.Qt.core.enableBigResources)
-                args.push("-pass", "1");
-            var cmd = new Command(Rcc.fullPath(product), args);
-            cmd.description = "rcc "
-                + (input.Qt.core.enableBigResources ? "(pass 1) " : "")
-                + input.fileName;
-            cmd.highlight = 'codegen';
-            return cmd;
-        }
+        outputArtifacts: Rcc.rccOutputArtifacts(input)
+        prepare: Rcc.rccCommands(product, input, output)
     }
 
     Rule {
@@ -459,32 +417,7 @@ Module {
             filePath: input.completeBaseName + ".2" + input.cpp.objectSuffix
             fileTags: ["obj"]
         }
-        prepare: {
-            function findChild(artifact, predicate) {
-                var children = artifact.children;
-                var len = children.length;
-                for (var i = 0; i < len; ++i) {
-                    var child = children[i];
-                    if (predicate(child))
-                        return child;
-                    child = findChild(child, predicate);
-                    if (child)
-                        return child;
-                }
-                return undefined;
-            }
-            var qrcArtifact = findChild(input, function(c) { return c.fileTags.contains("qrc"); });
-            var cppArtifact = findChild(input, function(c) { return c.fileTags.contains("cpp"); });
-            var cmd = new Command(Rcc.fullPath(product),
-                                  [qrcArtifact.filePath,
-                                   "-temp", input.filePath,
-                                   "-name", FileInfo.completeBaseName(input.filePath),
-                                   "-o", output.filePath,
-                                   "-pass", "2"]);
-            cmd.description = "rcc (pass 2) " + qrcArtifact.fileName;
-            cmd.highlight = 'codegen';
-            return cmd;
-        }
+        prepare: Rcc.rccPass2Commands(product, input, output)
     }
 
     Rule {
@@ -499,38 +432,15 @@ Module {
             fileTags: ["qm"]
         }
 
-        prepare: {
-            var inputFilePaths;
-            if (product.Qt.core.lreleaseMultiplexMode)
-                inputFilePaths = inputs["ts"].map(function(artifact) { return artifact.filePath; });
-            else
-                inputFilePaths = [input.filePath];
-            var args = ['-silent', '-qm', output.filePath].concat(inputFilePaths);
-            var cmd = new Command(product.Qt.core.binPath + '/'
-                                  + product.Qt.core.lreleaseName, args);
-            cmd.description = 'creating ' + output.fileName;
-            cmd.highlight = 'filegen';
-            return cmd;
-        }
+        prepare: Core.lreleaseCommands.apply(Core, arguments)
     }
 
     Rule {
         inputs: "qdocconf-main"
         explicitlyDependsOn: ["qdoc", "qdocconf"]
-
         outputFileTags: ModUtils.allFileTags(Qdoc.qdocFileTaggers())
         outputArtifacts: Qdoc.outputArtifacts(product, input)
-
-        prepare: {
-            var outputDir = product.Qt.core.qdocOutputDir;
-            var args = Qdoc.qdocArgs(product, input, outputDir);
-            var cmd = new Command(product.Qt.core.binPath + '/' + product.Qt.core.qdocName, args);
-            cmd.description = 'qdoc ' + input.fileName;
-            cmd.highlight = 'filegen';
-            cmd.environment = product.Qt.core.qdocEnvironment;
-            cmd.environment.push("OUTDIR=" + outputDir); // Qt 4 replacement for -outputdir
-            return cmd;
-        }
+        prepare: Qdoc.commands(product, input)
     }
 
     Rule {
@@ -543,19 +453,31 @@ Module {
             fileTags: ["qch"]
         }
 
-        prepare: {
-            var args = [input.filePath];
-            args = args.concat(product.Qt.core.helpGeneratorArgs);
-            args.push("-o");
-            args.push(output.filePath);
-            var cmd = new Command(
-                product.Qt.core.helpGeneratorLibExecPath + "/qhelpgenerator", args);
-            cmd.description = 'qhelpgenerator ' + input.fileName;
-            cmd.highlight = 'filegen';
-            cmd.stdoutFilterFunction = function(output) {
-                return "";
-            };
-            return cmd;
+        prepare: Core.qhelpGeneratorCommands(product, input, output)
+    }
+
+    Group
+    {
+        condition: qbs.toolchain.includes("emscripten") && (product.type.includes("application")
+                                                            && product.type.includes("qthtml"))
+        Rule {
+            inputs: ["application"]
+            multiplex: true
+
+            Artifact {
+                filePath : FileInfo.joinPaths(product.buildDirectory, product.targetName + ".html")
+                fileTags : ["qthtml"]
+            }
+
+            prepare: Core.wasmQtHtmlCommands(product, output)
+        }
+
+        Group {
+            fileTags: ["qthtml"]
+            files: [
+                module.pluginPath + "/platforms/qtloader.js",
+                module.pluginPath + "/platforms/qtlogo.svg"
+            ]
         }
     }
 

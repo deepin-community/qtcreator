@@ -20,7 +20,7 @@
 
 #include <qmldebug/qmldebugcommandlinearguments.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/url.h>
 
@@ -52,6 +52,7 @@ QmlProfilerRunner::QmlProfilerRunner(RunControl *runControl)
     , d(new QmlProfilerRunnerPrivate)
 {
     setId("QmlProfilerRunner");
+    runControl->requestQmlChannel();
     runControl->setIcon(ProjectExplorer::Icons::ANALYZER_START_SMALL_TOOLBAR);
     setSupportsReRunning(false);
 }
@@ -162,17 +163,6 @@ void QmlProfilerRunner::profilerStateChanged()
     }
 }
 
-void QmlProfilerRunner::setServerUrl(const QUrl &serverUrl)
-{
-    recordData(QmlServerUrl, serverUrl);
-}
-
-QUrl QmlProfilerRunner::serverUrl() const
-{
-    QVariant recordedServer = recordedData(QmlServerUrl);
-    return recordedServer.toUrl();
-}
-
 //
 // LocalQmlProfilerSupport
 //
@@ -205,16 +195,15 @@ LocalQmlProfilerSupport::LocalQmlProfilerSupport(RunControl *runControl, const Q
     setId("LocalQmlProfilerSupport");
 
     auto profiler = new QmlProfilerRunner(runControl);
-    profiler->setServerUrl(serverUrl);
 
     addStopDependency(profiler);
     // We need to open the local server before the application tries to connect.
     // In the TCP case, it doesn't hurt either to start the profiler before.
     addStartDependency(profiler);
 
-    setStartModifier([this, profiler, serverUrl] {
+    setStartModifier([this, runControl, serverUrl] {
 
-        QUrl serverUrl = profiler->serverUrl();
+        QUrl serverUrl = runControl->qmlChannel();
         QString code;
         if (serverUrl.scheme() == Utils::urlSocketScheme())
             code = QString("file:%1").arg(serverUrl.path());
@@ -239,18 +228,36 @@ LocalQmlProfilerSupport::LocalQmlProfilerSupport(RunControl *runControl, const Q
 // Factories
 
 // The bits plugged in in remote setups.
-QmlProfilerRunWorkerFactory::QmlProfilerRunWorkerFactory()
+class QmlProfilerRunWorkerFactory final : public RunWorkerFactory
 {
-    setProduct<QmlProfilerRunner>();
-    addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUNNER);
-}
+public:
+    QmlProfilerRunWorkerFactory()
+    {
+        setProduct<QmlProfilerRunner>();
+        addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUNNER);
+    }
+};
 
 // The full local profiler.
-LocalQmlProfilerRunWorkerFactory::LocalQmlProfilerRunWorkerFactory()
+class LocalQmlProfilerRunWorkerFactory final : public RunWorkerFactory
 {
-    setProduct<LocalQmlProfilerSupport>();
-    addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
-    addSupportedDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
+public:
+    LocalQmlProfilerRunWorkerFactory()
+    {
+        setId(ProjectExplorer::Constants::QML_PROFILER_RUN_FACTORY);
+        setProduct<LocalQmlProfilerSupport>();
+        addSupportedRunMode(ProjectExplorer::Constants::QML_PROFILER_RUN_MODE);
+        addSupportedDeviceType(ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE);
+
+        addSupportForLocalRunConfigs();
+    }
+};
+
+void setupQmlProfilerRunning()
+{
+    static QmlProfilerRunWorkerFactory theQmlProfilerRunWorkerFactory;
+    static LocalQmlProfilerRunWorkerFactory theLocalQmlProfilerRunWorkerFactory;
 }
+
 
 } // QmlProfiler::Internal

@@ -23,7 +23,7 @@
 #include <utils/infolabel.h>
 #include <utils/mimeutils.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <vcsbase/vcsbaseplugin.h>
@@ -103,7 +103,7 @@ GitLabCloneDialog::GitLabCloneDialog(const Project &project, QWidget *parent)
     connect(m_cloneButton, &QPushButton::clicked, this, &GitLabCloneDialog::cloneProject);
     connect(m_cancelButton, &QPushButton::clicked,
             this, &GitLabCloneDialog::cancel);
-    connect(this, &QDialog::rejected, this, [this]() {
+    connect(this, &QDialog::rejected, this, [this] {
         if (m_commandRunning) {
             cancel();
             QApplication::restoreOverrideCursor();
@@ -132,8 +132,8 @@ void GitLabCloneDialog::updateUi()
 
 void GitLabCloneDialog::cloneProject()
 {
-    VcsBasePluginPrivate *vc = static_cast<VcsBasePluginPrivate *>(
-                Core::VcsManager::versionControl(Id::fromString("G.Git")));
+    VersionControlBase *vc = static_cast<VersionControlBase *>(
+                Core::VcsManager::versionControl(Id("G.Git")));
     QTC_ASSERT(vc, return);
     const QStringList extraArgs = m_submodulesCB->isChecked() ? QStringList{ "--recursive" }
                                                               : QStringList{};
@@ -189,7 +189,6 @@ static FilePaths scanDirectoryForFiles(const FilePath &directory)
 void GitLabCloneDialog::cloneFinished(bool success)
 {
     m_commandRunning = false;
-    delete m_command;
     m_command = nullptr;
 
     const QString emptyLine("\n\n");

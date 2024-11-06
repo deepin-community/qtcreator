@@ -55,7 +55,9 @@ public:
     enum Type {
         FileOptionType,
         BuildDirectoryOptionType,
-        LogLevelOptionType, VerboseOptionType, QuietOptionType,
+        LogLevelOptionType,
+        VerboseOptionType,
+        QuietOptionType,
         JobsOptionType,
         KeepGoingOptionType,
         DryRunOptionType,
@@ -64,7 +66,9 @@ public:
         ChangedFilesOptionType,
         ProductsOptionType,
         NoInstallOptionType,
-        InstallRootOptionType, RemoveFirstOptionType, NoBuildOptionType,
+        InstallRootOptionType,
+        RemoveFirstOptionType,
+        NoBuildOptionType,
         ForceTimestampCheckOptionType,
         ForceOutputCheckOptionType,
         BuildNonDefaultOptionType,
@@ -76,7 +80,6 @@ public:
         GeneratorOptionType,
         WaitLockOptionType,
         RunEnvConfigOptionType,
-        DisableFallbackProviderType,
         DeprecationWarningsOptionType,
     };
 
@@ -424,14 +427,6 @@ public:
 };
 
 class WaitLockOption : public OnOffOption
-{
-public:
-    QString description(CommandType command) const override;
-    QString shortRepresentation() const override { return {}; }
-    QString longRepresentation() const override;
-};
-
-class DisableFallbackProviderOption : public OnOffOption
 {
 public:
     QString description(CommandType command) const override;

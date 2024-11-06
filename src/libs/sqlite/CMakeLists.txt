@@ -1,3 +1,7 @@
+env_with_default("QTC_ENABLE_SQLITE_TRACING" ENV_QTC_ENABLE_SQLITE_TRACING OFF)
+option(ENABLE_SQLITE_TRACING "Enable sqlite tarcing" ${ENV_QTC_ENABLE_SQLITE_TRACING})
+add_feature_info("Sqlite tracing" ${ENABLE_SQLITE_TRACING} "")
+
 add_qtc_library(SqliteInternal OBJECT
     PROPERTIES AUTOMOC OFF AUTOUIC OFF QT_COMPILE_OPTIONS_DISABLE_WARNINGS ON
     DEFINES SQLITE_CORE SQLITE_CUSTOM_INCLUDE=config.h $<$<CONFIG:Debug>:SQLITE_DEBUG>
@@ -16,7 +20,7 @@ add_qtc_library(SqliteInternal OBJECT
 
 extend_qtc_library(SqliteInternal
   CONDITION QTC_STATIC_BUILD
-  PROPERTIES COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
+  PRIVATE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
 )
 
 if (APPLE)
@@ -27,7 +31,7 @@ endif()
 
 add_qtc_library(Sqlite
   PROPERTIES AUTOMOC OFF AUTOUIC OFF
-  DEPENDS Qt::Core Threads::Threads ${CMAKE_DL_LIBS} SqliteInternal
+  DEPENDS Qt::Core Threads::Threads ${CMAKE_DL_LIBS} SqliteInternal Nanotrace
   INCLUDES
     ../3rdparty/sqlite
   PUBLIC_INCLUDES
@@ -54,7 +58,7 @@ add_qtc_library(Sqlite
     sqlitesessionchangeset.cpp sqlitesessionchangeset.h
     sqlitesessions.cpp sqlitesessions.h
     sqlitetable.h
-    sqlitetransaction.h
+    sqlitetracing.cpp sqlitetracing.h
     sqlitetransaction.h
     sqlitevalue.h
     sqlitewritestatement.h
@@ -68,6 +72,15 @@ add_qtc_library(Sqlite
 )
 
 extend_qtc_library(Sqlite
+  CONDITION TARGET Nanotrace
+  DEPENDS Nanotrace
+  PUBLIC_DEFINES
+    $<$<BOOL:${ENABLE_SQLITE_TRACING}>:ENABLE_SQLITE_TRACING>
+)
+
+extend_qtc_library(Sqlite
   CONDITION QTC_STATIC_BUILD
-  PROPERTIES COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
+  PRIVATE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FIsqlite_static_config.h,-includesqlite_static_config.h>
+  PROPERTIES
+    INTERFACE_COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/FI../3rdparty/sqlite/sqlite_static_config.h,-include../3rdparty/sqlite/sqlite_static_config.h>
 )

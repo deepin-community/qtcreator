@@ -163,9 +163,12 @@ void ProbesResolver::resolveProbe(ProductContext &productContext, Item *parent,
         for (const ProbeProperty &b : probeBindings)
             setJsProperty(ctx, configureScope, b.first, JS_DupValue(ctx, b.second));
         engine->clearRequestedProperties();
-        ScopedJsValue sv(ctx, engine->evaluate(JsValueOwner::Caller,
-                configureScript->sourceCodeForEvaluation(), {}, 1,
-                {fileCtxScopes.fileScope, fileCtxScopes.importScope, configureScope}));
+        const JSValue scopes[] = {
+            fileCtxScopes.fileScope, fileCtxScopes.importScope, configureScope};
+        ScopedJsValue sv(
+            ctx,
+            engine->evaluate(
+                JsValueOwner::Caller, configureScript->sourceCodeForEvaluation(), {}, 1, scopes));
         if (JsException ex = engine->checkAndClearException(configureScript->location()))
             throw ex.toErrorInfo();
         importedFilesUsedInConfigure = engine->importedFilesUsedInScript();
@@ -198,10 +201,12 @@ void ProbesResolver::resolveProbe(ProductContext &productContext, Item *parent,
                 if (JsException ex = engine->checkAndClearException({}))
                     throw ex.toErrorInfo();
                 newValue = getJsVariant(ctx, v);
-                // special case, string lists are represented as js arrays and and we don't type
-                // info when converting
-                if (decl.type() == PropertyDeclaration::StringList
-                    && newValue.userType() == QMetaType::QVariantList) {
+                // Special case, string and path lists are represented as js arrays but we don't
+                // want to make them const as we do for object lists. Converting to QStringList
+                // allows to distinguish between these two cases in ScriptEngine::asJsValue
+                if (newValue.userType() == QMetaType::QVariantList
+                    && (decl.type() == PropertyDeclaration::StringList
+                        || decl.type() == PropertyDeclaration::PathList)) {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
                     newValue.convert(QMetaType(QMetaType::QStringList));
 #else
@@ -212,7 +217,7 @@ void ProbesResolver::resolveProbe(ProductContext &productContext, Item *parent,
                 newValue = initialProperties.value(b.first);
             }
         }
-        if (newValue != getJsVariant(ctx, b.second)) {
+        if (!qVariantsEqual(newValue, getJsVariant(ctx, b.second))) {
             if (!resolvedProbe)
                 storedValue = VariantValue::createStored(newValue);
             else
@@ -281,10 +286,10 @@ bool ProbesResolver::probeMatches(const ProbeConstPtr &probe, bool condition,
         CompareScript compareScript) const
 {
     return probe->condition() == condition
-            && probe->initialProperties() == initialProperties
-            && (compareScript == CompareScript::No
-                || (probe->configureScript() == configureScript
-                    && !probe->needsReconfigure(m_loaderState.topLevelProject().lastResolveTime())));
+           && qVariantMapsEqual(probe->initialProperties(), initialProperties)
+           && (compareScript == CompareScript::No
+               || (probe->configureScript() == configureScript
+                   && !probe->needsReconfigure(m_loaderState.topLevelProject().lastResolveTime())));
 }
 
 } // namespace Internal

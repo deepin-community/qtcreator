@@ -6,6 +6,9 @@
 #include <cppeditor/cpptoolstestcase.h>
 #include <cppeditor/projectinfo.h>
 
+#include <projectexplorer/kitmanager.h>
+#include <projectexplorer/toolchainkitaspect.h>
+
 #include <qtsupport/qtkitaspect.h>
 
 #include <utils/algorithm.h>
@@ -56,7 +59,7 @@ bool LoadProjectScenario::init()
         return false;
     }
 
-    const ToolChain * const toolchain = ToolChainKitAspect::cxxToolChain(m_kit);
+    const Toolchain * const toolchain = ToolchainKitAspect::cxxToolchain(m_kit);
     if (!toolchain) {
         qWarning() << "This test requires that there is a kit with a toolchain.";
         return false;

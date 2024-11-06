@@ -87,7 +87,7 @@ public:
     QPointF center() const;
     qreal selectionWeigth(const QPointF &point, int iteration);
 
-    virtual void synchronizeOtherProperty(const QByteArray &propertyName);
+    virtual void synchronizeOtherProperty(PropertyNameView propertyName);
     virtual void setDataModelPosition(const QPointF &position);
     virtual void setDataModelPositionInBaseState(const QPointF &position);
     virtual QPointF instancePosition() const;
@@ -97,6 +97,10 @@ public:
     virtual bool flowHitTest(const QPointF &point) const;
 
     void setFrameColor(const QColor &color);
+
+    void setHasEffect(bool hasEffect);
+    bool hasEffect() const;
+    bool parentHasEffect() const;
 
 protected:
     AbstractFormEditorTool* tool() const;
@@ -125,10 +129,11 @@ private: // variables
     QPointer<QTimeLine> m_attentionTimeLine;
     QTransform m_inverseAttentionTransform;
 
-    double m_borderWidth;
-    bool m_highlightBoundingRect;
-    bool m_blurContent;
-    bool m_isContentVisible;
+    double m_borderWidth = 1.0;
+    bool m_highlightBoundingRect = false;
+    bool m_blurContent = false;
+    bool m_isContentVisible = true;
+    bool m_hasEffect = false;
 };
 
 class FormEditorFlowItem : public FormEditorItem
@@ -136,7 +141,7 @@ class FormEditorFlowItem : public FormEditorItem
     friend FormEditorScene;
 
 public:
-    void synchronizeOtherProperty(const QByteArray &propertyName) override;
+    void synchronizeOtherProperty(PropertyNameView propertyName) override;
     void setDataModelPosition(const QPointF &position) override;
     void setDataModelPositionInBaseState(const QPointF &position) override;
     void updateGeometry() override;
@@ -193,7 +198,7 @@ class FormEditorTransitionItem : public FormEditorItem
     friend FormEditorScene;
 
 public:
-    void synchronizeOtherProperty(const QByteArray &propertyName) override;
+    void synchronizeOtherProperty(PropertyNameView propertyName) override;
     void setDataModelPosition(const QPointF &position) override;
     void setDataModelPositionInBaseState(const QPointF &position) override;
     void updateGeometry() override;

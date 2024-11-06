@@ -49,10 +49,24 @@ static bool isType(const std::string &typeName, const std::vector<std::string> &
 
 static bool isIntegralType(const std::string &typeName)
 {
-    static const std::vector<std::string> integralTypes({"bool",
-            "char", "unsigned char", "char16_t", "char32_t", "wchar_t",
-            "short", "unsigned short", "int", "unsigned int",
-            "long", "unsigned long", "int64", "unsigned int64", "__int64", "unsigned __int64"});
+    static const std::vector<std::string> integralTypes(
+                {"bool",
+                 "char",
+                 "unsigned char",
+                 "char16_t",
+                 "char32_t",
+                 "wchar_t",
+                 "short",
+                 "unsigned short",
+                 "int",
+                 "unsigned int",
+                 "long",
+                 "unsigned long",
+                 "int64",
+                 "unsigned int64",
+                 "__int64",
+                 "unsigned __int64",
+                 "HRESULT"});
     return isType(typeName, integralTypes);
 }
 
@@ -121,6 +135,9 @@ static std::string stripPointerType(const std::string &typeNameIn)
     std::string typeName = typeNameIn;
     if (typeName.back() == '*') {
         typeName.pop_back();
+        trimBack(typeName);
+        if (endsWith(typeName, "const"))
+            typeName = typeName.erase(typeName.size() - 5, 5);
     } else {
         const auto arrayPosition = typeName.find_first_of('[');
         if (arrayPosition != std::string::npos
@@ -296,35 +313,19 @@ int PyType::code() const
         return std::nullopt;
     };
 
-    if (!resolve())
-        return parseTypeName(name()).value_or(TypeCodeUnresolvable);
-
-    if (m_tag < 0) {
-        if (const std::optional<TypeCodes> typeCode = parseTypeName(name()))
-            return *typeCode;
-
-        IDebugSymbolGroup2 *sg = 0;
-        if (FAILED(ExtensionCommandContext::instance()->symbols()->CreateSymbolGroup2(&sg)))
-            return TypeCodeStruct;
-
-        const std::string helperValueName = SymbolGroupValue::pointedToSymbolName(0, name(true));
-        ULONG index = DEBUG_ANY_ID;
-        if (SUCCEEDED(sg->AddSymbol(helperValueName.c_str(), &index)))
-            m_tag = PyValue(index, sg).tag();
-        sg->Release();
+    if (m_tag >= 0) {
+        switch (m_tag) {
+        case SymTagUDT: return TypeCodeStruct;
+        case SymTagEnum: return TypeCodeEnum;
+        case SymTagTypedef: return TypeCodeTypedef;
+        case SymTagFunctionType: return TypeCodeFunction;
+        case SymTagPointerType: return TypeCodePointer;
+        case SymTagArrayType: return TypeCodeArray;
+        case SymTagBaseType: return isIntegralType(name()) ? TypeCodeIntegral : TypeCodeFloat;
+        default: break;
+        }
     }
-    switch (m_tag) {
-    case SymTagUDT: return TypeCodeStruct;
-    case SymTagEnum: return TypeCodeEnum;
-    case SymTagTypedef: return TypeCodeTypedef;
-    case SymTagFunctionType: return TypeCodeFunction;
-    case SymTagPointerType: return TypeCodePointer;
-    case SymTagArrayType: return TypeCodeArray;
-    case SymTagBaseType: return isIntegralType(name()) ? TypeCodeIntegral : TypeCodeFloat;
-    default: break;
-    }
-
-    return TypeCodeStruct;
+    return parseTypeName(name()).value_or(TypeCodeStruct);
 }
 
 PyType PyType::target() const
@@ -479,8 +480,7 @@ bool PyType::resolve() const
                 result = symbols->GetTypeId(m_module, m_name.c_str(), &typeId);
             if (FAILED(result) || result == S_FALSE) {
                 ULONG64 module;
-                if (isIntegralType(m_name))
-                    result = symbols->GetSymbolTypeId(m_name.c_str(), &typeId, &module);
+                result = symbols->GetSymbolTypeId(m_name.c_str(), &typeId, &module);
                 if (FAILED(result) || result == S_FALSE) {
                     ULONG loaded = 0;
                     ULONG unloaded = 0;
@@ -534,6 +534,7 @@ PY_FUNC_RET_OBJECT_LIST(fields, PY_OBJ_NAME)
 PY_FUNC_RET_STD_STRING(module, PY_OBJ_NAME)
 PY_FUNC(moduleId, PY_OBJ_NAME, "K")
 PY_FUNC(arrayElements, PY_OBJ_NAME, "k")
+PY_FUNC_RET_BOOL(resolved, PY_OBJ_NAME)
 PY_FUNC_DECL(templateArguments, PY_OBJ_NAME)
 {
     PY_IMPL_GUARD;
@@ -569,6 +570,8 @@ static PyMethodDef typeMethods[] = {
      "Returns the number of elements in an array or 0 for non array types"},
     {"templateArguments",   PyCFunction(templateArguments),     METH_NOARGS,
      "Returns all template arguments."},
+    {"resolved",            PyCFunction(resolved),              METH_NOARGS,
+     "Returns whether the type is resolved"},
 
     {NULL}  /* Sentinel */
 };
