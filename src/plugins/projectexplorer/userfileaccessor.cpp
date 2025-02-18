@@ -19,7 +19,7 @@
 #include <utils/environment.h>
 #include <utils/hostosinfo.h>
 #include <utils/persistentsettings.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QGuiApplication>
@@ -300,7 +300,7 @@ UserFileAccessor::UserFileAccessor(Project *project)
     secondary->setReadOnly();
     setSecondaryAccessor(std::move(secondary));
 
-    setSettingsId(ProjectExplorerPlugin::projectExplorerSettings().environmentId.toByteArray());
+    setSettingsId(projectExplorerSettings().environmentId.toByteArray());
 
     // Register Upgraders:
     addVersionUpgrader(std::make_unique<UserFileVersion14Upgrader>());
@@ -453,7 +453,7 @@ Store UserFileVersion14Upgrader::upgrade(const Store &map)
 {
     Store result;
     for (auto it = map.cbegin(), end = map.cend(); it != end; ++it) {
-        if (it.value().typeId() == QVariant::Map)
+        if (it.value().typeId() == QMetaType::QVariantMap)
             result.insert(it.key(), variantFromStore(upgrade(storeFromVariant(it.value()))));
         else if (it.key() == "AutotoolsProjectManager.AutotoolsBuildConfiguration.BuildDirectory"
                  || it.key() == "CMakeProjectManager.CMakeBuildConfiguration.BuildDirectory"
@@ -709,13 +709,13 @@ Store UserFileVersion17Upgrader::upgrade(const Store &map)
 QVariant UserFileVersion17Upgrader::process(const QVariant &entry)
 {
     switch (entry.typeId()) {
-    case QVariant::List: {
+    case QMetaType::QVariantList: {
         QVariantList result;
         for (const QVariant &item : entry.toList())
             result.append(process(item));
         return result;
     }
-    case QVariant::Map: {
+    case QMetaType::QVariantMap: {
         Store result = storeFromVariant(entry);
         for (Store::iterator i = result.begin(), end = result.end(); i != end; ++i) {
             QVariant &v = i.value();
@@ -737,9 +737,9 @@ Store UserFileVersion18Upgrader::upgrade(const Store &map)
 QVariant UserFileVersion18Upgrader::process(const QVariant &entry)
 {
     switch (entry.typeId()) {
-    case QVariant::List:
+    case QMetaType::QVariantList:
         return Utils::transform(entry.toList(), &UserFileVersion18Upgrader::process);
-    case QVariant::Map: {
+    case QMetaType::QVariantMap: {
         Store map = storeFromVariant(entry);
         Store result;
         for (auto it = map.cbegin(), end = map.cend(); it != end; ++it) {
@@ -793,10 +793,10 @@ QVariant UserFileVersion19Upgrader::process(const QVariant &entry, const KeyList
     static const KeyList dyldKeys = {"Qbs.RunConfiguration.UseDyldImageSuffix",
                                      "QmakeProjectManager.QmakeRunConfiguration.UseDyldImageSuffix"};
     switch (entry.typeId()) {
-    case QVariant::List:
+    case QMetaType::QVariantList:
         return Utils::transform(entry.toList(),
                                 std::bind(&UserFileVersion19Upgrader::process, std::placeholders::_1, path));
-    case QVariant::Map: {
+    case QMetaType::QVariantMap: {
         Store map = storeFromVariant(entry);
         Store result;
         for (auto it = map.cbegin(), end = map.cend(); it != end; ++it) {
@@ -836,9 +836,9 @@ Store UserFileVersion20Upgrader::upgrade(const Store &map)
 QVariant UserFileVersion20Upgrader::process(const QVariant &entry)
 {
     switch (entry.typeId()) {
-    case QVariant::List:
+    case QMetaType::QVariantList:
         return Utils::transform(entry.toList(), &UserFileVersion20Upgrader::process);
-    case QVariant::Map: {
+    case QMetaType::QVariantMap: {
         Store map = storeFromVariant(entry);
         Store result;
         for (auto it = map.cbegin(), end = map.cend(); it != end; ++it) {
@@ -865,9 +865,9 @@ Store UserFileVersion21Upgrader::upgrade(const Store &map)
 QVariant UserFileVersion21Upgrader::process(const QVariant &entry)
 {
     switch (entry.typeId()) {
-    case QVariant::List:
+    case QMetaType::QVariantList:
         return Utils::transform(entry.toList(), &UserFileVersion21Upgrader::process);
-    case QVariant::Map: {
+    case QMetaType::QVariantMap: {
         Store entryMap = storeFromVariant(entry);
         if (entryMap.value("ProjectExplorer.ProjectConfiguration.Id").toString()
                 == "DeployToGenericLinux") {
@@ -885,11 +885,11 @@ QVariant UserFileVersion21Upgrader::process(const QVariant &entry)
     }
 }
 
-#if defined(WITH_TESTS)
+#ifdef WITH_TESTS
 
 #include <QTest>
 
-#include "projectexplorer.h"
+#include "projectexplorer_test.h"
 
 namespace {
 
@@ -921,7 +921,7 @@ public:
 
 } // namespace
 
-void ProjectExplorerPlugin::testUserFileAccessor_prepareToReadSettings()
+void ProjectExplorerTest::testUserFileAccessor_prepareToReadSettings()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);
@@ -935,7 +935,7 @@ void ProjectExplorerPlugin::testUserFileAccessor_prepareToReadSettings()
     QCOMPARE(result, data);
 }
 
-void ProjectExplorerPlugin::testUserFileAccessor_prepareToReadSettingsObsoleteVersion()
+void ProjectExplorerTest::testUserFileAccessor_prepareToReadSettingsObsoleteVersion()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);
@@ -951,7 +951,7 @@ void ProjectExplorerPlugin::testUserFileAccessor_prepareToReadSettingsObsoleteVe
     QCOMPARE(result.value("Version"), data.value("ProjectExplorer.Project.Updater.FileVersion"));
 }
 
-void ProjectExplorerPlugin::testUserFileAccessor_prepareToReadSettingsObsoleteVersionNewVersion()
+void ProjectExplorerTest::testUserFileAccessor_prepareToReadSettingsObsoleteVersionNewVersion()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);
@@ -968,7 +968,7 @@ void ProjectExplorerPlugin::testUserFileAccessor_prepareToReadSettingsObsoleteVe
     QCOMPARE(result.value("Version"), data.value("Version"));
 }
 
-void ProjectExplorerPlugin::testUserFileAccessor_prepareToWriteSettings()
+void ProjectExplorerTest::testUserFileAccessor_prepareToWriteSettings()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);
@@ -999,7 +999,7 @@ void ProjectExplorerPlugin::testUserFileAccessor_prepareToWriteSettings()
     QCOMPARE(result.value("unique1"), data.value("unique1"));
 }
 
-void ProjectExplorerPlugin::testUserFileAccessor_mergeSettings()
+void ProjectExplorerTest::testUserFileAccessor_mergeSettings()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);
@@ -1034,7 +1034,7 @@ void ProjectExplorerPlugin::testUserFileAccessor_mergeSettings()
     QCOMPARE(result.data.value("unique1"), data.value("unique1"));
 }
 
-void ProjectExplorerPlugin::testUserFileAccessor_mergeSettingsEmptyUser()
+void ProjectExplorerTest::testUserFileAccessor_mergeSettingsEmptyUser()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);
@@ -1055,7 +1055,7 @@ void ProjectExplorerPlugin::testUserFileAccessor_mergeSettingsEmptyUser()
     QCOMPARE(result.data, sharedData);
 }
 
-void ProjectExplorerPlugin::testUserFileAccessor_mergeSettingsEmptyShared()
+void ProjectExplorerTest::testUserFileAccessor_mergeSettingsEmptyShared()
 {
     TestProject project;
     TestUserFileAccessor accessor(&project);

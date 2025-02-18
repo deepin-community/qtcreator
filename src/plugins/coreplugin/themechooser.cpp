@@ -5,7 +5,6 @@
 
 #include "coreconstants.h"
 #include "coreplugintr.h"
-#include "dialogs/restartdialog.h"
 #include "icore.h"
 
 #include <utils/algorithm.h>
@@ -164,9 +163,7 @@ void ThemeChooser::apply()
     if (currentThemeId != themeId) {
         // save filename of selected theme in global config
         settings->setValueWithDefault(Constants::SETTINGS_THEME, themeId, defaultThemeId());
-        RestartDialog restartDialog(ICore::dialogParent(),
-                                    Tr::tr("The theme change will take effect after restart."));
-        restartDialog.exec();
+        ICore::askForRestart(Tr::tr("The theme change will take effect after restart."));
     }
 }
 
@@ -179,7 +176,9 @@ static void addThemesFromPath(const QString &path, QList<ThemeEntry> *themes)
     const QStringList themeList = themeDir.entryList();
     for (const QString &fileName : std::as_const(themeList)) {
         QString id = QFileInfo(fileName).completeBaseName();
-        themes->append(ThemeEntry(Id::fromString(id), themeDir.absoluteFilePath(fileName)));
+        const bool addTheme = Core::ICore::isQtDesignStudio() == id.startsWith("design");
+        if (addTheme)
+            themes->append(ThemeEntry(Id::fromString(id), themeDir.absoluteFilePath(fileName)));
     }
 }
 
@@ -194,7 +193,8 @@ QList<ThemeEntry> ThemeEntry::availableThemes()
         qWarning() << "Warning: No themes found in installation: "
                    << installThemeDir.toUserOutput();
     // move default theme to front
-    int defaultIndex = Utils::indexOf(themes, Utils::equal(&ThemeEntry::id, Id(Constants::DEFAULT_THEME)));
+    const int defaultIndex = Utils::indexOf(themes, Utils::equal(&ThemeEntry::id,
+                                                                 Id::fromString(defaultThemeId())));
     if (defaultIndex > 0) { // == exists and not at front
         ThemeEntry defaultEntry = themes.takeAt(defaultIndex);
         themes.prepend(defaultEntry);

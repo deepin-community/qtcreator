@@ -3,14 +3,17 @@
 
 #pragma once
 
-#include "itemlibraryinfo.h"
+#ifndef QDS_USE_PROJECTSTORAGE
+#  include <itemlibraryinfo.h>
+#endif
 #include "import.h"
 
 #include <studioquickwidget.h>
 
-#include <utils/fancylineedit.h>
-#include <utils/dropsupport.h>
 #include <previewtooltip/previewtooltipbackend.h>
+#include <utils/dropsupport.h>
+#include <utils/fancylineedit.h>
+#include <utils/uniqueobjectptr.h>
 
 #include <QFileIconProvider>
 #include <QFrame>
@@ -51,7 +54,9 @@ public:
     ItemLibraryWidget(AsynchronousImageCache &imageCache);
     ~ItemLibraryWidget();
 
+#ifndef QDS_USE_PROJECTSTORAGE
     void setItemLibraryInfo(ItemLibraryInfo *itemLibraryInfo);
+#endif
     QList<QToolButton *> createToolBarWidgets();
 
     static QString qmlSourcesPath();
@@ -97,12 +102,13 @@ private:
     QTimer m_compressionTimer;
     QSize m_itemIconSize;
 
+#ifndef QDS_USE_PROJECTSTORAGE
     QPointer<ItemLibraryInfo> m_itemLibraryInfo;
+#endif
+    std::unique_ptr<ItemLibraryModel> m_itemLibraryModel;
+    std::unique_ptr<ItemLibraryAddImportModel> m_addModuleModel;
 
-    QPointer<ItemLibraryModel> m_itemLibraryModel;
-    QPointer<ItemLibraryAddImportModel> m_addModuleModel;
-
-    QScopedPointer<StudioQuickWidget> m_itemsWidget;
+    Utils::UniqueObjectPtr<StudioQuickWidget> m_itemsWidget;
     std::unique_ptr<PreviewTooltipBackend> m_previewTooltipBackend;
 
     QShortcut *m_qmlSourceUpdateShortcut;

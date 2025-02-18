@@ -9,13 +9,16 @@
 #include <model.h>
 #include <projectstorage/projectstoragefwd.h>
 #include <rewriterview.h>
-#include <subcomponentmanager.h>
+#ifndef QDS_USE_PROJECTSTORAGE
+#  include <subcomponentmanager.h>
+#endif
 #include <qmldesignercomponents_global.h>
 
 #include <QObject>
 #include <QString>
-
 #include <QStackedWidget>
+
+#include <memory>
 
 QT_BEGIN_NAMESPACE
 class QPlainTextEdit;
@@ -39,7 +42,8 @@ class QMLDESIGNERCOMPONENTS_EXPORT DesignDocument : public QObject
     Q_OBJECT
 
 public:
-    DesignDocument(ProjectStorageDependencies projectStorageDependencies,
+    DesignDocument(const QUrl &filePath,
+                   ProjectStorageDependencies projectStorageDependencies,
                    ExternalDependenciesInterface &externalDependencies);
     ~DesignDocument() override;
 
@@ -49,11 +53,13 @@ public:
     void loadDocument(QPlainTextEdit *edit);
     void attachRewriterToModel();
     void close();
+#ifndef QDS_USE_PROJECTSTORAGE
     void updateSubcomponentManager();
     void addSubcomponentManagerImport(const Import &import);
-
+#endif
     bool isUndoAvailable() const;
     bool isRedoAvailable() const;
+    void clearUndoRedoStacks() const;
 
     Model *currentModel() const;
     Model *documentModel() const;
@@ -84,6 +90,8 @@ public:
 
     Utils::FilePath projectFolder() const;
     bool hasProject() const;
+
+    void setModified();
 
 signals:
     void displayNameChanged(const QString &newFileName);
@@ -136,11 +144,12 @@ private: // variables
     ModelPointer m_documentModel;
     ModelPointer m_inFileComponentModel;
     QPointer<Core::IEditor> m_textEditor;
-    QScopedPointer<BaseTextEditModifier> m_documentTextModifier;
-    QScopedPointer<ComponentTextModifier> m_inFileComponentTextModifier;
-    QScopedPointer<SubComponentManager> m_subComponentManager;
-
-    QScopedPointer<RewriterView> m_rewriterView;
+    std::unique_ptr<BaseTextEditModifier> m_documentTextModifier;
+    std::unique_ptr<ComponentTextModifier> m_inFileComponentTextModifier;
+#ifndef QDS_USE_PROJECTSTORAGE
+    std::unique_ptr<SubComponentManager> m_subComponentManager;
+#endif
+    std::unique_ptr<RewriterView> m_rewriterView;
     bool m_documentLoaded;
     ProjectExplorer::Target *m_currentTarget;
     ProjectStorageDependencies m_projectStorageDependencies;

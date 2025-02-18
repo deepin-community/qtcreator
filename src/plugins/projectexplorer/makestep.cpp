@@ -6,6 +6,7 @@
 #include "buildconfiguration.h"
 #include "devicesupport/idevice.h"
 #include "gnumakeparser.h"
+#include "kit.h"
 #include "kitaspects.h"
 #include "processparameters.h"
 #include "projectexplorer.h"
@@ -19,9 +20,8 @@
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/utilsicons.h>
-#include <utils/variablechooser.h>
 
 #include <QThread>
 
@@ -66,11 +66,6 @@ MakeStep::MakeStep(BuildStepList *parent, Id id)
     const QString text = Tr::tr("Override MAKEFLAGS");
     m_overrideMakeflagsAspect.setSettingsKey(id.toKey() + OVERRIDE_MAKEFLAGS_SUFFIX);
     m_overrideMakeflagsAspect.setLabel(text, BoolAspect::LabelPlacement::AtCheckBox);
-
-    m_nonOverrideWarning.setText("<html><body><p>" +
-         Tr::tr("<code>MAKEFLAGS</code> specifies parallel jobs. Check \"%1\" to override.")
-         .arg(text) + "</p></body></html>");
-    m_nonOverrideWarning.setIconType(InfoLabel::Warning);
 
     m_disabledForSubdirsAspect.setSettingsKey(id.toKey() + ".disabledForSubdirs");
     m_disabledForSubdirsAspect.setLabel(Tr::tr("Disable in subdirectories:"));
@@ -132,10 +127,10 @@ QString MakeStep::defaultDisplayName()
     return Tr::tr("Make");
 }
 
-static const QList<ToolChain *> preferredToolChains(const Kit *kit)
+static const QList<Toolchain *> preferredToolchains(const Kit *kit)
 {
     // prefer CXX, then C, then others
-    return Utils::sorted(ToolChainKitAspect::toolChains(kit), [](ToolChain *tcA, ToolChain *tcB) {
+    return Utils::sorted(ToolchainKitAspect::toolChains(kit), [](Toolchain *tcA, Toolchain *tcB) {
         if (tcA->language() == tcB->language())
             return false;
         if (tcA->language() == Constants::CXX_LANGUAGE_ID)
@@ -151,7 +146,7 @@ static const QList<ToolChain *> preferredToolChains(const Kit *kit)
 FilePath MakeStep::defaultMakeCommand() const
 {
     const Environment env = makeEnvironment();
-    for (const ToolChain *tc : preferredToolChains(kit())) {
+    for (const Toolchain *tc : preferredToolchains(kit())) {
         FilePath make = tc->makeCommand(env);
         if (!make.isEmpty()) {
             IDevice::ConstPtr dev = BuildDeviceKitAspect::device(kit());
@@ -174,8 +169,8 @@ Task MakeStep::makeCommandMissingTask()
 
 bool MakeStep::isJobCountSupported() const
 {
-    const QList<ToolChain *> tcs = preferredToolChains(kit());
-    const ToolChain *tc = tcs.isEmpty() ? nullptr : tcs.constFirst();
+    const QList<Toolchain *> tcs = preferredToolchains(kit());
+    const Toolchain *tc = tcs.isEmpty() ? nullptr : tcs.constFirst();
     return tc && tc->isJobCountSupported();
 }
 
@@ -241,8 +236,8 @@ Environment MakeStep::makeEnvironment() const
     env.setupEnglishOutput();
     if (makeCommand().isEmpty()) {
         // We also prepend "L" to the MAKEFLAGS, so that nmake / jom are less verbose
-        const QList<ToolChain *> tcs = preferredToolChains(target()->kit());
-        const ToolChain *tc = tcs.isEmpty() ? nullptr : tcs.constFirst();
+        const QList<Toolchain *> tcs = preferredToolchains(target()->kit());
+        const Toolchain *tc = tcs.isEmpty() ? nullptr : tcs.constFirst();
         if (tc && tc->targetAbi().os() == Abi::WindowsOS
                 && tc->targetAbi().osFlavor() != Abi::WindowsMSysFlavor) {
             env.set(MAKEFLAGS, 'L' + env.expandedValueForKey(MAKEFLAGS));
@@ -318,11 +313,13 @@ QWidget *MakeStep::createConfigWidget()
     if (m_disablingForSubDirsSupported)
         builder.addRow({m_disabledForSubdirsAspect});
     builder.addRow({m_buildTargetsAspect});
-    builder.addItem(Layouting::noMargin);
+    if (m_runAsRootAspect.isVisible()) {
+        m_runAsRootAspect.setLabelPlacement(BoolAspect::LabelPlacement::InExtraLabel);
+        builder.addRow({m_runAsRootAspect});
+    }
+    builder.setNoMargins();
 
     auto widget = builder.emerge();
-
-    VariableChooser::addSupportForChildWidgets(widget, macroExpander());
 
     setSummaryUpdater([this] {
         const CommandLine make = effectiveMakeCommand(MakeStep::Display);
@@ -354,8 +351,22 @@ QWidget *MakeStep::createConfigWidget()
         const bool jobCountEnabled = !userArgsContainsJobCount();
         m_jobCountAspect.setEnabled(jobCountEnabled);
         m_overrideMakeflagsAspect.setEnabled(jobCountEnabled);
-        m_nonOverrideWarning.setVisible(makeflagsJobCountMismatch()
-                                         && !jobCountOverridesMakeflags());
+
+        QString warningText;
+        InfoLabel::InfoType iconType = InfoLabel::Information;
+        if (makeflagsJobCountMismatch()) {
+            if (m_overrideMakeflagsAspect.value()) {
+                warningText = Tr::tr("Overriding <code>MAKEFLAGS</code> environment variable.");
+            } else {
+                warningText = Tr::tr("<code>MAKEFLAGS</code> specifies a conflicting job count.");
+                iconType = InfoLabel::Warning;
+            }
+        } else {
+            warningText = Tr::tr("No conflict with <code>MAKEFLAGS</code> environment variable.");
+        }
+        m_nonOverrideWarning.setText(QString::fromLatin1("<html><body><p>%1</p></body></html>")
+                                         .arg(warningText));
+        m_nonOverrideWarning.setIconType(iconType);
     };
 
     updateDetails();

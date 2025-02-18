@@ -9,7 +9,6 @@
 #include "mcusupportsdk.h"
 #include "mcusupporttr.h"
 #include "mcutarget.h"
-#include "mcutargetfactory.h"
 #include "settingshandler.h"
 
 #include <cmakeprojectmanager/cmakeprojectconstants.h>
@@ -277,8 +276,8 @@ void McuSupportOptionsWidget::showMcuTargetPackages()
 
     for (const auto &package : packages) {
         QWidget *packageWidget = package->widget();
-        QWeakPointer packagePtr(package);
-        connect(package.get(), &McuPackage::reset, this, [this, packagePtr] (){
+        std::weak_ptr packagePtr(package);
+        connect(package.get(), &McuPackage::reset, this, [this, packagePtr] {
             McuPackagePtr package = packagePtr.lock();
             if (package) {
                 MacroExpanderPtr macroExpander
@@ -321,7 +320,7 @@ void McuSupportOptionsWidget::apply()
 
     QMessageBox warningPopup(QMessageBox::Icon::Warning,
                              Tr::tr("Warning"),
-                             Tr::tr("Unable to apply changes in Devices > MCU."),
+                             Tr::tr("Cannot apply changes in Devices > MCU."),
                              QMessageBox::Ok,
                              this);
 

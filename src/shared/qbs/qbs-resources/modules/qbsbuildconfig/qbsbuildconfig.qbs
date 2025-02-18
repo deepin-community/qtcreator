@@ -64,6 +64,10 @@ Module {
                     || (isClang() && !qbs.hostOS.contains("darwin") && versionAtLeast("10"))) {
                 flags.push("-Wno-deprecated-copy");
             }
+            // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105616
+            if (enableAddressSanitizer && !isClang() && versionAtLeast("13")) {
+                flags.push("-Wno-maybe-uninitialized");
+            }
             return flags;
         }
         cpp.driverFlags: {
@@ -85,5 +89,9 @@ Module {
                 && Utilities.versionCompare(cpp.compilerVersion, "19.10") >= 0
                 && Utilities.versionCompare(qbs.version, "1.23") < 0
         cpp.cxxFlags: "/permissive-"
+    }
+    Properties {
+        condition: project.withCode && qbs.toolchain.contains("msvc")
+        cpp.defines: "_UCRT_NOISY_NAN"
     }
 }

@@ -128,7 +128,9 @@ public:
 
     static QVariant convertToPropertyType(
             const QVariant &v, Type t, const QStringList &namePrefix, const QString &key);
+    QVariant typedNullValue() const;
 
+    bool shouldCheckAllowedValues() const;
     void checkAllowedValues(
         const QVariant &value,
         const CodeLocation &loc,

@@ -38,6 +38,7 @@ enum HelpViewerLocation {
 CORE_EXPORT QString documentationPath();
 
 CORE_EXPORT void registerDocumentation(const QStringList &fileNames);
+CORE_EXPORT void setBlockedDocumentation(const QStringList &fileNames);
 CORE_EXPORT void unregisterDocumentation(const QStringList &fileNames);
 
 CORE_EXPORT QMultiMap<QString, QUrl> linksForIdentifier(const QString &id);
@@ -46,6 +47,12 @@ CORE_EXPORT QByteArray fileData(const QUrl &url);
 
 CORE_EXPORT void showHelpUrl(const QUrl &url, HelpViewerLocation location = HelpModeAlways);
 CORE_EXPORT void showHelpUrl(const QString &url, HelpViewerLocation location = HelpModeAlways);
+
+struct CORE_EXPORT OnlineHelpHandler {
+    std::function<bool(QUrl)> handlesUrl;
+    std::function<void(QUrl)> openUrl;
+};
+CORE_EXPORT void addOnlineHelpHandler(const OnlineHelpHandler &handler);
 
 } // HelpManager
 } // Core

@@ -166,25 +166,28 @@ void BuiltinDeclarations::insert(const ItemDeclaration &decl)
 
 static PropertyDeclaration conditionProperty()
 {
-    return PropertyDeclaration(StringConstants::conditionProperty(), PropertyDeclaration::Boolean,
-                               StringConstants::trueValue());
+    return {
+        StringConstants::conditionProperty(),
+        PropertyDeclaration::Boolean,
+        StringConstants::trueValue()};
 }
 
 static PropertyDeclaration alwaysRunProperty()
 {
-    return PropertyDeclaration(StringConstants::alwaysRunProperty(), PropertyDeclaration::Boolean,
-                               StringConstants::falseValue());
+    return {
+        StringConstants::alwaysRunProperty(),
+        PropertyDeclaration::Boolean,
+        StringConstants::falseValue()};
 }
 
 static PropertyDeclaration nameProperty()
 {
-    return PropertyDeclaration(StringConstants::nameProperty(), PropertyDeclaration::String);
+    return {StringConstants::nameProperty(), PropertyDeclaration::String};
 }
 
 static PropertyDeclaration buildDirProperty()
 {
-    return PropertyDeclaration(StringConstants::buildDirectoryProperty(),
-                               PropertyDeclaration::Path);
+    return {StringConstants::buildDirectoryProperty(), PropertyDeclaration::Path};
 }
 
 static PropertyDeclaration prepareScriptProperty()
@@ -244,11 +247,11 @@ void BuiltinDeclarations::addDependsItem()
                                 PropertyDeclaration::StringList);
     item << PropertyDeclaration(StringConstants::limitToSubProjectProperty(),
                                 PropertyDeclaration::Boolean, StringConstants::falseValue());
-    item << PropertyDeclaration(StringConstants::multiplexConfigurationIdsProperty(),
-                                PropertyDeclaration::StringList, QString(),
-                                PropertyDeclaration::ReadOnlyFlag);
-    item << PropertyDeclaration(StringConstants::enableFallbackProperty(),
-                                PropertyDeclaration::Boolean, StringConstants::trueValue());
+    item << PropertyDeclaration(
+        StringConstants::multiplexConfigurationIdsProperty(),
+        PropertyDeclaration::StringList,
+        QString(),
+        PropertyDeclaration::ReadOnlyFlag);
     insert(item);
 }
 
@@ -278,7 +281,12 @@ void BuiltinDeclarations::addFileTaggerItem()
 void BuiltinDeclarations::addGroupItem()
 {
     ItemDeclaration item(ItemType::Group);
-    item.setAllowedChildTypes({ ItemType::Group });
+    item.setAllowedChildTypes(
+        {ItemType::Depends,
+         ItemType::FileTagger,
+         ItemType::Group,
+         ItemType::Rule,
+         ItemType::Scanner});
     item << conditionProperty();
     item << PropertyDeclaration(StringConstants::nameProperty(), PropertyDeclaration::String,
                                 QString(), PropertyDeclaration::PropertyNotAvailableInConfig);
@@ -324,6 +332,7 @@ void BuiltinDeclarations::addModuleProviderItem()
 {
     ItemDeclaration item(ItemType::ModuleProvider);
     item << nameProperty()
+         << conditionProperty()
          << PropertyDeclaration(QStringLiteral("outputBaseDir"), PropertyDeclaration::String)
          << PropertyDeclaration(StringConstants::isEagerProperty(),
                                 PropertyDeclaration::Boolean,
@@ -385,16 +394,17 @@ void BuiltinDeclarations::addProbeItem()
 void BuiltinDeclarations::addProductItem()
 {
     ItemDeclaration item(ItemType::Product);
-    item.setAllowedChildTypes(ItemDeclaration::TypeNames()
-            << ItemType::Depends
-            << ItemType::Group
-            << ItemType::FileTagger
-            << ItemType::JobLimit
-            << ItemType::Export
-            << ItemType::Probe
-            << ItemType::Profile
-            << ItemType::PropertyOptions
-            << ItemType::Rule);
+    item.setAllowedChildTypes(
+        {ItemType::Depends,
+         ItemType::Export,
+         ItemType::FileTagger,
+         ItemType::Group,
+         ItemType::JobLimit,
+         ItemType::Probe,
+         ItemType::Profile,
+         ItemType::PropertyOptions,
+         ItemType::Rule,
+         ItemType::Scanner});
     item << conditionProperty();
     item << PropertyDeclaration(StringConstants::typeProperty(), PropertyDeclaration::StringList,
                                 StringConstants::emptyArrayValue());

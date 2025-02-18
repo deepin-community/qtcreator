@@ -11,7 +11,7 @@
 #include <QCache>
 #include <QClipboard>
 #include <QDesktopServices>
-#include <QElapsedTimer>
+#include <QDeadlineTimer>
 #include <QGlyphRun>
 #include <QLoggingCategory>
 #include <QMenu>
@@ -33,10 +33,11 @@ Q_LOGGING_CATEGORY(paintLog, "qtc.terminal.paint", QtWarningMsg)
 
 namespace TerminalSolution {
 
+using namespace std::chrono;
 using namespace std::chrono_literals;
 
 // Minimum time between two refreshes. (30fps)
-static constexpr std::chrono::milliseconds minRefreshInterval = 33ms;
+static constexpr milliseconds minRefreshInterval = 33ms;
 
 class TerminalViewPrivate
 {
@@ -48,6 +49,9 @@ public:
 
         m_flushDelayTimer.setSingleShot(true);
         m_flushDelayTimer.setInterval(minRefreshInterval);
+
+        m_updateTimer.setSingleShot(true);
+        m_updateTimer.setInterval(minRefreshInterval);
 
         m_scrollTimer.setSingleShot(false);
         m_scrollTimer.setInterval(500ms);
@@ -72,13 +76,17 @@ public:
 
     QTimer m_flushDelayTimer;
 
+    QTimer m_updateTimer;
+    std::optional<QRegion> m_updateRegion;
+    QDeadlineTimer m_sinceLastPaint;
+
     QTimer m_scrollTimer;
     int m_scrollDirection{0};
 
     std::array<QColor, 20> m_currentColors;
 
-    std::chrono::system_clock::time_point m_lastFlush{std::chrono::system_clock::now()};
-    std::chrono::system_clock::time_point m_lastDoubleClick{std::chrono::system_clock::now()};
+    system_clock::time_point m_lastFlush{system_clock::now()};
+    system_clock::time_point m_lastDoubleClick{system_clock::now()};
     bool m_selectLineMode{false};
     Cursor m_cursor;
     QTimer m_cursorBlinkTimer;
@@ -119,7 +127,7 @@ TerminalView::TerminalView(QWidget *parent)
     setupSurface();
     setFont(QFont(defaultFontFamily(), defaultFontSize()));
 
-    connect(&d->m_cursorBlinkTimer, &QTimer::timeout, this, [this]() {
+    connect(&d->m_cursorBlinkTimer, &QTimer::timeout, this, [this] {
         if (hasFocus())
             d->m_cursorBlinkState = !d->m_cursorBlinkState;
         else
@@ -140,7 +148,8 @@ TerminalView::TerminalView(QWidget *parent)
 
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 
-    connect(&d->m_flushDelayTimer, &QTimer::timeout, this, [this]() { flushVTerm(true); });
+    connect(&d->m_flushDelayTimer, &QTimer::timeout, this, [this] { flushVTerm(true); });
+    connect(&d->m_updateTimer, &QTimer::timeout, this, &TerminalView::scheduleViewportUpdate);
 
     connect(&d->m_scrollTimer, &QTimer::timeout, this, [this] {
         if (d->m_scrollDirection < 0)
@@ -167,6 +176,7 @@ TerminalSurface *TerminalView::surface() const
 void TerminalView::setupSurface()
 {
     d->m_surface = std::make_unique<TerminalSurface>(QSize{80, 60});
+    connect(d->m_surface.get(), &TerminalSurface::cleared, this, &TerminalView::cleared);
 
     if (d->m_surfaceIntegration)
         d->m_surface->setSurfaceIntegration(d->m_surfaceIntegration);
@@ -179,7 +189,8 @@ void TerminalView::setupSurface()
     connect(d->m_surface.get(), &TerminalSurface::invalidated, this, [this](const QRect &rect) {
         setSelection(std::nullopt);
         updateViewportRect(gridToViewport(rect));
-        verticalScrollBar()->setValue(d->m_surface->fullSize().height());
+        if (verticalScrollBar()->value() == verticalScrollBar()->maximum())
+            verticalScrollBar()->setValue(d->m_surface->fullSize().height());
     });
     connect(
         d->m_surface.get(),
@@ -324,6 +335,11 @@ void TerminalView::clearSelection()
     //d->m_surface->sendKey(Qt::Key_Escape);
 }
 
+void TerminalView::selectAll()
+{
+    setSelection(Selection{0, d->m_surface->fullSize().width() * d->m_surface->fullSize().height()});
+}
+
 void TerminalView::zoomIn()
 {
     QFont f = font();
@@ -361,9 +377,8 @@ void TerminalView::writeToTerminal(const QByteArray &data, bool forceFlush)
 
 void TerminalView::flushVTerm(bool force)
 {
-    const std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
-    const std::chrono::milliseconds timeSinceLastFlush
-        = std::chrono::duration_cast<std::chrono::milliseconds>(now - d->m_lastFlush);
+    const system_clock::time_point now = system_clock::now();
+    const milliseconds timeSinceLastFlush = duration_cast<milliseconds>(now - d->m_lastFlush);
 
     const bool shouldFlushImmediately = timeSinceLastFlush > minRefreshInterval;
     if (force || shouldFlushImmediately) {
@@ -376,7 +391,7 @@ void TerminalView::flushVTerm(bool force)
     }
 
     if (!d->m_flushDelayTimer.isActive()) {
-        const std::chrono::milliseconds timeToNextFlush = (minRefreshInterval - timeSinceLastFlush);
+        const milliseconds timeToNextFlush = (minRefreshInterval - timeSinceLastFlush);
         d->m_flushDelayTimer.start(timeToNextFlush.count());
     }
 }
@@ -386,10 +401,13 @@ QString TerminalView::textFromSelection() const
     if (!d->m_selection)
         return {};
 
+    if (d->m_selection->start == d->m_selection->end)
+        return {};
+
     CellIterator it = d->m_surface->iteratorAt(d->m_selection->start);
     CellIterator end = d->m_surface->iteratorAt(d->m_selection->end);
 
-    if (it.position() >= end.position()) {
+    if (it.position() > end.position()) {
         qCWarning(selectionLog) << "Invalid selection: start >= end";
         return {};
     }
@@ -912,6 +930,8 @@ void TerminalView::paintEvent(QPaintEvent *event)
         QToolTip::showText(this->mapToGlobal(QPoint(width() - 200, 0)),
                            QString("Paint: %1ms").arg(t.elapsed()));
     }
+
+    d->m_sinceLastPaint = QDeadlineTimer(minRefreshInterval);
 }
 
 void TerminalView::keyPressEvent(QKeyEvent *event)
@@ -930,7 +950,33 @@ void TerminalView::keyPressEvent(QKeyEvent *event)
 
     event->accept();
 
-    d->m_surface->sendKey(event);
+    if (d->m_surface->isInAltScreen()) {
+        d->m_surface->sendKey(event);
+    } else {
+        switch (event->key()) {
+        case Qt::Key_PageDown:
+            verticalScrollBar()->setValue(qBound(
+                0,
+                verticalScrollBar()->value() + d->m_surface->liveSize().height(),
+                verticalScrollBar()->maximum()));
+            break;
+        case Qt::Key_PageUp:
+            verticalScrollBar()->setValue(qBound(
+                0,
+                verticalScrollBar()->value() - d->m_surface->liveSize().height(),
+                verticalScrollBar()->maximum()));
+            break;
+        case Qt::Key_End:
+            verticalScrollBar()->setValue(verticalScrollBar()->maximum());
+            break;
+        case Qt::Key_Home:
+            verticalScrollBar()->setValue(0);
+            break;
+        default:
+            d->m_surface->sendKey(event);
+            break;
+        }
+    }
 }
 
 void TerminalView::keyReleaseEvent(QKeyEvent *event)
@@ -950,14 +996,18 @@ void TerminalView::applySizeChange()
     };
 
     if (newLiveSize.height() <= 0)
-        newLiveSize.setHeight(1);
+        return;
 
     if (newLiveSize.width() <= 0)
         newLiveSize.setWidth(1);
 
-    resizePty(newLiveSize);
-    d->m_surface->resize(newLiveSize);
-    flushVTerm(true);
+    if (d->m_surface->liveSize() == newLiveSize)
+        return;
+
+    if (resizePty(newLiveSize)) {
+        d->m_surface->resize(newLiveSize);
+        flushVTerm(true);
+    }
 }
 
 void TerminalView::updateScrollBars()
@@ -1007,17 +1057,39 @@ QPoint TerminalView::toGridPos(QMouseEvent *event) const
     return globalToGrid(QPointF(event->pos()) + QPointF(0, -topMargin() + 0.5));
 }
 
+void TerminalView::scheduleViewportUpdate()
+{
+    if (!d->m_passwordModeActive && d->m_updateRegion)
+        viewport()->update(*d->m_updateRegion);
+    else
+        viewport()->update();
+
+    d->m_updateRegion.reset();
+}
+
 void TerminalView::updateViewport()
 {
-    viewport()->update();
+    updateViewportRect({});
 }
 
 void TerminalView::updateViewportRect(const QRect &rect)
 {
-    if (d->m_passwordModeActive)
-        viewport()->update();
+    if (rect.isEmpty())
+        d->m_updateRegion = QRegion{viewport()->rect()};
+    else if (!d->m_updateRegion)
+        d->m_updateRegion = QRegion(rect);
     else
-        viewport()->update(rect);
+        d->m_updateRegion = d->m_updateRegion->united(rect);
+
+    if (d->m_updateTimer.isActive())
+        return;
+
+    if (!d->m_sinceLastPaint.hasExpired()) {
+        d->m_updateTimer.start();
+        return;
+    }
+
+    scheduleViewportUpdate();
 }
 
 void TerminalView::focusInEvent(QFocusEvent *)
@@ -1070,7 +1142,7 @@ void TerminalView::mousePressEvent(QMouseEvent *event)
     }
 
     if (event->button() == Qt::LeftButton) {
-        if (std::chrono::system_clock::now() - d->m_lastDoubleClick < 500ms) {
+        if (d->m_selection && system_clock::now() - d->m_lastDoubleClick < 500ms) {
             d->m_selectLineMode = true;
             const Selection newSelection{d->m_surface->gridToPos(
                                              {0,
@@ -1131,7 +1203,7 @@ void TerminalView::mouseMoveEvent(QMouseEvent *event)
         d->m_scrollDirection = scrollVelocity;
 
         if (d->m_scrollTimer.isActive() && scrollVelocity != 0) {
-            const std::chrono::milliseconds scrollInterval = 1000ms / qAbs(scrollVelocity);
+            const milliseconds scrollInterval = 1000ms / qAbs(scrollVelocity);
             if (d->m_scrollTimer.intervalAsDuration() != scrollInterval)
                 d->m_scrollTimer.setInterval(scrollInterval);
         }
@@ -1191,6 +1263,9 @@ void TerminalView::mouseReleaseEvent(QMouseEvent *event)
 
 void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (event->button() != Qt::LeftButton)
+        return;
+
     if (d->m_allowMouseTracking) {
         d->m_surface->mouseMove(toGridPos(event), event->modifiers());
         d->m_surface->mouseButton(event->button(), true, event->modifiers());
@@ -1201,7 +1276,7 @@ void TerminalView::mouseDoubleClickEvent(QMouseEvent *event)
 
     setSelection(Selection{hit.start, hit.end, true});
 
-    d->m_lastDoubleClick = std::chrono::system_clock::now();
+    d->m_lastDoubleClick = system_clock::now();
 
     event->accept();
 }

@@ -8,11 +8,12 @@
 #define KSYNTAXHIGHLIGHTING_REPOSITORY_P_H
 
 #include <QHash>
-#include <QVector>
+#include <QList>
+#include <QString>
 
-QT_BEGIN_NAMESPACE
-class QString;
-QT_END_NAMESPACE
+#include <map>
+
+#include "dynamicregexpcache_p.h"
 
 namespace KSyntaxHighlighting
 {
@@ -30,28 +31,36 @@ public:
     void load(Repository *repo);
     void loadSyntaxFolder(Repository *repo, const QString &path);
     bool loadSyntaxFolderFromIndex(Repository *repo, const QString &path);
+    void computeAlternativeDefLists();
 
-    void addDefinition(const Definition &def);
+    void addDefinition(Definition &&def);
 
     void loadThemeFolder(const QString &path);
     void addTheme(const Theme &theme);
 
-    quint16 foldingRegionId(const QString &defName, const QString &foldName);
-    quint16 nextFormatId();
+    int foldingRegionId(const QString &defName, const QString &foldName);
+    int nextFormatId();
 
-    QVector<QString> m_customSearchPaths;
+    QList<QString> m_customSearchPaths;
 
-    // sorted map to have deterministic iteration order for e.g. definitionsForFileName
-    QMap<QString, Definition> m_defs;
+    // sorted map to have deterministic iteration order
+    std::map<QString, Definition> m_defs;
+    // flat version of m_defs for speed up iterations for e.g. definitionsForFileName
+    QList<Definition> m_flatDefs;
+
+    // map relating all names and alternative names, case insensitively to the correct definition.
+    QHash<QString, Definition> m_fullDefs;
 
     // this vector is sorted by translated sections/names
-    QVector<Definition> m_sortedDefs;
+    QList<Definition> m_sortedDefs;
 
-    QVector<Theme> m_themes;
+    QList<Theme> m_themes;
 
-    QHash<QPair<QString, QString>, quint16> m_foldingRegionIds;
-    quint16 m_foldingRegionId = 0;
-    quint16 m_formatId = 0;
+    QHash<QPair<QString, QString>, int> m_foldingRegionIds;
+    int m_foldingRegionId = 0;
+    int m_formatId = 0;
+
+    DynamicRegexpCache m_dynamicRegexpCache;
 };
 }
 

@@ -14,8 +14,6 @@
 #include <QObject>
 #include <QPointer>
 
-#include <memory>
-
 QT_BEGIN_NAMESPACE
 class QMenu;
 class QTimer;
@@ -44,16 +42,19 @@ public:
 
     CppEditor::BaseEditorDocumentProcessor *createEditorDocumentProcessor(
                 TextEditor::TextDocument *baseTextDocument) override;
-    bool usesClangd(const TextEditor::TextDocument *document) const override;
+    std::optional<QVersionNumber> usesClangd(const TextEditor::TextDocument *document) const override;
 
     static QList<LanguageClient::Client *> clientsForOpenProjects();
     static ClangdClient *clientForProject(const ProjectExplorer::Project *project);
     static ClangdClient *clientForFile(const Utils::FilePath &file);
 
+    static void updateStaleIndexEntries();
+
 private:
     void followSymbol(const CppEditor::CursorInEditor &data,
-                      const Utils::LinkHandler &processLinkCallback, bool resolveTarget,
-                      bool inNextSplit) override;
+                      const Utils::LinkHandler &processLinkCallback,
+                      CppEditor::FollowSymbolMode mode,
+                      bool resolveTarget, bool inNextSplit) override;
     void followSymbolToType(const CppEditor::CursorInEditor &data,
                             const Utils::LinkHandler &processLinkCallback,
                             bool inNextSplit) override;
@@ -93,10 +94,10 @@ private:
     void scheduleClientRestart(ClangdClient *client);
     static ClangdClient *clientWithProject(const ProjectExplorer::Project *project);
 
-    Utils::FutureSynchronizer m_generatorSynchronizer;
     QList<QPointer<ClangdClient>> m_clientsToRestart;
     QTimer * const m_clientRestartTimer;
     QHash<Utils::FilePath, QString> m_potentialShadowDocuments;
+    Utils::FutureSynchronizer m_generatorSynchronizer; // Keep me last
 };
 
 } // namespace Internal

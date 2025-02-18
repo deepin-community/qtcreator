@@ -3,13 +3,12 @@
 
 #pragma once
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 #include <utils/wizard.h>
 
 namespace ProjectExplorer { class BuildSystem; }
 
-namespace Android {
-namespace Internal {
+namespace Android::Internal {
 
 class CreateAndroidManifestWizard : public Utils::Wizard
 {
@@ -19,11 +18,12 @@ public:
     QString buildKey() const;
     void setBuildKey(const QString &buildKey);
 
-    void accept();
-    bool copyGradle();
+    void accept() override;
+    bool copyGradleTemplates() const;
+    bool allowGradleTemplates() const;
 
     void setDirectory(const Utils::FilePath &directory);
-    void setCopyGradle(bool copy);
+    void setCopyGradleTemplates(bool copy);
 
     ProjectExplorer::BuildSystem *buildSystem() const;
 
@@ -33,8 +33,8 @@ private:
     ProjectExplorer::BuildSystem *m_buildSystem;
     QString m_buildKey;
     Utils::FilePath m_directory;
-    bool m_copyGradle;
+    bool m_allowGradleTemplates;
+    bool m_copyGradleTemplates;
 };
 
-} // namespace Internal
-} // namespace Android
+} // Android::Internal

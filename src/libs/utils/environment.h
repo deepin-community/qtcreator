@@ -22,6 +22,8 @@ namespace Utils {
 class QTCREATOR_UTILS_EXPORT Environment final
 {
 public:
+    enum class PathSeparator { Auto, Colon, Semicolon };
+
     Environment();
     explicit Environment(OsType osType);
     explicit Environment(const QStringList &env, OsType osType = HostOsInfo::hostOs());
@@ -35,7 +37,7 @@ public:
     void set(const QString &key, const QString &value, bool enabled = true);
     void setFallback(const QString &key, const QString &value);
     void unset(const QString &key);
-    void modify(const NameValueItems &items);
+    void modify(const EnvironmentItems &items);
 
     bool hasChanges() const;
 
@@ -43,8 +45,12 @@ public:
     QStringList toStringList() const;
     QProcessEnvironment toProcessEnvironment() const;
 
-    void appendOrSet(const QString &key, const QString &value, const QString &sep = QString());
-    void prependOrSet(const QString &key, const QString &value, const QString &sep = QString());
+    void appendOrSet(const QString &key,
+                     const QString &value,
+                     PathSeparator sep = PathSeparator::Auto);
+    void prependOrSet(const QString &key,
+                      const QString &value,
+                      PathSeparator sep = PathSeparator::Auto);
 
     void appendOrSetPath(const FilePath &value);
     void prependOrSetPath(const FilePath &value);
@@ -66,6 +72,9 @@ public:
 
     FilePaths path() const;
     FilePaths pathListValue(const QString &varName) const;
+    void setPathListValue(const QString &varName, const FilePaths &paths);
+    static QString valueFromPathList(const FilePaths &paths, OsType osType);
+    static FilePaths pathListFromValue(const QString &value, OsType osType);
 
     QString expandedValueForKey(const QString &key) const;
     QString expandVariables(const QString &input) const;
@@ -73,7 +82,7 @@ public:
     QStringList expandVariables(const QStringList &input) const;
 
     NameValueDictionary toDictionary() const; // FIXME: avoid
-    NameValueItems diff(const Environment &other, bool checkAppendPrepend = false) const; // FIXME: avoid
+    EnvironmentItems diff(const Environment &other, bool checkAppendPrepend = false) const; // FIXME: avoid
 
     struct Entry { QString key; QString value; bool enabled; };
     using FindResult = std::optional<Entry>;
@@ -85,9 +94,12 @@ public:
     bool operator==(const Environment &other) const;
 
     static Environment systemEnvironment();
+    static const Environment &originalSystemEnvironment();
 
     static void modifySystemEnvironment(const EnvironmentItems &list); // use with care!!!
     static void setSystemEnvironment(const Environment &environment);  // don't use at all!!!
+
+    QChar pathListSeparator(PathSeparator sep) const;
 
     enum Type {
         SetSystemEnvironment,
@@ -102,17 +114,17 @@ public:
     };
 
     using Item = std::variant<
-        std::monostate,                          // SetSystemEnvironment dummy
-        NameValueDictionary,                     // SetFixedDictionary
-        std::tuple<QString, QString, bool>,      // SetValue (key, value, enabled)
-        std::tuple<QString, QString>,            // SetFallbackValue (key, value)
-        QString,                                 // UnsetValue (key)
-        std::tuple<QString, QString, QString>,   // PrependOrSet (key, value, separator)
-        std::tuple<QString, QString, QString>,   // AppendOrSet (key, value, separator)
-        NameValueItems,                          // Modify
-        std::monostate,                          // SetupEnglishOutput
-        FilePath                                 // SetupSudoAskPass (file path of qtc-askpass or ssh-askpass)
-    >;
+        std::monostate,                              // SetSystemEnvironment dummy
+        NameValueDictionary,                         // SetFixedDictionary
+        std::tuple<QString, QString, bool>,          // SetValue (key, value, enabled)
+        std::tuple<QString, QString>,                // SetFallbackValue (key, value)
+        QString,                                     // UnsetValue (key)
+        std::tuple<QString, QString, PathSeparator>, // PrependOrSet (key, value, separator)
+        std::tuple<QString, QString, PathSeparator>, // AppendOrSet (key, value, separator)
+        EnvironmentItems,                              // Modify
+        std::monostate,                              // SetupEnglishOutput
+        FilePath                                     // SetupSudoAskPass (file path of qtc-askpass or ssh-askpass)
+        >;
 
     void addItem(const Item &item);
 

@@ -44,11 +44,11 @@ public:
 
     DockWidget *q = nullptr;
     QBoxLayout *m_layout = nullptr;
-    QWidget *m_widget = nullptr;
+    QPointer<QWidget> m_widget;
     DockWidgetTab *m_tabWidget = nullptr;
     DockWidget::DockWidgetFeatures m_features = DockWidget::DefaultDockWidgetFeatures;
     DockManager *m_dockManager = nullptr;
-    DockAreaWidget *m_dockArea = nullptr;
+    QPointer<DockAreaWidget> m_dockArea;
     QAction *m_toggleViewAction = nullptr;
     bool m_closed = false;
     bool m_focused = false;
@@ -64,6 +64,7 @@ public:
         = DockWidget::MinimumSizeHintFromDockWidget;
     WidgetFactory *m_factory = nullptr;
     QPointer<AutoHideTab> m_sideTabWidget;
+    DockWidget::eToolBarStyleSource m_toolBarStyleSource = DockWidget::ToolBarStyleFromDockManager;
 
     /**
      * Private data constructor
@@ -106,6 +107,11 @@ public:
      * Creates the content widget with the registered widget factory and  returns true on success.
      */
     bool createWidgetFromFactory();
+
+    /**
+     * Use the dock manager toolbar style and icon size for the different states
+     */
+    void setToolBarStyleFromDockManager();
 }; // class DockWidgetPrivate
 
 DockWidgetPrivate::DockWidgetPrivate(DockWidget *parent)
@@ -246,6 +252,19 @@ bool DockWidgetPrivate::createWidgetFromFactory()
     return true;
 }
 
+void DockWidgetPrivate::setToolBarStyleFromDockManager()
+{
+    if (!m_dockManager)
+        return;
+
+    auto state = DockWidget::StateDocked;
+    q->setToolBarIconSize(m_dockManager->dockWidgetToolBarIconSize(state), state);
+    q->setToolBarStyle(m_dockManager->dockWidgetToolBarStyle(state), state);
+    state = DockWidget::StateFloating;
+    q->setToolBarIconSize(m_dockManager->dockWidgetToolBarIconSize(state), state);
+    q->setToolBarStyle(m_dockManager->dockWidgetToolBarStyle(state), state);
+}
+
 DockWidget::DockWidget(const QString &uniqueId, QWidget *parent)
     : QFrame(parent)
     , d(new DockWidgetPrivate(this))
@@ -290,8 +309,11 @@ void DockWidget::setWidget(QWidget *widget, eInsertMode insertMode)
     auto scrollAreaWidget = qobject_cast<QAbstractScrollArea *>(widget);
     if (scrollAreaWidget || ForceNoScrollArea == insertMode) {
         d->m_layout->addWidget(widget);
-        if (scrollAreaWidget && scrollAreaWidget->viewport())
-            scrollAreaWidget->viewport()->setProperty("dockWidgetContent", true);
+        if (scrollAreaWidget) {
+            if (scrollAreaWidget->viewport())
+                scrollAreaWidget->viewport()->setProperty("dockWidgetContent", true);
+            scrollAreaWidget->setProperty("focused", isFocused());
+        }
     } else {
         d->setupScrollArea();
         d->m_scrollArea->setWidget(widget);
@@ -381,6 +403,12 @@ DockManager *DockWidget::dockManager() const
 void DockWidget::setDockManager(DockManager *dockManager)
 {
     d->m_dockManager = dockManager;
+
+    if (!dockManager)
+        return;
+
+    if (ToolBarStyleFromDockManager == d->m_toolBarStyleSource)
+        d->setToolBarStyleFromDockManager();
 }
 
 DockContainerWidget *DockWidget::dockContainer() const
@@ -457,6 +485,11 @@ void DockWidget::setFocused(bool focused)
     if (d->m_scrollArea)
         d->m_scrollArea->setProperty("focused", focused);
 
+    QList<QAbstractScrollArea *> scrollAreas = d->m_widget->findChildren<QAbstractScrollArea *>(QString(),
+        Qt::FindDirectChildrenOnly);
+    for (QAbstractScrollArea *scrollArea : scrollAreas)
+        scrollArea->setProperty("focused", focused);
+
     const QString customObjectName = QString("__mainSrollView");
 
     QList<QQuickWidget *> quickWidgets = d->m_widget->findChildren<QQuickWidget *>();
@@ -489,6 +522,18 @@ bool DockWidget::isFocused() const
 QAction *DockWidget::toggleViewAction() const
 {
     return d->m_toggleViewAction;
+}
+
+void DockWidget::setToggleViewAction(QAction *action)
+{
+    if (!action)
+        return;
+
+    d->m_toggleViewAction->setParent(nullptr);
+    delete d->m_toggleViewAction;
+    d->m_toggleViewAction = action;
+    d->m_toggleViewAction->setParent(this);
+    connect(d->m_toggleViewAction, &QAction::triggered, this, &DockWidget::toggleView);
 }
 
 void DockWidget::setToggleViewActionMode(eToggleViewActionMode mode)
@@ -557,9 +602,8 @@ void DockWidget::toggleViewInternal(bool open)
     if (open && topLevelDockWidgetBefore)
         DockWidget::emitTopLevelEventForWidget(topLevelDockWidgetBefore, false);
 
-    // Here we need to call the dockContainer() function again, because if
-    // this dock widget was unassigned before the call to showDockWidget() then
-    // it has a dock container now
+    // Here we need to call the dockContainer() function again, because if this dock widget was
+    // unassigned before the call to showDockWidget() then it has a dock container now
     const DockContainerWidget *const dockContainerWidget = dockContainer();
     DockWidget *topLevelDockWidgetAfter = dockContainerWidget
                                               ? dockContainerWidget->topLevelDockWidget()
@@ -580,7 +624,7 @@ void DockWidget::toggleViewInternal(bool open)
 void DockWidget::setDockArea(DockAreaWidget *dockArea)
 {
     d->m_dockArea = dockArea;
-    d->m_toggleViewAction->setChecked(dockArea != nullptr && !isClosed());
+    d->m_toggleViewAction->setChecked(!isClosed());
     setParent(dockArea);
 }
 
@@ -614,18 +658,17 @@ bool DockWidget::event(QEvent *event)
 
     case QEvent::WindowTitleChange: {
         const auto title = windowTitle();
-        if (d->m_tabWidget) {
+        if (d->m_tabWidget)
             d->m_tabWidget->setText(title);
-        }
+
         if (d->m_sideTabWidget)
             d->m_sideTabWidget->setText(title);
 
-        if (d->m_toggleViewAction) {
+        if (d->m_toggleViewAction)
             d->m_toggleViewAction->setText(title);
-        }
-        if (d->m_dockArea) {
+
+        if (d->m_dockArea)
             d->m_dockArea->markTitleBarMenuOutdated(); // update tabs menu
-        }
 
         auto floatingWidget = floatingDockContainer();
         if (floatingWidget)
@@ -693,6 +736,18 @@ void DockWidget::setToolBar(QToolBar *toolBar)
     d->m_layout->insertWidget(0, d->m_toolBar);
     connect(this, &DockWidget::topLevelChanged, this, &DockWidget::setToolbarFloatingStyle);
     setToolbarFloatingStyle(isFloating());
+}
+
+void DockWidget::setToolBarStyleSource(eToolBarStyleSource source)
+{
+    d->m_toolBarStyleSource = source;
+    if (ToolBarStyleFromDockManager == d->m_toolBarStyleSource)
+        d->setToolBarStyleFromDockManager();
+}
+
+DockWidget::eToolBarStyleSource DockWidget::toolBarStyleSource() const
+{
+    return d->m_toolBarStyleSource;
 }
 
 void DockWidget::setToolBarStyle(Qt::ToolButtonStyle style, eState state)
@@ -771,14 +826,6 @@ QSize DockWidget::minimumSizeHint() const
     if (!d->m_widget)
         return QSize(60, 40);
 
-    // TODO
-    DockContainerWidget *container = this->dockContainer();
-    if (!container || container->isFloating()) {
-        const QSize sh = d->m_widget->minimumSizeHint();
-        const QSize s = d->m_widget->minimumSize();
-        return {std::max(s.width(), sh.width()), std::max(s.height(), sh.height())};
-    }
-
     switch (d->m_minimumSizeHintMode) {
     case MinimumSizeHintFromDockWidget:
         return QSize(60, 40);
@@ -837,8 +884,7 @@ bool DockWidget::closeDockWidgetInternal(bool forceClose)
         return false;
 
     if (features().testFlag(DockWidget::DockWidgetDeleteOnClose)) {
-        // If the dock widget is floating, then we check if we also need to
-        // delete the floating widget
+        // If the dock widget is floating, then check if we also need to delete the floating widget
         if (isFloating()) {
             FloatingDockContainer *floatingWidget = internal::findParent<FloatingDockContainer *>(
                 this);

@@ -47,7 +47,6 @@ T.TextField {
     readOnly: false
     selectByMouse: true
     persistentSelection: contextMenu.visible || control.focus
-    clip: true
 
     width: control.style.controlSize.width
     height: control.style.controlSize.height
@@ -86,6 +85,9 @@ T.TextField {
         // was closed due to an menu item click.
         if (control.activeFocus && control.focusReason !== Qt.OtherFocusReason)
             control.preFocusText = control.text
+
+        if (!control.activeFocus)
+            control.deselect()
     }
 
     onEditChanged: {

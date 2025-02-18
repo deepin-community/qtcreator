@@ -30,13 +30,12 @@ QmlDebuggingAspect::QmlDebuggingAspect(AspectContainer *container)
     setValue(buildPropertiesSettings().qmlDebugging());
 }
 
-void QmlDebuggingAspect::addToLayout(Layouting::LayoutItem &parent)
+void QmlDebuggingAspect::addToLayoutImpl(Layouting::Layout &parent)
 {
-    SelectionAspect::addToLayout(parent);
+    SelectionAspect::addToLayoutImpl(parent);
     const auto warningLabel = createSubWidget<InfoLabel>(QString(), InfoLabel::Warning);
     warningLabel->setElideMode(Qt::ElideNone);
-    warningLabel->setVisible(false);
-    parent.addRow({{}, warningLabel});
+    parent.addRow({Layouting::empty, warningLabel});
     const auto changeHandler = [this, warningLabel] {
         QString warningText;
         QTC_ASSERT(m_buildConfig, return);
@@ -51,7 +50,9 @@ void QmlDebuggingAspect::addToLayout(Layouting::LayoutItem &parent)
         warningLabel->setText(warningText);
         setVisible(supported);
         const bool warningLabelsVisible = supported && !warningText.isEmpty();
-        if (warningLabel->parentWidget())
+        // avoid explicitly showing the widget when it doesn't have a parent, but always
+        // explicitly hide it when necessary
+        if (warningLabel->parentWidget() || !warningLabelsVisible)
             warningLabel->setVisible(warningLabelsVisible);
     };
     connect(KitManager::instance(), &KitManager::kitsChanged, warningLabel, changeHandler);
@@ -77,13 +78,13 @@ void QtQuickCompilerAspect::setBuildConfiguration(const BuildConfiguration *buil
     m_buildConfig = buildConfig;
 }
 
-void QtQuickCompilerAspect::addToLayout(Layouting::LayoutItem &parent)
+void QtQuickCompilerAspect::addToLayoutImpl(Layouting::Layout &parent)
 {
-    SelectionAspect::addToLayout(parent);
+    SelectionAspect::addToLayoutImpl(parent);
     const auto warningLabel = createSubWidget<InfoLabel>(QString(), InfoLabel::Warning);
     warningLabel->setElideMode(Qt::ElideNone);
     warningLabel->setVisible(false);
-    parent.addRow({{}, warningLabel});
+    parent.addRow({Layouting::empty, warningLabel});
     const auto changeHandler = [this, warningLabel] {
         QString warningText;
         QTC_ASSERT(m_buildConfig, return);

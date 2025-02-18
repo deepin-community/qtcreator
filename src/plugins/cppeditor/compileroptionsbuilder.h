@@ -9,7 +9,7 @@
 
 namespace CppEditor {
 
-enum class UsePrecompiledHeaders : char { Yes, No };
+enum class UsePrecompiledHeaders { Yes, No };
 enum class UseSystemHeader : char { Yes, No };
 enum class UseTweakedHeaderPaths : char { Yes, Tools, No };
 enum class UseToolchainMacros : char { Yes, No };
@@ -69,7 +69,6 @@ public:
     void prepend(const QString &arg);
     void add(const QStringList &args, bool gccOnlyOptions = false);
 
-    static UseToolchainMacros useToolChainMacros();
     void reset();
 
     void evaluateCompilerFlags();

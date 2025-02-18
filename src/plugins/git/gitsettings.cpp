@@ -30,10 +30,13 @@ GitSettings::GitSettings()
     setAutoApply(false);
     setSettingsGroup("Git");
 
-    path.setDisplayStyle(StringAspect::LineEditDisplay);
     path.setLabelText(Tr::tr("Prepend to PATH:"));
+    path.setDisplayStyle(StringAspect::LineEditDisplay);
 
+    binaryPath.setLabelText(Tr::tr("Git command:"));
     binaryPath.setDefaultValue("git");
+    binaryPath.setExpectedKind(PathChooser::ExistingCommand);
+    binaryPath.setHistoryCompleter("Git.Command.History");
 
     pullRebase.setSettingsKey("PullRebase");
     pullRebase.setLabelText(Tr::tr("Pull with rebase"));
@@ -99,12 +102,18 @@ GitSettings::GitSettings()
     instantBlameIgnoreLineMoves.setLabelText(trIgnoreLineMoves());
     instantBlameIgnoreLineMoves.setToolTip(
         Tr::tr("Finds the commit that introduced the line before it was moved."));
+    instantBlameShowSubject.setSettingsKey("GitInstantShowSubject");
+    instantBlameShowSubject.setDefaultValue(false);
+    instantBlameShowSubject.setLabelText(Tr::tr("Show commit subject"));
+    instantBlameShowSubject.setToolTip(
+        Tr::tr("Adds the commit subject directly to the annotation."));
 
     graphLog.setSettingsKey("GraphLog");
 
     colorLog.setSettingsKey("ColorLog");
     colorLog.setDefaultValue(true);
 
+    allBranches.setSettingsKey("AllBranches");
     firstParent.setSettingsKey("FirstParent");
 
     followRenames.setSettingsKey("FollowRenames");
@@ -121,8 +130,9 @@ GitSettings::GitSettings()
         return Column {
             Group {
                 title(Tr::tr("Configuration")),
-                Column {
-                    Row { path },
+                Form {
+                    binaryPath, br,
+                    path, br,
                     winSetHomeEnvironment,
                 }
             },
@@ -147,8 +157,13 @@ GitSettings::GitSettings()
 
             Group {
                 title(Tr::tr("Instant Blame")),
-                instantBlame.groupChecker(),
-                Row { instantBlameIgnoreSpaceChanges, instantBlameIgnoreLineMoves, st },
+                groupChecker(instantBlame.groupChecker()),
+                Row {
+                    instantBlameIgnoreSpaceChanges,
+                    instantBlameIgnoreLineMoves,
+                    instantBlameShowSubject,
+                    st
+                },
             },
 
             st
@@ -160,14 +175,8 @@ GitSettings::GitSettings()
     readSettings();
 }
 
-FilePath GitSettings::gitExecutable(bool *ok, QString *errorMessage) const
+expected_str<FilePath> GitSettings::gitExecutable() const
 {
-    // Locate binary in path if one is specified, otherwise default to pathless binary.
-    if (ok)
-        *ok = true;
-    if (errorMessage)
-        errorMessage->clear();
-
     if (tryResolve) {
         resolvedBinPath = binaryPath();
         if (!resolvedBinPath.isAbsolutePath())
@@ -176,11 +185,8 @@ FilePath GitSettings::gitExecutable(bool *ok, QString *errorMessage) const
     }
 
     if (resolvedBinPath.isEmpty()) {
-        if (ok)
-            *ok = false;
-        if (errorMessage)
-            *errorMessage = Tr::tr("The binary \"%1\" could not be located in the path \"%2\"")
-                .arg(binaryPath().toUserOutput(), path());
+        return make_unexpected(Tr::tr("The binary \"%1\" could not be located in the path \"%2\"")
+                                   .arg(binaryPath().toUserOutput(), path()));
     }
     return resolvedBinPath;
 }

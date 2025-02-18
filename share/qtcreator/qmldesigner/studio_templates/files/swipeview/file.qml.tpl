@@ -1,6 +1,6 @@
-import QtQuick 2.15
-import QtQuick.Layouts 1.15
-import QtQuick.Controls 2.15
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
 import %{ApplicationImport}
 
 Item {
@@ -8,7 +8,7 @@ Item {
     height: Constants.height
 
     SwipeView {
-        id: stackLayout
+        id: stackView
         width: 100
         anchors.top: tabBar.bottom
         anchors.right: parent.right
@@ -16,7 +16,7 @@ Item {
         anchors.bottom: parent.bottom
         currentIndex: tabBar.currentIndex
 
-        onCurrentIndexChanged: tabBar.currentIndex = stackLayout.currentIndex
+        onCurrentIndexChanged: tabBar.currentIndex = stackView.currentIndex
 
         Item {
             Label {
@@ -47,8 +47,8 @@ Item {
         id: tabBar
         currentIndex: 0
         anchors.top: parent.top
-        anchors.right: stackLayout.right
-        anchors.left: stackLayout.left
+        anchors.right: stackView.right
+        anchors.left: stackView.left
 
         TabButton {
             text: qsTr("Tab 1")

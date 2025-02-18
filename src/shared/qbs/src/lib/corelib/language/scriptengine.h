@@ -45,12 +45,14 @@
 #include <buildgraph/requestedartifacts.h>
 #include <buildgraph/requesteddependencies.h>
 #include <logging/logger.h>
-#include <quickjs.h>
 #include <tools/codelocation.h>
 #include <tools/filetime.h>
 #include <tools/porting.h>
 #include <tools/scripttools.h>
 #include <tools/set.h>
+#include <tools/setupprojectparameters.h>
+#include <tools/span.h>
+#include <quickjs.h>
 
 #include <QtCore/qdir.h>
 #include <QtCore/qhash.h>
@@ -62,12 +64,14 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stack>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
 namespace qbs {
+class Version;
 namespace Internal {
 class Artifact;
 class Evaluator;
@@ -120,6 +124,10 @@ public:
     void setEvalContext(EvalContext c) { m_evalContext = c; }
     EvalContext evalContext() const { return m_evalContext; }
     void checkContext(const QString &operation, const DubiousContextList &dubiousContexts);
+
+    void setSetupProjectParameters(const SetupProjectParameters &params) { m_setupParams = params; }
+    void handleDeprecation(
+        const Version &removalVersion, const QString &message, const CodeLocation &loc);
 
     void addPropertyRequestedInScript(const Property &property) {
         m_propertiesRequestedInScript += property;
@@ -206,9 +214,12 @@ public:
     void takeOwnership(JSValue v);
     JSValue undefinedValue() const { return JS_UNDEFINED; }
     JSValue toScriptValue(const QVariant &v, quintptr id = 0) { return asJsValue(v, id); }
-    JSValue evaluate(JsValueOwner resultOwner, const QString &code,
-                     const QString &filePath = QString(), int line = 1,
-                     const JSValueList &scopeChain = {});
+    JSValue evaluate(
+        JsValueOwner resultOwner,
+        const QString &code,
+        const QString &filePath = QString(),
+        int line = 1,
+        qbs::Internal::span<const JSValue> scopeChain = {});
     void setLastLookupStatus(bool success) { m_lastLookupWasSuccess = success; }
     JSContext *context() const { return m_context; }
     JSValue globalObject() const { return m_globalObject; }
@@ -392,7 +403,7 @@ private:
     std::unordered_map<const ResolvedModule *, JSValue> m_moduleArtifactsMapScriptValues;
     std::unordered_map<const ResolvedProject *, JSValue> m_projectScriptValues;
     std::unordered_map<const ResolvedModule *, JSValue> m_baseModuleScriptValues;
-    QList<JSValueList> m_scopeChains;
+    std::vector<qbs::Internal::span<const JSValue>> m_scopeChains;
     JSValueList m_contextStack;
     QHash<JSClassID, JSClassExoticMethods> m_exoticMethods;
     QHash<QString, JSClassID> m_classes;
@@ -404,6 +415,7 @@ private:
     QHash<QPair<Artifact *, QString>, JSValue> m_artifactsScriptValues;
     QVariantMap m_properties;
     std::recursive_mutex m_artifactsMutex;
+    std::optional<SetupProjectParameters> m_setupParams;
     bool m_lastLookupWasSuccess = false;
 };
 

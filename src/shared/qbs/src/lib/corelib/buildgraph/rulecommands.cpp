@@ -99,15 +99,11 @@ AbstractCommand::~AbstractCommand() = default;
 
 bool AbstractCommand::equals(const AbstractCommand *other) const
 {
-    return type() == other->type()
-            && m_description == other->m_description
-            && m_extendedDescription == other->m_extendedDescription
-            && m_highlight == other->m_highlight
-            && m_ignoreDryRun == other->m_ignoreDryRun
-            && m_silent == other->m_silent
-            && m_jobPool == other->m_jobPool
-            && m_timeout == other->m_timeout
-            && m_properties == other->m_properties;
+    return type() == other->type() && m_description == other->m_description
+           && m_extendedDescription == other->m_extendedDescription
+           && m_highlight == other->m_highlight && m_ignoreDryRun == other->m_ignoreDryRun
+           && m_silent == other->m_silent && m_jobPool == other->m_jobPool
+           && m_timeout == other->m_timeout && qVariantMapsEqual(m_properties, other->m_properties);
 }
 
 void AbstractCommand::fillFromScriptValue(JSContext *ctx, const JSValue *scriptValue,
@@ -137,6 +133,11 @@ void AbstractCommand::fillFromScriptValue(JSContext *ctx, const JSValue *scriptV
 QString AbstractCommand::fullDescription(const QString &productName) const
 {
     return description() + QLatin1String(" [") + productName + QLatin1Char(']');
+}
+
+QString AbstractCommand::descriptionForCancelMessage(const QString &productName) const
+{
+    return fullDescription(productName);
 }
 
 void AbstractCommand::load(PersistentPool &pool)
@@ -337,6 +338,12 @@ void ProcessCommand::fillFromScriptValue(JSContext *ctx, const JSValue *scriptVa
             << stdoutFilePathProperty()
             << stderrFilePathProperty();
     applyCommandProperties(ctx, scriptValue);
+}
+
+QString ProcessCommand::descriptionForCancelMessage(const QString &productName) const
+{
+    return description() + QLatin1String(" (") + QDir::toNativeSeparators(m_program)
+           + QLatin1String(") [") + productName + QLatin1Char(']');
 }
 
 QStringList ProcessCommand::relevantEnvVars() const

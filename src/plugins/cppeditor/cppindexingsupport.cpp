@@ -5,6 +5,7 @@
 
 #include "builtineditordocumentparser.h"
 #include "cppchecksymbols.h"
+#include "cppcodemodelsettings.h"
 #include "cppeditorconstants.h"
 #include "cppeditortr.h"
 #include "cppsourceprocessor.h"
@@ -30,10 +31,10 @@ namespace CppEditor {
 static Q_LOGGING_CATEGORY(indexerLog, "qtc.cppeditor.indexer", QtWarningMsg)
 
 SymbolSearcher::SymbolSearcher(const SymbolSearcher::Parameters &parameters,
-                               const QSet<QString> &fileNames)
+                               const QSet<FilePath> &filePaths)
     : m_snapshot(CppModelManager::snapshot())
     , m_parameters(parameters)
-    , m_fileNames(fileNames)
+    , m_filePaths(filePaths)
 {}
 
 namespace {
@@ -44,7 +45,6 @@ public:
     ProjectExplorer::HeaderPaths headerPaths;
     WorkingCopy workingCopy;
     QSet<QString> sourceFiles;
-    int indexerFileSizeLimitInMb = -1;
 };
 
 class WriteTaskFileForDiagnostics
@@ -147,7 +147,7 @@ static void indexFindErrors(QPromise<void> &promise, const ParseParams params)
 
         // Look up symbols
         CPlusPlus::LookupContext context(document, parser.snapshot());
-        CheckSymbols::go(document, context, QList<CheckSymbols::Result>()).waitForFinished();
+        CheckSymbols::go(document, {}, context, QList<CheckSymbols::Result>()).waitForFinished();
 
         document->releaseSourceAndAST();
 
@@ -161,7 +161,6 @@ static void indexFindErrors(QPromise<void> &promise, const ParseParams params)
 static void index(QPromise<void> &promise, const ParseParams params)
 {
     QScopedPointer<Internal::CppSourceProcessor> sourceProcessor(CppModelManager::createSourceProcessor());
-    sourceProcessor->setFileSizeLimitInMb(params.indexerFileSizeLimitInMb);
     sourceProcessor->setHeaderPaths(params.headerPaths);
     sourceProcessor->setWorkingCopy(params.workingCopy);
 
@@ -220,21 +219,22 @@ static void index(QPromise<void> &promise, const ParseParams params)
     qCDebug(indexerLog) << "Indexing finished.";
 }
 
-static void parse(QPromise<void> &promise, const ParseParams &params)
+static void parse(
+    QPromise<void> &promise,
+    const std::function<QSet<QString>()> &sourceFiles,
+    const ProjectExplorer::HeaderPaths &headerPaths,
+    const WorkingCopy &workingCopy)
 {
-    const QSet<QString> &files = params.sourceFiles;
-    if (files.isEmpty())
-        return;
-
-    promise.setProgressRange(0, files.size());
+    ParseParams params{headerPaths, workingCopy, sourceFiles()};
+    promise.setProgressRange(0, params.sourceFiles.size());
 
     if (CppIndexingSupport::isFindErrorsIndexingActive())
         indexFindErrors(promise, params);
     else
         index(promise, params);
 
-    promise.setProgressValue(files.size());
-    CppModelManager::finishedRefreshingSourceFiles(files);
+    promise.setProgressValue(params.sourceFiles.size());
+    CppModelManager::finishedRefreshingSourceFiles(params.sourceFiles);
 }
 
 } // anonymous namespace
@@ -261,7 +261,7 @@ void SymbolSearcher::runSearch(QPromise<SearchResultItem> &promise)
         promise.suspendIfRequested();
         if (promise.isCanceled())
             break;
-        if (m_fileNames.isEmpty() || m_fileNames.contains(it.value()->filePath().path())) {
+        if (m_filePaths.isEmpty() || m_filePaths.contains(it.value()->filePath())) {
             SearchResultItems resultItems;
             auto filter = [&](const IndexItem::Ptr &info) -> IndexItem::VisitorResult {
                 if (matcher.match(info->symbolName()).hasMatch()) {
@@ -301,19 +301,19 @@ bool CppIndexingSupport::isFindErrorsIndexingActive()
     return Utils::qtcEnvironmentVariable("QTC_FIND_ERRORS_INDEXING") == "1";
 }
 
-QFuture<void> CppIndexingSupport::refreshSourceFiles(const QSet<QString> &sourceFiles,
-                                                     CppModelManager::ProgressNotificationMode mode)
+QFuture<void> CppIndexingSupport::refreshSourceFiles(
+    const std::function<QSet<QString>()> &sourceFiles,
+    CppModelManager::ProgressNotificationMode mode)
 {
-    ParseParams params;
-    params.indexerFileSizeLimitInMb = indexerFileSizeLimitInMb();
-    params.headerPaths = CppModelManager::headerPaths();
-    params.workingCopy = CppModelManager::workingCopy();
-    params.sourceFiles = sourceFiles;
-
-    QFuture<void> result = Utils::asyncRun(CppModelManager::sharedThreadPool(), parse, params);
+    QFuture<void> result = Utils::asyncRun(
+        CppModelManager::sharedThreadPool(),
+        parse,
+        sourceFiles,
+        CppModelManager::headerPaths(),
+        CppModelManager::workingCopy());
     m_synchronizer.addFuture(result);
 
-    if (mode == CppModelManager::ForcedProgressNotification || sourceFiles.count() > 1) {
+    if (mode == CppModelManager::ForcedProgressNotification) {
         Core::ProgressManager::addTask(result, Tr::tr("Parsing C/C++ Files"),
                                        CppEditor::Constants::TASK_INDEX);
     }

@@ -12,8 +12,6 @@
 #include <coreplugin/minisplitter.h>
 #include <coreplugin/progressmanager/progressmanager.h>
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <texteditor/displaysettings.h>
 #include <texteditor/fontsettings.h>
 #include <texteditor/textdocument.h>
@@ -485,7 +483,8 @@ void SideDiffEditorWidget::keyPressEvent(QKeyEvent *e)
 
 void SideDiffEditorWidget::contextMenuEvent(QContextMenuEvent *e)
 {
-    QPointer<QMenu> menu = createStandardContextMenu();
+    QMenu *menu = createStandardContextMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
 
     const QTextCursor tc = textCursor();
     QTextCursor start = tc;
@@ -526,9 +525,7 @@ void SideDiffEditorWidget::contextMenuEvent(QContextMenuEvent *e)
                               m_data.m_chunkInfo.chunkIndexForBlockNumber(blockNumber),
                               selection);
 
-    connect(this, &SideDiffEditorWidget::destroyed, menu.data(), &QMenu::deleteLater);
     menu->exec(e->globalPos());
-    delete menu;
 }
 
 void SideDiffEditorWidget::jumpToOriginalFile(const QTextCursor &cursor)
@@ -719,10 +716,8 @@ SideBySideDiffEditorWidget::SideBySideDiffEditorWidget(QWidget *parent)
         connect(m_editor[side]->horizontalScrollBar(), &QAbstractSlider::rangeChanged,
                 this, &SideBySideDiffEditorWidget::syncHorizontalScrollBarPolicy);
 
-        auto context = new IContext(this);
-        context->setWidget(m_editor[side]);
-        context->setContext(Context(Id(Constants::SIDE_BY_SIDE_VIEW_ID).withSuffix(side + 1)));
-        ICore::addContextObject(context);
+        IContext::attach(m_editor[side],
+                         Context(Id(Constants::SIDE_BY_SIDE_VIEW_ID).withSuffix(side + 1)));
     };
     setupEditor(LeftSide);
     setupEditor(RightSide);
@@ -780,11 +775,6 @@ SideBySideDiffEditorWidget::SideBySideDiffEditorWidget(QWidget *parent)
 }
 
 SideBySideDiffEditorWidget::~SideBySideDiffEditorWidget() = default;
-
-TextEditorWidget *SideBySideDiffEditorWidget::sideEditorWidget(DiffSide side) const
-{
-    return m_editor[side];
-}
 
 void SideBySideDiffEditorWidget::setDocument(DiffEditorDocument *document)
 {
@@ -869,7 +859,6 @@ void SideBySideDiffEditorWidget::restoreState()
 void SideBySideDiffEditorWidget::showDiff()
 {
     m_asyncTask.reset(new Async<SideBySideShowResults>());
-    m_asyncTask->setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
     m_controller.setBusyShowing(true);
 
     connect(m_asyncTask.get(), &AsyncBase::done, this, [this] {

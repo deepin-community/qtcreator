@@ -136,7 +136,7 @@ void QmlInspectorAgent::watchDataSelected(int id)
     qCDebug(qmlInspectorLog) << __FUNCTION__ << '(' << id << ')';
 
     if (id != WatchItem::InvalidId) {
-        QTC_ASSERT(m_debugIdLocations.keys().contains(id), return);
+        QTC_ASSERT(m_debugIdLocations.contains(id), return);
         jumpToObjectDefinitionInEditor(m_debugIdLocations.value(id));
         m_toolsClient->selectObjects({id});
     }
@@ -220,7 +220,7 @@ void QmlInspectorAgent::onResult(quint32 queryId, const QVariant &value,
 
     if (m_objectTreeQueryIds.contains(queryId)) {
         m_objectTreeQueryIds.removeOne(queryId);
-        if (value.typeId() == QVariant::List) {
+        if (value.typeId() == QMetaType::QVariantList) {
             const QVariantList objList = value.toList();
             for (const QVariant &var : objList) {
                 // TODO: check which among the list is the actual
@@ -289,7 +289,7 @@ static void sortChildrenIfNecessary(WatchItem *propertiesWatch)
 static bool insertChildren(WatchItem *parent, const QVariant &value)
 {
     switch (value.typeId()) {
-    case QVariant::Map: {
+    case QMetaType::QVariantMap: {
         const QVariantMap map = value.toMap();
         for (auto it = map.begin(), end = map.end(); it != end; ++it) {
             auto child = new WatchItem;
@@ -303,7 +303,7 @@ static bool insertChildren(WatchItem *parent, const QVariant &value)
         sortChildrenIfNecessary(parent);
         return true;
     }
-    case QVariant::List: {
+    case QMetaType::QVariantList: {
         const QVariantList list = value.toList();
         for (int i = 0, end = list.size(); i != end; ++i) {
             auto child = new WatchItem;

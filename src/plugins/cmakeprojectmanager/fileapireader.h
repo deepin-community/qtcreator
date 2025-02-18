@@ -63,6 +63,8 @@ public:
 
     Utils::FilePath topCmakeFile() const;
 
+    QString cmakeGenerator() const;
+
 signals:
     void configurationStarted() const;
     void dataAvailable(bool restoredFromBackup) const;
@@ -76,7 +78,7 @@ private:
     void startCMakeState(const QStringList &configurationArguments);
     void cmakeFinishedState(int exitCode);
 
-    void replyDirectoryHasChanged(const QString &directory) const;
+    void handleReplyDirectoryChange(const QString &directory);
     void makeBackupConfiguration(bool store);
 
     void writeConfigurationIntoBuildDirectory(const QStringList &configuration);
@@ -90,6 +92,7 @@ private:
     ProjectExplorer::RawProjectParts m_projectParts;
     std::unique_ptr<CMakeProjectNode> m_rootProjectNode;
     QString m_ctestPath;
+    QString m_cmakeGenerator;
     bool m_isMultiConfig = false;
     bool m_usesAllCapsTargets = false;
     int m_lastCMakeExitCode = 0;

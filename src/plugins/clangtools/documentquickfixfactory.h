@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <cppeditor/cppquickfix.h>
+#include <cppeditor/quickfixes/cppquickfix.h>
 
 namespace ClangTools {
 namespace Internal {
@@ -16,8 +16,8 @@ public:
     using RunnerCollector = std::function<DocumentClangToolRunner *(const Utils::FilePath &)>;
 
     DocumentQuickFixFactory(RunnerCollector runnerCollector);
-    void match(const CppEditor::Internal::CppQuickFixInterface &interface,
-               QuickFixOperations &result) override;
+    void doMatch(const CppEditor::Internal::CppQuickFixInterface &interface,
+                 QuickFixOperations &result) override;
 
 private:
     RunnerCollector m_runnerCollector;

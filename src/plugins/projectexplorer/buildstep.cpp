@@ -15,6 +15,7 @@
 
 #include <utils/fileinprojectfinder.h>
 #include <utils/layoutbuilder.h>
+#include <utils/macroexpander.h>
 #include <utils/outputformatter.h>
 #include <utils/variablechooser.h>
 
@@ -86,11 +87,13 @@ BuildStep::BuildStep(BuildStepList *bsl, Id id)
     , m_stepList(bsl)
 {
     connect(this, &ProjectConfiguration::displayNameChanged, this, &BuildStep::updateSummary);
+    macroExpander()->registerSubProvider([bsl] { return bsl->projectConfiguration()->macroExpander(); });
 }
 
 QWidget *BuildStep::doCreateConfigWidget()
 {
     QWidget *widget = createConfigWidget();
+    VariableChooser::addSupportForChildWidgets(widget, macroExpander());
 
     const auto recreateSummary = [this] {
         if (m_summaryUpdater)
@@ -113,29 +116,27 @@ QWidget *BuildStep::doCreateConfigWidget()
 QWidget *BuildStep::createConfigWidget()
 {
     Layouting::Form form;
+    form.setNoMargins();
     for (BaseAspect *aspect : std::as_const(*this)) {
-        if (aspect->isVisible())
-            form.addItems({aspect, Layouting::br()});
+        if (aspect->isVisible()) {
+            form.addItem(aspect);
+            form.flush();
+        }
     }
-    form.addItem(Layouting::noMargin);
-    auto widget = form.emerge();
 
-    if (m_addMacroExpander)
-        VariableChooser::addSupportForChildWidgets(widget, macroExpander());
-
-    return widget;
+    return form.emerge();
 }
 
 void BuildStep::fromMap(const Store &map)
 {
-    m_enabled = map.value(buildStepEnabledKey, true).toBool();
+    m_stepEnabled = map.value(buildStepEnabledKey, true).toBool();
     ProjectConfiguration::fromMap(map);
 }
 
 void BuildStep::toMap(Store &map) const
 {
     ProjectConfiguration::toMap(map);
-    map.insert(buildStepEnabledKey, m_enabled);
+    map.insert(buildStepEnabledKey, m_stepEnabled);
 }
 
 BuildConfiguration *BuildStep::buildConfiguration() const
@@ -194,13 +195,6 @@ BuildConfiguration::BuildType BuildStep::buildType() const
     return BuildConfiguration::Unknown;
 }
 
-MacroExpander *BuildStep::macroExpander() const
-{
-    if (auto bc = buildConfiguration())
-        return bc->macroExpander();
-    return globalMacroExpander();
-}
-
 QString BuildStep::fallbackWorkingDirectory() const
 {
     if (buildConfiguration())
@@ -212,11 +206,11 @@ void BuildStep::setupOutputFormatter(OutputFormatter *formatter)
 {
     if (auto bc = qobject_cast<BuildConfiguration *>(projectConfiguration())) {
         for (const Id id : bc->customParsers()) {
-            if (Internal::CustomParser * const parser = Internal::CustomParser::createFromId(id))
+            if (auto parser = createCustomParserFromId(id))
                 formatter->addLineParser(parser);
         }
 
-        formatter->addLineParser(new Internal::SanitizerParser);
+        formatter->addLineParser(Internal::createSanitizerOutputParser());
         formatter->setForwardStdOutToStdError(buildConfiguration()->parseStdOut());
     }
     FileInProjectFinder fileFinder;
@@ -241,12 +235,12 @@ QVariant BuildStep::data(Id id) const
     return {};
 }
 
-void BuildStep::setEnabled(bool b)
+void BuildStep::setStepEnabled(bool b)
 {
-    if (m_enabled == b)
+    if (m_stepEnabled == b)
         return;
-    m_enabled = b;
-    emit enabledChanged();
+    m_stepEnabled = b;
+    emit stepEnabledChanged();
 }
 
 BuildStepList *BuildStep::stepList() const
@@ -254,9 +248,9 @@ BuildStepList *BuildStep::stepList() const
     return m_stepList;
 }
 
-bool BuildStep::enabled() const
+bool BuildStep::stepEnabled() const
 {
-    return m_enabled;
+    return m_stepEnabled;
 }
 
 BuildStepFactory::BuildStepFactory()
@@ -349,6 +343,11 @@ void BuildStepFactory::setFlags(BuildStep::Flags flags)
     m_flags = flags;
 }
 
+void BuildStepFactory::setExtraInit(const std::function<void (BuildStep *)> &extraInit)
+{
+    m_extraInit = extraInit;
+}
+
 void BuildStepFactory::setSupportedStepList(Id id)
 {
     m_supportedStepLists = {id};
@@ -392,7 +391,7 @@ Id BuildStepFactory::stepId() const
 BuildStep *BuildStepFactory::create(BuildStepList *parent)
 {
     QTC_ASSERT(m_creator, return nullptr);
-    BuildStep *step = m_creator(parent);
+    BuildStep *step = m_creator(this, parent);
     step->setDefaultDisplayName(m_displayName);
     return step;
 }

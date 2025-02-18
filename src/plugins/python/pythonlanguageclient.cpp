@@ -4,11 +4,10 @@
 #include "pythonlanguageclient.h"
 
 #include "pipsupport.h"
+#include "pythonbuildconfiguration.h"
 #include "pysideuicextracompiler.h"
 #include "pythonconstants.h"
-#include "pythonplugin.h"
 #include "pythonproject.h"
-#include "pythonrunconfiguration.h"
 #include "pythonsettings.h"
 #include "pythontr.h"
 #include "pythonutils.h"
@@ -22,6 +21,8 @@
 #include <languageserverprotocol/textsynchronization.h>
 #include <languageserverprotocol/workspace.h>
 
+#include <projectexplorer/buildconfiguration.h>
+#include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/extracompiler.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/target.h>
@@ -31,16 +32,10 @@
 
 #include <utils/async.h>
 #include <utils/infobar.h>
-#include <utils/process.h>
-#include <utils/variablechooser.h>
+#include <utils/qtcprocess.h>
 
-#include <QCheckBox>
-#include <QComboBox>
 #include <QFutureWatcher>
-#include <QGroupBox>
 #include <QJsonDocument>
-#include <QPushButton>
-#include <QRegularExpression>
 #include <QTimer>
 
 using namespace LanguageClient;
@@ -51,14 +46,17 @@ using namespace Utils;
 namespace Python::Internal {
 
 static constexpr char installPylsInfoBarId[] = "Python::InstallPyls";
+static constexpr char updatePylsInfoBarId[] = "Python::updatePyls";
+static constexpr char alwaysUpdateKey[] = "Python/AlwaysUpdatePyls";
 
 class PythonLanguageServerState
 {
 public:
     enum {
-        CanNotBeInstalled,
-        CanBeInstalled,
-        AlreadyInstalled
+        NotInstallable,
+        Installable,
+        Updatable,
+        Installed
     } state;
     FilePath pylsModulePath;
 };
@@ -69,64 +67,55 @@ static QHash<FilePath, PyLSClient*> &pythonClients()
     return clients;
 }
 
-FilePath getPylsModulePath(CommandLine pylsCommand)
+static FilePath pyLspPath(const FilePath &python)
 {
-    static QMutex mutex; // protect the access to the cache
-    QMutexLocker locker(&mutex);
-    static QMap<FilePath, FilePath> cache;
-    const FilePath &modulePath = cache.value(pylsCommand.executable());
-    if (!modulePath.isEmpty())
-        return modulePath;
-
-    pylsCommand.addArg("-h");
-
-    Process pythonProcess;
-    Environment env = pythonProcess.environment();
-    env.set("PYTHONVERBOSE", "x");
-    pythonProcess.setEnvironment(env);
-    pythonProcess.setCommand(pylsCommand);
-    pythonProcess.runBlocking();
-
-    static const QString pylsInitPattern = "(.*)"
-                                           + QRegularExpression::escape(
-                                               QDir::toNativeSeparators("/pylsp/__init__.py"))
-                                           + '$';
-    static const QRegularExpression regexCached(" matches " + pylsInitPattern,
-                                                QRegularExpression::MultilineOption);
-    static const QRegularExpression regexNotCached(" code object from " + pylsInitPattern,
-                                                   QRegularExpression::MultilineOption);
-
-    const QString output = pythonProcess.allOutput();
-    for (const auto &regex : {regexCached, regexNotCached}) {
-        const QRegularExpressionMatch result = regex.match(output);
-        if (result.hasMatch()) {
-            const FilePath &modulePath = FilePath::fromUserInput(result.captured(1));
-            cache[pylsCommand.executable()] = modulePath;
-            return modulePath;
-        }
-    }
+    const QString version = pythonVersion(python);
+    if (!python.needsDevice())
+        return Core::ICore::userResourcePath() / "pylsp" / version;
+    if (const expected_str<FilePath> tmpDir = python.tmpDir())
+        return *tmpDir / "qc-pylsp" / version;
     return {};
 }
 
 static PythonLanguageServerState checkPythonLanguageServer(const FilePath &python)
 {
     using namespace LanguageClient;
-    const CommandLine pythonLShelpCommand(python, {"-m", "pylsp", "-h"});
-    const FilePath &modulePath = getPylsModulePath(pythonLShelpCommand);
+    auto lspPath = pyLspPath(python);
+    if (lspPath.isEmpty())
+        return {PythonLanguageServerState::NotInstallable, FilePath()};
 
     Process pythonProcess;
-    pythonProcess.setTimeoutS(2);
-    pythonProcess.setCommand(pythonLShelpCommand);
-    pythonProcess.runBlocking();
-    if (pythonProcess.allOutput().contains("Python Language Server"))
-        return {PythonLanguageServerState::AlreadyInstalled, modulePath};
-
     pythonProcess.setCommand({python, {"-m", "pip", "-V"}});
-    pythonProcess.runBlocking();
-    if (pythonProcess.allOutput().startsWith("pip "))
-        return {PythonLanguageServerState::CanBeInstalled, FilePath()};
-    else
-        return {PythonLanguageServerState::CanNotBeInstalled, FilePath()};
+    using namespace std::chrono_literals;
+    pythonProcess.runBlocking(2s);
+    bool pipAvailable = pythonProcess.allOutput().startsWith("pip ");
+
+    if (lspPath.pathAppended("bin").pathAppended("pylsp").withExecutableSuffix().exists()) {
+        if (pipAvailable) {
+            Process pythonProcess;
+            Environment env = pythonProcess.environment();
+            env.set("PYTHONPATH", lspPath.toUserOutput());
+            pythonProcess.setEnvironment(env);
+            pythonProcess.setCommand({python, {"-m", "pip", "list", "--outdated", "--format=json"}});
+            pythonProcess.runBlocking(20s);
+            QString output = pythonProcess.allOutput();
+
+            // Only the first line contains the json data. Following lines might contain warnings.
+            if (int index = output.indexOf('\n'); index >= 0)
+                output.truncate(index);
+
+            const QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8());
+            for (const QJsonValue &value : doc.array()) {
+                if (value.toObject().value("name") == "python-lsp-server")
+                    return {PythonLanguageServerState::Updatable, lspPath};
+            }
+        }
+        return {PythonLanguageServerState::Installed, lspPath};
+    }
+
+    if (pipAvailable)
+        return {PythonLanguageServerState::Installable, lspPath};
+    return {PythonLanguageServerState::NotInstallable, FilePath()};
 }
 
 
@@ -141,14 +130,18 @@ public:
 protected:
     void startImpl() override
     {
-        if (!m_cmd.executable().needsDevice()) {
-            // todo check where to put this tempdir in remote setups
-            Environment env = Environment::systemEnvironment();
-            env.appendOrSet("PYTHONPATH",
-                            m_extraPythonPath.path().toString(),
-                            OsSpecificAspects::pathListSeparator(env.osType()));
-            setEnvironment(env);
+        const FilePath python = m_cmd.executable();
+        Environment env = python.deviceEnvironment();
+        const FilePath lspPath = pyLspPath(python);
+        if (!lspPath.isEmpty() && lspPath.exists() && QTC_GUARD(lspPath.isSameDevice(python))) {
+            env.appendOrSet("PYTHONPATH", lspPath.path());
         }
+        if (!python.needsDevice()) {
+            // todo check where to put this tempdir in remote setups
+            env.appendOrSet("PYTHONPATH", m_extraPythonPath.path().toString());
+        }
+        if (env.hasChanges())
+            setEnvironment(env);
         StdIOClientInterface::startImpl();
     }
 };
@@ -158,7 +151,7 @@ PyLSClient *clientForPython(const FilePath &python)
     if (auto client = pythonClients()[python])
         return client;
     auto interface = new PyLSInterface;
-    interface->setCommandLine(CommandLine(python, {"-m", "pylsp"}));
+    interface->setCommandLine({python, {"-m", "pylsp"}});
     auto client = new PyLSClient(interface);
     client->setName(Tr::tr("Python Language Server (%1)").arg(python.toUserOutput()));
     client->setActivateDocumentAutomatically(true);
@@ -207,12 +200,13 @@ void PyLSClient::openDocument(TextEditor::TextDocument *document)
         const FilePath documentPath = document->filePath();
         if (PythonProject *project = pythonProjectForFile(documentPath)) {
             if (Target *target = project->activeTarget()) {
-                if (RunConfiguration *rc = target->activeRunConfiguration())
-                    if (auto aspect = rc->aspect<InterpreterAspect>()) {
-                        updateExtraCompilers(project,
-                                             static_cast<PythonInterpreterAspect *>(aspect)
-                                                 ->extraCompilers());
+                if (BuildConfiguration *buildConfig = target->activeBuildConfiguration()) {
+                    if (BuildStepList *buildSteps = buildConfig->buildSteps()) {
+                        BuildStep *buildStep = buildSteps->firstStepWithId(PySideBuildStep::id());
+                        if (auto *pythonBuildStep = qobject_cast<PySideBuildStep *>(buildStep))
+                            updateExtraCompilers(project, pythonBuildStep->extraCompilers());
                     }
+                }
             }
         } else if (isSupportedDocument(document)) {
             const FilePath workspacePath = documentPath.parentDir();
@@ -282,14 +276,30 @@ PyLSClient *PyLSClient::clientForPython(const FilePath &python)
     return pythonClients()[python];
 }
 
-PyLSConfigureAssistant *PyLSConfigureAssistant::instance()
+class PyLSConfigureAssistant : public QObject
 {
-    static auto *instance = new PyLSConfigureAssistant(PythonPlugin::instance());
-    return instance;
-}
+public:
+    PyLSConfigureAssistant();
+
+    void handlePyLSState(const FilePath &python,
+                         const PythonLanguageServerState &state,
+                         TextEditor::TextDocument *document);
+    void resetEditorInfoBar(TextEditor::TextDocument *document);
+    void installPythonLanguageServer(const FilePath &python,
+                                     QPointer<TextEditor::TextDocument> document,
+                                     const FilePath &pylsPath, bool silent, bool upgrade);
+    void openDocument(const FilePath &python, TextEditor::TextDocument *document);
+
+    QHash<FilePath, QList<TextEditor::TextDocument *>> m_infoBarEntries;
+    QHash<TextEditor::TextDocument *, QPointer<QFutureWatcher<PythonLanguageServerState>>>
+        m_runningChecks;
+};
 
 void PyLSConfigureAssistant::installPythonLanguageServer(const FilePath &python,
-                                                         QPointer<TextEditor::TextDocument> document)
+                                                         QPointer<TextEditor::TextDocument> document,
+                                                         const FilePath &pylsPath,
+                                                         bool silent,
+                                                         bool upgrade)
 {
     document->infoBar()->removeInfo(installPylsInfoBarId);
 
@@ -300,7 +310,8 @@ void PyLSConfigureAssistant::installPythonLanguageServer(const FilePath &python,
 
     auto install = new PipInstallTask(python);
 
-    connect(install, &PipInstallTask::finished, this, [=](const bool success) {
+    connect(install, &PipInstallTask::finished, this,
+            [this, python, document, install](const bool success) {
         const QList<TextEditor::TextDocument *> additionalDocuments = m_infoBarEntries.take(python);
         if (success) {
             if (PyLSClient *client = clientForPython(python)) {
@@ -313,16 +324,20 @@ void PyLSConfigureAssistant::installPythonLanguageServer(const FilePath &python,
         install->deleteLater();
     });
 
+    install->setTargetPath(pylsPath);
     install->setPackages({PipPackage{"python-lsp-server[all]", "Python Language Server"}});
+    install->setUpgrade(upgrade);
+    install->setSilent(silent);
     install->run();
 }
 
-void PyLSConfigureAssistant::openDocumentWithPython(const FilePath &python,
-                                                    TextEditor::TextDocument *document)
+void PyLSConfigureAssistant::openDocument(const FilePath &python, TextEditor::TextDocument *document)
 {
-    instance()->resetEditorInfoBar(document);
-    if (!PythonSettings::pylsEnabled())
+    resetEditorInfoBar(document);
+    if (!PythonSettings::pylsEnabled() || !python.exists()
+        || !Core::DocumentModel::entryForDocument(document)) {
         return;
+    }
 
     if (auto client = pythonClients().value(python)) {
         LanguageClientManager::openDocumentWithClient(document, client);
@@ -333,46 +348,80 @@ void PyLSConfigureAssistant::openDocumentWithPython(const FilePath &python,
     QPointer<CheckPylsWatcher> watcher = new CheckPylsWatcher();
 
     // cancel and delete watcher after a 10 second timeout
-    QTimer::singleShot(10000, instance(), [watcher]() {
+    QTimer::singleShot(10000, this, [watcher]() {
         if (watcher) {
             watcher->cancel();
             watcher->deleteLater();
         }
     });
 
-    connect(watcher,
-            &CheckPylsWatcher::resultReadyAt,
-            instance(),
-            [=, document = QPointer<TextEditor::TextDocument>(document)]() {
+    connect(watcher, &CheckPylsWatcher::resultReadyAt, this,
+            [this, watcher, python, document = QPointer<TextEditor::TextDocument>(document)] {
                 if (!document || !watcher)
                     return;
-                instance()->handlePyLSState(python, watcher->result(), document);
-                watcher->deleteLater();
+                handlePyLSState(python, watcher->result(), document);
             });
+    connect(watcher, &CheckPylsWatcher::finished, watcher, &CheckPylsWatcher::deleteLater);
+    connect(watcher, &CheckPylsWatcher::finished, this, [this, document] {
+        m_runningChecks.remove(document);
+    });
     watcher->setFuture(Utils::asyncRun(&checkPythonLanguageServer, python));
+    m_runningChecks[document] = watcher;
 }
 
 void PyLSConfigureAssistant::handlePyLSState(const FilePath &python,
                                              const PythonLanguageServerState &state,
                                              TextEditor::TextDocument *document)
 {
-    if (state.state == PythonLanguageServerState::CanNotBeInstalled)
+    if (state.state == PythonLanguageServerState::NotInstallable)
         return;
 
-    Utils::InfoBar *infoBar = document->infoBar();
-    if (state.state == PythonLanguageServerState::CanBeInstalled
+    InfoBar *infoBar = document->infoBar();
+    if (state.state == PythonLanguageServerState::Installable
         && infoBar->canInfoBeAdded(installPylsInfoBarId)) {
         auto message = Tr::tr("Install Python language server (PyLS) for %1 (%2). "
                               "The language server provides Python specific completion and annotation.")
                            .arg(pythonName(python), python.toUserOutput());
-        Utils::InfoBarEntry info(installPylsInfoBarId,
-                                 message,
-                                 Utils::InfoBarEntry::GlobalSuppression::Enabled);
-        info.addCustomButton(Tr::tr("Install"),
-                             [=]() { installPythonLanguageServer(python, document); });
+        InfoBarEntry info(installPylsInfoBarId, message, InfoBarEntry::GlobalSuppression::Enabled);
+        info.addCustomButton(Tr::tr("Install"), [this, python, document, state] {
+            installPythonLanguageServer(python, document, state.pylsModulePath, false, false);
+        });
         infoBar->addInfo(info);
         m_infoBarEntries[python] << document;
-    } else if (state.state == PythonLanguageServerState::AlreadyInstalled) {
+    } else if (state.state == PythonLanguageServerState::Updatable) {
+        if (infoBar->canInfoBeAdded(updatePylsInfoBarId)) {
+            auto message = Tr::tr("Update Python language server (PyLS) for %1 (%2).")
+                               .arg(pythonName(python), python.toUserOutput());
+            InfoBarEntry info(updatePylsInfoBarId, message);
+            info.addCustomButton(Tr::tr("Always Update"), [this, python, document, state] {
+                document->infoBar()->removeInfo(updatePylsInfoBarId);
+                Core::ICore::settings()->setValue(alwaysUpdateKey, true);
+                InfoBar::globallySuppressInfo(updatePylsInfoBarId);
+                installPythonLanguageServer(python, document, state.pylsModulePath, false, true);
+            });
+            info.addCustomButton(Tr::tr("Update"), [this, python, document, state] {
+                document->infoBar()->removeInfo(updatePylsInfoBarId);
+                installPythonLanguageServer(python, document, state.pylsModulePath, false, true);
+            });
+            info.addCustomButton(Tr::tr("Never"), [document, python] {
+                document->infoBar()->removeInfo(updatePylsInfoBarId);
+                InfoBar::globallySuppressInfo(updatePylsInfoBarId);
+                if (auto client = clientForPython(python))
+                    LanguageClientManager::openDocumentWithClient(document, client);
+            });
+            info.setCancelButtonInfo([python, document]{
+                if (auto client = clientForPython(python))
+                    LanguageClientManager::openDocumentWithClient(document, client);
+            });
+            infoBar->addInfo(info);
+
+            m_infoBarEntries[python] << document;
+        } else if (Core::ICore::settings()->value(alwaysUpdateKey, false).toBool()) {
+            installPythonLanguageServer(python, document, state.pylsModulePath, true, true);
+        } else if (auto client = clientForPython(python)) {
+            LanguageClientManager::openDocumentWithClient(document, client);
+        }
+    } else if (state.state == PythonLanguageServerState::Installed) {
         if (auto client = clientForPython(python))
             LanguageClientManager::openDocumentWithClient(document, client);
     }
@@ -383,10 +432,11 @@ void PyLSConfigureAssistant::resetEditorInfoBar(TextEditor::TextDocument *docume
     for (QList<TextEditor::TextDocument *> &documents : m_infoBarEntries)
         documents.removeAll(document);
     document->infoBar()->removeInfo(installPylsInfoBarId);
+    if (auto watcher = m_runningChecks.value(document))
+        watcher->cancel();
 }
 
-PyLSConfigureAssistant::PyLSConfigureAssistant(QObject *parent)
-    : QObject(parent)
+PyLSConfigureAssistant::PyLSConfigureAssistant()
 {
     Core::EditorManager::instance();
 
@@ -397,6 +447,17 @@ PyLSConfigureAssistant::PyLSConfigureAssistant(QObject *parent)
                 if (auto textDocument = qobject_cast<TextEditor::TextDocument *>(document))
                     resetEditorInfoBar(textDocument);
             });
+}
+
+static PyLSConfigureAssistant &pyLSConfigureAssistant()
+{
+    static PyLSConfigureAssistant thePyLSConfigureAssistant;
+    return thePyLSConfigureAssistant;
+}
+
+void openDocumentWithPython(const FilePath &python, TextEditor::TextDocument *document)
+{
+    pyLSConfigureAssistant().openDocument(python, document);
 }
 
 } // Python::Internal

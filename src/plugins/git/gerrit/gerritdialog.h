@@ -6,7 +6,6 @@
 #include <utils/filepath.h>
 
 #include <QDialog>
-#include <QSharedPointer>
 #include <QTimer>
 
 #include <functional>
@@ -27,12 +26,10 @@ class ProgressIndicator;
 class TreeView;
 } // Utils
 
-namespace Gerrit {
-namespace Internal {
+namespace Gerrit::Internal {
 
 class GerritChange;
 class GerritModel;
-class GerritParameters;
 class GerritRemoteChooser;
 class GerritServer;
 
@@ -40,22 +37,21 @@ class GerritDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit GerritDialog(const QSharedPointer<GerritParameters> &p,
-                          const QSharedPointer<GerritServer> &s,
+    explicit GerritDialog(const std::shared_ptr<GerritServer> &s,
                           const Utils::FilePath &repository,
                           QWidget *parent = nullptr);
     ~GerritDialog() override;
     Utils::FilePath repositoryPath() const;
     void setCurrentPath(const Utils::FilePath &path);
-    void fetchStarted(const QSharedPointer<Gerrit::Internal::GerritChange> &change);
+    void fetchStarted(const std::shared_ptr<Gerrit::Internal::GerritChange> &change);
     void fetchFinished();
     void refresh();
     void scheduleUpdateRemotes();
 
 signals:
-    void fetchDisplay(const QSharedPointer<Gerrit::Internal::GerritChange> &);
-    void fetchCherryPick(const QSharedPointer<Gerrit::Internal::GerritChange> &);
-    void fetchCheckout(const QSharedPointer<Gerrit::Internal::GerritChange> &);
+    void fetchDisplay(const std::shared_ptr<Gerrit::Internal::GerritChange> &);
+    void fetchCherryPick(const std::shared_ptr<Gerrit::Internal::GerritChange> &);
+    void fetchCheckout(const std::shared_ptr<Gerrit::Internal::GerritChange> &);
 
 private:
     void slotCurrentChanged();
@@ -76,8 +72,7 @@ private:
     QPushButton *addActionButton(const QString &text, const std::function<void ()> &buttonSlot);
     void updateButtons();
 
-    const QSharedPointer<GerritParameters> m_parameters;
-    const QSharedPointer<GerritServer> m_server;
+    const std::shared_ptr<GerritServer> m_server;
     QSortFilterProxyModel *m_filterModel;
     GerritModel *m_model;
     QStringListModel *m_queryModel;
@@ -100,5 +95,4 @@ private:
     Utils::FancyLineEdit *m_queryLineEdit;
 };
 
-} // namespace Internal
-} // namespace Gerrit
+} // Gerrit::Internal

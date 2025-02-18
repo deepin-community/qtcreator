@@ -144,39 +144,14 @@ void Probe::restoreValues()
  /*!
   * \variable ResolvedGroup::files
   * \brief The files listed in the group item's "files" binding.
-  * Note that these do not include expanded wildcards.
   */
 
 /*!
  * \variable ResolvedGroup::wildcards
- * \brief Represents the wildcard elements in this group's "files" binding.
+ * \brief Represents the wildcard patterns in this group's "files" binding.
  *  If no wildcards are specified there, this variable is null.
  * \sa SourceWildCards
  */
-
-/*!
- * \brief Returns all files specified in the group item as source artifacts.
- * This includes the expanded list of wildcards.
- */
-std::vector<SourceArtifactPtr> ResolvedGroup::allFiles() const
-{
-    std::vector<SourceArtifactPtr> lst = files;
-    if (wildcards)
-        lst << wildcards->files;
-    return lst;
-}
-
-void ResolvedGroup::load(PersistentPool &pool)
-{
-    serializationOp<PersistentPool::Load>(pool);
-    if (wildcards)
-        wildcards->group = this;
-}
-
-void ResolvedGroup::store(PersistentPool &pool)
-{
-    serializationOp<PersistentPool::Store>(pool);
-}
 
 /*!
  * \class RuleArtifact
@@ -331,8 +306,10 @@ void ResolvedProduct::accept(BuildGraphVisitor *visitor) const
 std::vector<SourceArtifactPtr> ResolvedProduct::allFiles() const
 {
     std::vector<SourceArtifactPtr> lst;
-    for (const auto &group : groups)
-        lst << group->allFiles();
+    for (const auto &group : groups) {
+        if (group->files)
+            lst << *group->files;
+    }
     return lst;
 }
 
@@ -344,8 +321,8 @@ std::vector<SourceArtifactPtr> ResolvedProduct::allEnabledFiles() const
 {
     std::vector<SourceArtifactPtr> lst;
     for (const auto &group : groups) {
-        if (group->enabled)
-            lst << group->allFiles();
+        if (group->enabled && group->files)
+            lst << *group->files;
     }
     return lst;
 }
@@ -381,6 +358,8 @@ void ResolvedProduct::load(PersistentPool &pool)
         rule->product = this;
     for (const ResolvedModulePtr &module : modules)
         module->product = this;
+    for (const auto &group: groups)
+        group->restoreWildcards(buildDirectory());
 }
 
 void ResolvedProduct::store(PersistentPool &pool)
@@ -510,6 +489,21 @@ QString ResolvedProduct::cachedExecutablePath(const QString &origFilePath) const
     return m_executablePathCache.value(origFilePath);
 }
 
+void ResolvedGroup::restoreWildcards(const QString &buildDir)
+{
+    if (!files)
+        return;
+    if (wildcards) {
+        wildcards->buildDir = buildDir;
+        wildcards->prefix = prefix;
+        wildcards->baseDir = FileInfo::path(location.filePath());
+        for (const auto &sourceArtifact : *files) {
+            if (sourceArtifact->fromWildcard)
+                wildcards->expandedFiles += sourceArtifact->absoluteFilePath;
+        }
+    }
+}
+
 
 ResolvedProject::ResolvedProject() : enabled(true), m_topLevelProject(nullptr)
 {
@@ -613,8 +607,8 @@ QString TopLevelProject::profile() const
 
 void TopLevelProject::makeModuleProvidersNonTransient()
 {
-    for (ModuleProviderInfo &m : moduleProviderInfo.providers)
-        m.transientOutput = false;
+    for (auto &item : moduleProviderInfo.providers)
+        item.second.transientOutput = false;
 }
 
 QVariantMap TopLevelProject::fullProfileConfigsTree() const
@@ -673,7 +667,8 @@ void TopLevelProject::store(PersistentPool &pool)
 void TopLevelProject::cleanupModuleProviderOutput()
 {
     QString error;
-    for (const ModuleProviderInfo &m : std::as_const(moduleProviderInfo.providers)) {
+    for (const auto &item : std::as_const(moduleProviderInfo.providers)) {
+        const ModuleProviderInfo &m = item.second;
         if (m.transientOutput) {
             if (!removeDirectoryWithContents(m.outputDirPath(buildDirectory), &error))
                 qCWarning(lcBuildGraph) << "Error removing module provider output:" << error;
@@ -717,19 +712,16 @@ void TopLevelProject::cleanupModuleProviderOutput()
  * \brief The \c SourceArtifacts resulting from the expanded list of matching files.
  */
 
-Set<QString> SourceWildCards::expandPatterns(const GroupConstPtr &group,
-                                              const QString &baseDir, const QString &buildDir)
+void SourceWildCards::expandPatterns()
 {
-    Set<QString> files = expandPatterns(group, patterns, baseDir, buildDir);
-    files -= expandPatterns(group, excludePatterns, baseDir, buildDir);
-    return files;
+    dirTimeStamps.clear();
+    expandedFiles = expandPatterns(patterns) - expandPatterns(excludePatterns);
 }
 
-Set<QString> SourceWildCards::expandPatterns(const GroupConstPtr &group,
-        const QStringList &patterns, const QString &baseDir, const QString &buildDir)
+Set<QString> SourceWildCards::expandPatterns(const QStringList &patterns)
 {
     Set<QString> files;
-    QString expandedPrefix = group->prefix;
+    QString expandedPrefix = prefix;
     if (expandedPrefix.startsWith(StringConstants::tildeSlash()))
         expandedPrefix.replace(0, 1, QDir::homePath());
     for (QString pattern : patterns) {
@@ -745,26 +737,23 @@ Set<QString> SourceWildCards::expandPatterns(const GroupConstPtr &group,
             } else {
                 rootDir = QLatin1Char('/');
             }
-            expandPatterns(files, group, parts, rootDir, buildDir);
+            expandPatterns(files, parts, rootDir);
         } else {
-            expandPatterns(files, group, parts, baseDir, buildDir);
+            expandPatterns(files, parts, baseDir);
         }
     }
 
     return files;
 }
 
-void SourceWildCards::expandPatterns(Set<QString> &result, const GroupConstPtr &group,
-                                     const QStringList &parts,
-                                     const QString &baseDir, const QString &buildDir)
+void SourceWildCards::expandPatterns(Set<QString> &result, const QStringList &parts,
+                                     const QString &baseDir)
 {
     // People might build directly in the project source directory. This is okay, since
     // we keep the build data in a "container" directory. However, we must make sure we don't
     // match any generated files therein as source files.
     if (baseDir.startsWith(buildDir))
         return;
-
-    dirTimeStamps.emplace_back(baseDir, FileInfo(baseDir).lastModified());
 
     QStringList changed_parts = parts;
     bool recursive = false;
@@ -792,8 +781,12 @@ void SourceWildCards::expandPatterns(Set<QString> &result, const GroupConstPtr &
             : QDir::Files | QDir::System
               | QDir::Dirs; // This one is needed to get symbolic links to directories
 
-    if (isDir && !FileInfo::isPattern(filePattern))
+    if (FileInfo::isPattern(filePattern)) {
+        if (!recursive)
+            dirTimeStamps.emplace_back(baseDir, FileInfo(baseDir).lastModified());
+    } else if (isDir) {
         itFilters |= QDir::Hidden;
+    }
     if (filePattern != StringConstants::dotDot() && filePattern != StringConstants::dot())
         itFilters |= QDir::NoDotAndDotDot;
 
@@ -805,14 +798,26 @@ void SourceWildCards::expandPatterns(Set<QString> &result, const GroupConstPtr &
             continue; // See above.
         if (!isDir && it.fileInfo().isDir() && !it.fileInfo().isSymLink())
             continue;
-        if (isDir) {
-            expandPatterns(result, group, changed_parts, filePath, buildDir);
-        } else {
-            if (parentDir != baseDir)
-                dirTimeStamps.emplace_back(parentDir, FileInfo(baseDir).lastModified());
+        if (isDir)
+            expandPatterns(result, changed_parts, filePath);
+        else
             result += QDir::cleanPath(filePath);
-        }
     }
+}
+
+bool SourceWildCards::hasChangedSinceExpansion() const
+{
+    const bool reExpansionRequired =
+        Internal::any_of(dirTimeStamps,
+                         [](const std::pair<QString, FileTime> &pair) {
+                             return FileInfo(pair.first).lastModified() > pair.second;
+                         });
+    if (reExpansionRequired)
+        return true;
+
+    auto wc = *this;
+    wc.expandPatterns();
+    return this->expandedFiles != wc.expandedFiles;
 }
 
 template<typename L>
@@ -938,7 +943,7 @@ bool operator==(const ExportedProperty &p1, const ExportedProperty &p2)
 
 bool operator==(const ExportedModuleDependency &d1, const ExportedModuleDependency &d2)
 {
-    return d1.name == d2.name && d1.moduleProperties == d2.moduleProperties;
+    return d1.name == d2.name && qVariantMapsEqual(d1.moduleProperties, d2.moduleProperties);
 }
 
 bool equals(const std::vector<ExportedItemPtr> &l1, const std::vector<ExportedItemPtr> &l2)
@@ -965,20 +970,19 @@ bool operator==(const ExportedModule &m1, const ExportedModule &m2)
         for (auto it1 = m1.cbegin(), it2 = m2.cbegin(); it1 != m1.cend(); ++it1, ++it2) {
             if (it1.key()->name != it2.key()->name)
                 return false;
-            if (it1.value() != it2.value())
+            if (!qVariantMapsEqual(it1.value(), it2.value()))
                 return false;
         }
         return true;
     };
 
-    return m1.propertyValues == m2.propertyValues
-            && m1.modulePropertyValues == m2.modulePropertyValues
-            && equals(m1.children, m2.children)
-            && m1.m_properties == m2.m_properties
-            && m1.importStatements == m2.importStatements
-            && m1.productDependencies.size() == m2.productDependencies.size()
-            && m1.productDependencies == m2.productDependencies
-            && depMapsEqual(m1.dependencyParameters, m2.dependencyParameters);
+    return qVariantMapsEqual(m1.propertyValues, m2.propertyValues)
+           && qVariantMapsEqual(m1.modulePropertyValues, m2.modulePropertyValues)
+           && equals(m1.children, m2.children) && m1.m_properties == m2.m_properties
+           && m1.importStatements == m2.importStatements
+           && m1.productDependencies.size() == m2.productDependencies.size()
+           && m1.productDependencies == m2.productDependencies
+           && depMapsEqual(m1.dependencyParameters, m2.dependencyParameters);
 }
 
 JSValue PrivateScriptFunction::getFunction(ScriptEngine *engine, const QString &errorMessage) const

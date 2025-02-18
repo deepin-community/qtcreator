@@ -12,6 +12,7 @@
 
 namespace Utils {
 class FilePath;
+using FilePaths = QList<FilePath>;
 class Key;
 } // Utils
 
@@ -34,6 +35,7 @@ public:
     static QStringList sessions();
     static QDateTime sessionDateTime(const QString &session);
     static QDateTime lastActiveTime(const QString &session);
+    static int sessionsCount();
 
     static bool createSession(const QString &session);
 
@@ -69,6 +71,8 @@ public:
 
     static bool loadSession(const QString &session, bool initial = false);
     static bool saveSession();
+
+    static Utils::FilePaths openFilesForSessionName(const QString &session, int max = -1);
 
 signals:
     void startupSessionRestored();

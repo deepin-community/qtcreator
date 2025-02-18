@@ -3,11 +3,13 @@
 
 #include "webassemblyemsdk.h"
 
+#include "webassemblyconstants.h"
+
 #include <coreplugin/icore.h>
 #include <coreplugin/settingsdatabase.h>
 
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/hostosinfo.h>
 
 #include <QCache>
@@ -26,7 +28,7 @@ const char emSdkVersionKey[] = "WebAssembly/emSdkVersion1";
 
 const FilePath timeStampFile(const FilePath &sdkRoot)
 {
-    return sdkRoot / ".emscripten";
+    return sdkRoot / Constants::WEBASSEMBLY_EMSDK_CONFIG_FILE;
 }
 
 static QString emSdkEnvOutput(const FilePath &sdkRoot)
@@ -51,7 +53,9 @@ static QString emSdkEnvOutput(const FilePath &sdkRoot)
         emSdkEnv.setCommand(CommandLine(scriptFile));
     } else {
         // File needs to be source'd, not executed.
-        emSdkEnv.setCommand({sdkRoot.withNewPath("bash"), {"-c", ". " + scriptFile.path()}});
+        CommandLine cmd{sdkRoot.withNewPath("bash"), {"-c"}};
+        cmd.addCommandLineAsSingleArg({".", {scriptFile.path()}});
+        emSdkEnv.setCommand(cmd);
     }
     emSdkEnv.runBlocking();
     const QString result = emSdkEnv.allOutput();

@@ -5,6 +5,8 @@
 
 #include "androidconfigurations.h"
 
+#include <solutions/tasking/tasktreerunner.h>
+
 #include <QDialog>
 #include <QRegularExpression>
 #include <QTimer>
@@ -20,7 +22,6 @@ QT_END_NAMESPACE
 namespace Utils { class InfoLabel; }
 
 namespace Android {
-class AndroidConfig;
 class SdkPlatform;
 
 namespace Internal {
@@ -30,12 +31,11 @@ class AndroidSdkManager;
 class AvdDialog : public QDialog
 {
 public:
-    explicit AvdDialog(const AndroidConfig &config, QWidget *parent = nullptr);
-    int exec() override;
+    explicit AvdDialog(QWidget *parent = nullptr);
+    CreateAvdInfo avdInfo() const;
 
-    enum DeviceType { Phone, Tablet, Automotive, TV, Wear, PhoneOrTablet };
-
-    ProjectExplorer::IDevice::Ptr device() const;
+private:
+    enum DeviceType { Phone, Tablet, Automotive, TV, Wear, Desktop, PhoneOrTablet };
 
     const SystemImage *systemImage() const;
     QString name() const;
@@ -44,13 +44,14 @@ public:
     int sdcardSize() const;
     bool isValid() const;
 
-private:
-    void parseDeviceDefinitionsList();
     void updateDeviceDefinitionComboBox();
     void updateApiLevelComboBox();
     bool eventFilter(QObject *obj, QEvent *event) override;
 
     static AvdDialog::DeviceType tagToDeviceType(const QString &type_tag);
+
+    void collectInitialData();
+    void createAvd();
 
     struct DeviceDefinitionStruct
     {
@@ -63,10 +64,9 @@ private:
     QTimer m_hideTipTimer;
     QRegularExpression m_allowedNameChars;
     QList<DeviceDefinitionStruct> m_deviceDefinitionsList;
-    const AndroidConfig &m_androidConfig;
-    AndroidSdkManager m_sdkManager;
     QMap<AvdDialog::DeviceType, QString> m_deviceTypeToStringMap;
 
+    QWidget *m_gui;
     QComboBox *m_abiComboBox;
     QSpinBox *m_sdcardSizeSpinBox;
     QLineEdit *m_nameLineEdit;
@@ -76,6 +76,7 @@ private:
     QComboBox *m_deviceDefinitionTypeComboBox;
     QCheckBox *m_overwriteCheckBox;
     QDialogButtonBox *m_buttonBox;
+    Tasking::TaskTreeRunner m_taskTreeRunner;
 };
 
 } // Internal

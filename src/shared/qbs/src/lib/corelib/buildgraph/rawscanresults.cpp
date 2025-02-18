@@ -48,16 +48,16 @@ namespace qbs {
 namespace Internal {
 
 RawScanResults::ScanData &RawScanResults::findScanData(
-        const FileResourceBase *file,
-        const DependencyScanner *scanner,
-        const PropertyMapConstPtr &moduleProperties)
+    const FileResourceBase *file,
+    const QString &scannerId,
+    const PropertyMapConstPtr &moduleProperties,
+    const FilterFunction &filter)
 {
     std::vector<ScanData> &scanDataForFile = m_rawScanData[file->filePath()];
-    const QString &scannerId = scanner->id();
     for (auto &scanData : scanDataForFile) {
         if (scannerId != scanData.scannerId)
             continue;
-        if (!scanner->areModulePropertiesCompatible(moduleProperties, scanData.moduleProperties))
+        if (!filter(moduleProperties, scanData.moduleProperties))
             continue;
         return scanData;
     }
@@ -66,6 +66,17 @@ RawScanResults::ScanData &RawScanResults::findScanData(
     newScanData.moduleProperties = moduleProperties;
     scanDataForFile.push_back(std::move(newScanData));
     return scanDataForFile.back();
+}
+
+RawScanResults::ScanData &RawScanResults::findScanData(
+    const FileResourceBase *file,
+    const DependencyScanner *scanner,
+    const PropertyMapConstPtr &moduleProperties)
+{
+    auto predicate = [scanner](const PropertyMapConstPtr &lhs, const PropertyMapConstPtr &rhs) {
+        return scanner->areModulePropertiesCompatible(lhs, rhs);
+    };
+    return findScanData(file, scanner->id(), moduleProperties, predicate);
 }
 
 } // namespace Internal

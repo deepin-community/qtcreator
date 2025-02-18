@@ -4,6 +4,7 @@
 #include "highlightscrollbarcontroller.h"
 
 #include <QAbstractScrollArea>
+#include <QLoggingCategory>
 #include <QPainter>
 #include <QResizeEvent>
 #include <QScrollBar>
@@ -11,6 +12,8 @@
 #include <QStyleOptionSlider>
 
 using namespace Utils;
+
+static Q_LOGGING_CATEGORY(LOG, "qtc.utils.highlightscrollbar", QtWarningMsg)
 
 namespace Core {
 
@@ -37,7 +40,7 @@ public:
         scrollBar()->parentWidget()->installEventFilter(this);
         doResize();
         doMove();
-        show();
+        setVisible(scrollBar()->isVisible());
     }
 
     void doResize()
@@ -190,7 +193,7 @@ void HighlightScrollBarOverlay::drawHighlights(QPainter *painter,
     for (const QMap<Utils::Theme::Color, QMap<int, int>> &colors : std::as_const(m_highlightCache)) {
         const auto itColorEnd = colors.constEnd();
         for (auto itColor = colors.constBegin(); itColor != itColorEnd; ++itColor) {
-            const QColor &color = creatorTheme()->color(itColor.key());
+            const QColor &color = creatorColor(itColor.key());
             const QMap<int, int> &positions = itColor.value();
             const auto itPosEnd = positions.constEnd();
             const auto firstPos = int(docStart / lineHeight);
@@ -403,6 +406,7 @@ void HighlightScrollBarController::addHighlight(Highlight highlight)
     if (!m_overlay)
         return;
 
+    qCDebug(LOG) << "addHighlight" << highlight.category.toString() << highlight.position;
     m_highlights[highlight.category] << highlight;
     m_overlay->scheduleUpdate();
 }
@@ -412,6 +416,7 @@ void HighlightScrollBarController::removeHighlights(Id category)
     if (!m_overlay)
         return;
 
+    qCDebug(LOG) << "removeHighlights" << category.toString();
     m_highlights.remove(category);
     m_overlay->scheduleUpdate();
 }
@@ -421,6 +426,7 @@ void HighlightScrollBarController::removeAllHighlights()
     if (!m_overlay)
         return;
 
+    qCDebug(LOG) << "removeAllHighlights";
     m_highlights.clear();
     m_overlay->scheduleUpdate();
 }

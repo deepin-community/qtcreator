@@ -19,7 +19,7 @@
 
 // Nanotrace headers are not exported to build dir at all if the feature is disabled, so
 // runtime puppet build can't find them.
-#if NANOTRACE_ENABLED
+#if NANOTRACE_DESIGNSTUDIO_ENABLED
 #include "nanotrace/nanotrace.h"
 #else
 #define NANOTRACE_SCOPE(cat, name)
@@ -46,7 +46,12 @@
 #define USE_PIPELINE_CACHE 1
 
 #if defined(QUICK3D_MODULE) && QT_VERSION >= QT_VERSION_CHECK(6, 5, 2)
+#if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
 #include <QtQuick3DRuntimeRender/private/qssgrendercontextcore_p.h>
+#else
+#include <QtQuick3DRuntimeRender/private/qssgrendershadercache_p.h>
+#include <QtQuick3DRuntimeRender/ssg/qssgrendercontextcore.h>
+#endif
 #include <QtQuick3D/private/qquick3dscenemanager_p.h>
 #define USE_SHADER_CACHE 1
 #endif
@@ -84,6 +89,7 @@ void Qt5NodeInstanceServer::initializeView()
 
     m_viewData.renderControl = new QQuickRenderControl;
     m_viewData.window = new QQuickWindow(m_viewData.renderControl);
+    m_viewData.window->setColor(Qt::transparent);
     setPipelineCacheConfig(m_viewData.window);
     m_viewData.renderControl->initialize();
     m_qmlEngine = new QQmlEngine;
@@ -216,7 +222,7 @@ void Qt5NodeInstanceServer::savePipelineCacheData()
     if (needWrite) {
         m_pipelineCacheData = pipelineData;
 
-        QTimer::singleShot(0, this, [this]() {
+        QTimer::singleShot(0, this, [this] {
             QFile cacheFile(m_pipelineCacheFile);
 
             // Cache file can grow indefinitely, so let's just purge it every so often.
@@ -263,19 +269,12 @@ void Qt5NodeInstanceServer::setPipelineCacheConfig([[maybe_unused]] QQuickWindow
 #ifdef USE_SHADER_CACHE
     QtQuick3DEditorHelpers::ShaderCache::setAutomaticDiskCache(false);
     auto wa = QQuick3DSceneManager::getOrSetWindowAttachment(*w);
-    connect(wa, &QQuick3DWindowAttachment::renderContextInterfaceChanged,
-            this, &Qt5NodeInstanceServer::handleRciSet);
+    connect(wa, &QQuick3DWindowAttachment::renderContextInterfaceChanged, this, [this, wa] {
+        auto context = wa->rci().get();
+        if (context && context->shaderCache())
+            context->shaderCache()->persistentShaderBakingCache().load(m_shaderCacheFile);
+    });
 #endif
-#endif
-}
-
-void Qt5NodeInstanceServer::handleRciSet()
-{
-#ifdef USE_SHADER_CACHE
-    auto wa = qobject_cast<QQuick3DWindowAttachment *>(sender());
-    auto context = wa ? wa->rci().get() : nullptr;
-    if (context && context->shaderCache())
-        context->shaderCache()->persistentShaderBakingCache().load(m_shaderCacheFile);
 #endif
 }
 
@@ -381,9 +380,11 @@ QImage Qt5NodeInstanceServer::grabRenderControl([[maybe_unused]] RenderViewData 
     QRhiReadbackResult readResult;
     readResult.completed = [&] {
         readCompleted = true;
-        QImage wrapperImage(reinterpret_cast<const uchar *>(readResult.data.constData()),
-                            readResult.pixelSize.width(), readResult.pixelSize.height(),
-                            QImage::Format_RGBA8888_Premultiplied);
+        QImage wrapperImage(
+            reinterpret_cast<const uchar *>(readResult.data.constData()),
+            readResult.pixelSize.width(),
+            readResult.pixelSize.height(),
+            QImage::Format_RGBA8888_Premultiplied);
         if (viewData.rhi->isYUpInFramebuffer())
             renderImage = wrapperImage.mirrored();
         else
@@ -421,7 +422,7 @@ QImage Qt5NodeInstanceServer::grabWindow()
     return  {};
 }
 
-static bool hasEffect(QQuickItem *item)
+bool Qt5NodeInstanceServer::hasEffect(QQuickItem *item)
 {
     QQuickItemPrivate *pItem = QQuickItemPrivate::get(item);
     return pItem && pItem->layer() && pItem->layer()->enabled() && pItem->layer()->effect();
@@ -438,9 +439,17 @@ QQuickItem *Qt5NodeInstanceServer::parentEffectItem(QQuickItem *item)
     return nullptr;
 }
 
-static bool isEffectItem(QQuickItem *item, QQuickShaderEffectSource *sourceItem)
+static bool isEffectItem(QQuickItem *item, QQuickShaderEffectSource *sourceItem, QQuickItem *target)
 {
     QQuickItemPrivate *pItem = QQuickItemPrivate::get(sourceItem);
+
+    if (item) {
+         QQmlProperty prop(item, "__effect");
+         if (prop.read().toBool()) {
+             prop = QQmlProperty(item, "source");
+             return prop.read().value<QQuickItem *>() == target;
+         }
+    }
 
     if (!pItem || !pItem->layer())
         return false;
@@ -479,7 +488,7 @@ QImage Qt5NodeInstanceServer::grabItem([[maybe_unused]] QQuickItem *item)
             if (auto parent = item->parentItem()) {
                 const auto siblings = parent->childItems();
                 for (auto sibling : siblings) {
-                    if (isEffectItem(sibling, pItem->layer()->effectSource()))
+                    if (isEffectItem(sibling, pItem->layer()->effectSource(), item))
                         return grabItem(sibling);
                 }
             }

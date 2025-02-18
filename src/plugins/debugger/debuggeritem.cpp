@@ -6,13 +6,15 @@
 #include "debuggerprotocol.h"
 #include "debuggertr.h"
 
+#include <coreplugin/icore.h>
+
 #include <projectexplorer/abi.h>
 
 #include <utils/algorithm.h>
 #include <utils/filepath.h>
 #include <utils/hostosinfo.h>
 #include <utils/macroexpander.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 #include <utils/utilsicons.h>
@@ -144,26 +146,17 @@ void DebuggerItem::reinitializeFromFile(QString *error, Utils::Environment *cust
     }
 
     Environment env = customEnv ? *customEnv : m_command.deviceEnvironment();
-
-    // Prevent calling lldb on Windows because the lldb from the llvm package is linked against
-    // python but does not contain a python dll.
-    const bool isAndroidNdkLldb = DebuggerItem::addAndroidLldbPythonEnv(m_command, env);
-    if (HostOsInfo::isWindowsHost() && m_command.fileName().startsWith("lldb")
-            && !isAndroidNdkLldb) {
-        QString errorMessage;
-        m_version = winGetDLLVersion(WinDLLFileVersion,
-                                     m_command.absoluteFilePath().path(),
-                                     &errorMessage);
-        m_engineType = LldbEngineType;
-        m_abis = Abi::abisOfBinary(m_command);
-        return;
-    }
+    DebuggerItem::addAndroidLldbPythonEnv(m_command, env);
 
     // QNX gdb unconditionally checks whether the QNX_TARGET env variable is
     // set and bails otherwise, even when it is not used by the specific
     // codepath triggered by the --version and --configuration arguments. The
     // hack below tricks it into giving us the information we want.
     env.set("QNX_TARGET", QString());
+
+    // On Windows, we need to prevent the Windows Error Reporting dialog from
+    // popping up when a candidate is missing required DLLs.
+    WindowsCrashDialogBlocker blocker;
 
     Process proc;
     proc.setEnvironment(env);
@@ -240,10 +233,6 @@ void DebuggerItem::reinitializeFromFile(QString *error, Utils::Environment *cust
         m_version = output.section(' ', 2);
         return;
     }
-    if (output.startsWith("Python")) {
-        m_engineType = PdbEngineType;
-        return;
-    }
     if (error)
         *error = output;
     m_engineType = NoEngineType;
@@ -283,6 +272,10 @@ QString DebuggerItem::engineTypeName() const
         return QLatin1String("CDB");
     case LldbEngineType:
         return QLatin1String("LLDB");
+    case GdbDapEngineType:
+        return QLatin1String("GDB DAP");
+    case LldbDapEngineType:
+        return QLatin1String("LLDB DAP");
     case UvscEngineType:
         return QLatin1String("UVSC");
     default:
@@ -313,24 +306,46 @@ QDateTime DebuggerItem::lastModified() const
     return m_lastModified;
 }
 
+DebuggerItem::Problem DebuggerItem::problem() const
+{
+    if (isGeneric() || !m_id.isValid()) // Id can only be invalid for the "none" item.
+        return Problem::None;
+    if (m_engineType == NoEngineType)
+        return Problem::NoEngine;
+    if (!m_command.isExecutableFile())
+        return Problem::InvalidCommand;
+    if (!m_workingDirectory.isEmpty() && !m_workingDirectory.isDir())
+        return Problem::InvalidWorkingDir;
+    return Problem::None;
+}
+
 QIcon DebuggerItem::decoration() const
 {
-    if (isGeneric())
-        return {};
-    if (m_engineType == NoEngineType)
+    switch (problem()) {
+    case Problem::NoEngine:
         return Icons::CRITICAL.icon();
-    if (!m_command.isExecutableFile())
+    case Problem::InvalidCommand:
+    case Problem::InvalidWorkingDir:
         return Icons::WARNING.icon();
-    if (!m_workingDirectory.isEmpty() && !m_workingDirectory.isDir())
-        return Icons::WARNING.icon();
+    case Problem::None:
+        break;
+    }
     return {};
 }
 
 QString DebuggerItem::validityMessage() const
 {
-    if (m_engineType == NoEngineType)
+    switch (problem()) {
+    case Problem::NoEngine:
         return Tr::tr("Could not determine debugger type");
-    return QString();
+    case Problem::InvalidCommand:
+        return Tr::tr("Invalid debugger command");
+    case Problem::InvalidWorkingDir:
+        return Tr::tr("Invalid working directory");
+    case Problem::None:
+        break;
+    }
+    return {};
 }
 
 bool DebuggerItem::operator==(const DebuggerItem &other) const
@@ -422,6 +437,12 @@ static DebuggerItem::MatchLevel matchSingle(const Abi &debuggerAbi, const Abi &t
             targetAbi.osFlavor() <= Abi::WindowsLastMsvcFlavor;
     if (!isMsvcTarget && (engineType == GdbEngineType || engineType == LldbEngineType))
         matchOnMultiarch = DebuggerItem::MatchesSomewhat;
+    // arm64 cdb can debug x64 targets
+    if (isMsvcTarget && engineType == CdbEngineType
+            && debuggerAbi.architecture() == Abi::ArmArchitecture
+            && targetAbi.architecture() == Abi::X86Architecture
+            && debuggerAbi.wordWidth() == 64 && targetAbi.wordWidth() == 64)
+        return DebuggerItem::MatchesSomewhat;
     if (debuggerAbi.architecture() != Abi::UnknownArchitecture
             && debuggerAbi.architecture() != targetAbi.architecture())
         return matchOnMultiarch;

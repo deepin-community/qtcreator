@@ -12,7 +12,6 @@
 #include "idevicefactory.h"
 #include "idevicewidget.h"
 #include "../projectexplorerconstants.h"
-#include "../projectexplorericons.h"
 #include "../projectexplorertr.h"
 
 #include <coreplugin/icore.h>
@@ -24,6 +23,7 @@
 #include <utils/qtcassert.h>
 
 #include <QComboBox>
+#include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -78,7 +78,7 @@ private:
     DeviceManager * const m_deviceManager;
     DeviceManagerModel * const m_deviceManagerModel;
     QList<QPushButton *> m_additionalActionButtons;
-    IDeviceWidget *m_configWidget;
+    IDeviceWidget *m_configWidget = nullptr;
 
     QLabel *m_configurationLabel;
     QComboBox *m_configurationComboBox;
@@ -92,13 +92,12 @@ private:
     QPushButton *m_defaultDeviceButton;
     QVBoxLayout *m_buttonsLayout;
     QWidget *m_deviceNameEditWidget;
-    QFormLayout *m_generalFormLayout;
+    QLayout *m_generalFormLayout;
 };
 
 DeviceSettingsWidget::DeviceSettingsWidget()
     : m_deviceManager(DeviceManager::cloneInstance())
     , m_deviceManagerModel(new DeviceManagerModel(m_deviceManager, this))
-    , m_configWidget(nullptr)
 {
     m_configurationLabel = new QLabel(Tr::tr("&Device:"));
     m_configurationComboBox = new QComboBox;
@@ -117,7 +116,7 @@ DeviceSettingsWidget::DeviceSettingsWidget()
     connect(addButton, &OptionPushButton::clicked, this, &DeviceSettingsWidget::addDevice);
 
     QMenu *deviceTypeMenu = new QMenu(addButton);
-    QAction *defaultAction = new QAction(Tr::tr("&Start Wizard to Add Device..."));
+    QAction *defaultAction = new QAction(Tr::tr("&Start Wizard to Add Device..."), this);
     connect(defaultAction, &QAction::triggered, this, &DeviceSettingsWidget::addDevice);
     deviceTypeMenu->addAction(defaultAction);
     deviceTypeMenu->addSeparator();
@@ -129,7 +128,7 @@ DeviceSettingsWidget::DeviceSettingsWidget()
             continue;
 
         //: Add <Device Type Name>
-        QAction *action = new QAction(Tr::tr("Add %1").arg(factory->displayName()));
+        QAction *action = new QAction(Tr::tr("Add %1").arg(factory->displayName()), this);
         deviceTypeMenu->addAction(action);
 
         connect(action, &QAction::triggered, this, [factory, this] {
@@ -158,7 +157,7 @@ DeviceSettingsWidget::DeviceSettingsWidget()
     }.attachTo(scrollAreaWidget);
 
     // Just a placeholder for the device name edit widget.
-    m_deviceNameEditWidget = new QWidget();
+    m_deviceNameEditWidget = new QWidget;
 
     // clang-format off
     Form {
@@ -190,7 +189,13 @@ DeviceSettingsWidget::DeviceSettingsWidget()
 
     addButton->setEnabled(hasDeviceFactories);
 
-    int lastIndex = ICore::settings()->value(LastDeviceIndexKey, 0).toInt();
+    int lastIndex = -1;
+    if (const Id deviceToSelect = preselectedOptionsPageItem(Constants::DEVICE_SETTINGS_PAGE_ID);
+        deviceToSelect.isValid()) {
+        lastIndex = m_deviceManagerModel->indexForId(deviceToSelect);
+    }
+    if (lastIndex == -1)
+        lastIndex = ICore::settings()->value(LastDeviceIndexKey, 0).toInt();
     if (lastIndex == -1)
         lastIndex = 0;
     if (lastIndex < m_configurationComboBox->count())
@@ -220,7 +225,7 @@ void DeviceSettingsWidget::addDevice()
     if (!factory)
         return;
     IDevice::Ptr device = factory->create();
-    if (device.isNull())
+    if (!device)
         return;
 
     Utils::asyncRun([device] { device->checkOsType(); });
@@ -249,20 +254,10 @@ void DeviceSettingsWidget::displayCurrent()
     m_autoDetectionLabel->setText(current->isAutoDetected()
             ? Tr::tr("Yes (id is \"%1\")").arg(current->id().toString()) : Tr::tr("No"));
     m_deviceStateIconLabel->show();
-    switch (current->deviceState()) {
-    case IDevice::DeviceReadyToUse:
-        m_deviceStateIconLabel->setPixmap(Icons::DEVICE_READY_INDICATOR.pixmap());
-        break;
-    case IDevice::DeviceConnected:
-        m_deviceStateIconLabel->setPixmap(Icons::DEVICE_CONNECTED_INDICATOR.pixmap());
-        break;
-    case IDevice::DeviceDisconnected:
-        m_deviceStateIconLabel->setPixmap(Icons::DEVICE_DISCONNECTED_INDICATOR.pixmap());
-        break;
-    case IDevice::DeviceStateUnknown:
+    if (const QPixmap &icon = current->deviceStateIcon(); !icon.isNull())
+        m_deviceStateIconLabel->setPixmap(icon);
+    else
         m_deviceStateIconLabel->hide();
-        break;
-    }
     m_deviceStateTextLabel->setText(current->deviceStateToString());
 
     m_removeConfigButton->setEnabled(!current->isAutoDetected()
@@ -279,7 +274,7 @@ void DeviceSettingsWidget::setDeviceInfoWidgetsEnabled(bool enable)
 
 void DeviceSettingsWidget::updateDeviceFromUi()
 {
-    currentDevice()->settings()->apply();
+    currentDevice()->doApply();
     if (m_configWidget)
         m_configWidget->updateDeviceFromUi();
 }
@@ -317,6 +312,9 @@ void DeviceSettingsWidget::testDevice()
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setModal(true);
     dlg->show();
+    connect(dlg, &QObject::destroyed, this, [this, id = device->id()] {
+        handleDeviceUpdated(id);
+    });
 }
 
 void DeviceSettingsWidget::handleDeviceUpdated(Id id)
@@ -333,7 +331,7 @@ void DeviceSettingsWidget::currentDeviceChanged(int index)
     m_configWidget = nullptr;
     m_additionalActionButtons.clear();
     const IDevice::ConstPtr device = m_deviceManagerModel->device(index);
-    if (device.isNull()) {
+    if (!device) {
         setDeviceInfoWidgetsEnabled(false);
         m_removeConfigButton->setEnabled(false);
         clearDetails();
@@ -341,11 +339,12 @@ void DeviceSettingsWidget::currentDeviceChanged(int index)
         return;
     }
 
-    Layouting::Column item{Layouting::noMargin()};
-    device->settings()->displayName.addToLayout(item);
+    Layouting::Column item{Layouting::noMargin};
+    device->addDisplayNameToLayout(item);
     QWidget *newEdit = item.emerge();
-    m_generalFormLayout->replaceWidget(m_deviceNameEditWidget, newEdit);
-
+    QLayoutItem *oldItem = m_generalFormLayout->replaceWidget(m_deviceNameEditWidget, newEdit);
+    QTC_CHECK(oldItem);
+    delete oldItem;
     delete m_deviceNameEditWidget;
     m_deviceNameEditWidget = newEdit;
 

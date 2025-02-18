@@ -4,28 +4,32 @@
 #include "texteditorwidget.h"
 #include "utils/uniqueobjectptr.h"
 
+#include <assetslibrarywidget.h>
+#include <coreplugin/findplaceholder.h>
+#include <qmlstate.h>
+#include <rewriterview.h>
 #include <texteditorstatusbar.h>
 #include <texteditorview.h>
-#include <coreplugin/findplaceholder.h>
-#include <rewriterview.h>
 
 #include <designeractionmanager.h>
+#include <nodeabstractproperty.h>
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
+#include <qmlitemnode.h>
 
 #include <theme.h>
 
 #include <utils/fileutils.h>
 
-#include <texteditor/textdocument.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <texteditor/textdocument.h>
 
 #include <QEvent>
 #include <QScrollBar>
 #include <QVBoxLayout>
 
-#include <vector>
 #include <algorithm>
+#include <vector>
 
 namespace QmlDesigner {
 
@@ -48,11 +52,15 @@ TextEditorWidget::TextEditorWidget(TextEditorView *textEditorView)
     m_updateSelectionTimer.setSingleShot(true);
     m_updateSelectionTimer.setInterval(200);
 
-    connect(&m_updateSelectionTimer, &QTimer::timeout, this, &TextEditorWidget::updateSelectionByCursorPosition);
+    connect(&m_updateSelectionTimer,
+            &QTimer::timeout,
+            this,
+            &TextEditorWidget::updateSelectionByCursorPosition);
     QmlDesignerPlugin::trackWidgetFocusTime(this, Constants::EVENT_TEXTEDITOR_TIME);
 }
 
-void TextEditorWidget::setTextEditor(Utils::UniqueObjectLatePtr<TextEditor::BaseTextEditor> textEditor)
+void TextEditorWidget::setTextEditor(
+    Utils::UniqueObjectLatePtr<TextEditor::BaseTextEditor> textEditor)
 {
     std::swap(m_textEditor, textEditor);
 
@@ -60,8 +68,6 @@ void TextEditorWidget::setTextEditor(Utils::UniqueObjectLatePtr<TextEditor::Base
         m_layout->insertWidget(0, m_textEditor->editorWidget());
 
         setFocusProxy(m_textEditor->editorWidget());
-
-        QmlDesignerPlugin::instance()->emitCurrentTextEditorChanged(m_textEditor.get());
 
         connect(m_textEditor->editorWidget(), &QPlainTextEdit::cursorPositionChanged, this, [this] {
             // Cursor position is changed by rewriter
@@ -98,6 +104,36 @@ void TextEditorWidget::updateSelectionByCursorPosition()
     m_blockRoundTrip = false;
 }
 
+void TextEditorWidget::jumpToModelNode(const ModelNode &modelNode)
+{
+    RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
+
+    m_blockCursorSelectionSynchronisation = true;
+    const int nodeOffset = rewriterView->nodeOffset(modelNode);
+    if (nodeOffset > 0) {
+        int line, column;
+        m_textEditor->editorWidget()->convertPosition(nodeOffset, &line, &column);
+        m_textEditor->editorWidget()->gotoLine(line, column);
+
+        highlightToModelNode(modelNode);
+    }
+    m_blockCursorSelectionSynchronisation = false;
+}
+
+void TextEditorWidget::highlightToModelNode(const ModelNode &modelNode)
+{
+    RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
+    const int nodeOffset = rewriterView->nodeOffset(modelNode);
+    if (nodeOffset > 0) {
+        int line, column;
+        m_textEditor->editorWidget()->convertPosition(nodeOffset, &line, &column);
+
+        QTextCursor cursor = m_textEditor->textCursor();
+        cursor.setPosition(nodeOffset);
+        m_textEditor->editorWidget()->updateFoldingHighlight(cursor);
+    }
+}
+
 void TextEditorWidget::jumpTextCursorToSelectedModelNode()
 {
     if (m_blockRoundTrip)
@@ -115,14 +151,16 @@ void TextEditorWidget::jumpTextCursorToSelectedModelNode()
         selectedNode = m_textEditorView->selectedModelNodes().constFirst();
 
     if (selectedNode.isValid()) {
-        RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
-
-        const int nodeOffset = rewriterView->nodeOffset(selectedNode);
-        if (nodeOffset > 0) {
-            int line, column;
-            m_textEditor->editorWidget()->convertPosition(nodeOffset, &line, &column);
-            // line has to be 1 based, column 0 based!
-            m_textEditor->editorWidget()->gotoLine(line, column - 1);
+        QmlModelState currentState = m_textEditorView->currentStateNode();
+        if (currentState.isBaseState()) {
+            jumpToModelNode(selectedNode);
+        } else {
+            if (currentState.affectsModelNode(selectedNode)) {
+                auto propertyChanges = currentState.propertyChanges(selectedNode);
+                jumpToModelNode(propertyChanges.modelNode());
+            } else {
+                jumpToModelNode(currentState.modelNode());
+            }
         }
     }
     m_updateSelectionTimer.stop();
@@ -162,6 +200,10 @@ void TextEditorWidget::setBlockCursorSelectionSynchronisation(bool b)
 
 bool TextEditorWidget::eventFilter(QObject *, QEvent *event)
 {
+    //do not call the eventfilter when the m_textEditor is gone
+    if (!TextEditor::TextEditorWidget::fromEditor(m_textEditor.get()))
+        return false;
+
     static std::vector<int> overrideKeys = { Qt::Key_Delete, Qt::Key_Backspace, Qt::Key_Insert,
                                              Qt::Key_Escape };
 
@@ -193,23 +235,131 @@ bool TextEditorWidget::eventFilter(QObject *, QEvent *event)
                 return true;
             }
         }
+    } else if (event->type() == QEvent::FocusIn) {
+        m_textEditor->editorWidget()->updateFoldingHighlight(QTextCursor());
+    } else if (event->type() == QEvent::FocusOut) {
+        m_textEditor->editorWidget()->updateFoldingHighlight(QTextCursor());
     }
     return false;
 }
 
 void TextEditorWidget::dragEnterEvent(QDragEnterEvent *dragEnterEvent)
 {
-    const DesignerActionManager &actionManager = QmlDesignerPlugin::instance()
-                                                     ->viewManager().designerActionManager();
+    const DesignerActionManager &actionManager
+        = QmlDesignerPlugin::instance()->viewManager().designerActionManager();
     if (actionManager.externalDragHasSupportedAssets(dragEnterEvent->mimeData()))
         dragEnterEvent->acceptProposedAction();
+
+    if (dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ITEM_LIBRARY_INFO)
+        || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ASSETS)) {
+        QByteArray data = dragEnterEvent->mimeData()->data(Constants::MIME_TYPE_ITEM_LIBRARY_INFO);
+        if (!data.isEmpty()) {
+            QDataStream stream(data);
+            stream >> m_draggedEntry;
+        }
+        dragEnterEvent->acceptProposedAction();
+    }
+}
+
+void TextEditorWidget::dragMoveEvent(QDragMoveEvent *dragMoveEvent)
+{
+    QTextCursor cursor = m_textEditor->editorWidget()->cursorForPosition(dragMoveEvent->position().toPoint());
+    const int cursorPosition = cursor.position();
+    RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
+
+    QTC_ASSERT(rewriterView, return );
+    ModelNode modelNode = rewriterView->nodeAtTextCursorPosition(cursorPosition);
+
+    if (!modelNode.isValid())
+        return;
+    highlightToModelNode(modelNode);
 }
 
 void TextEditorWidget::dropEvent(QDropEvent *dropEvent)
 {
-    const DesignerActionManager &actionManager = QmlDesignerPlugin::instance()
-                                                     ->viewManager().designerActionManager();
-    actionManager.handleExternalAssetsDrop(dropEvent->mimeData());
+    QTextCursor cursor = m_textEditor->editorWidget()->cursorForPosition(dropEvent->position().toPoint());
+    const int cursorPosition = cursor.position();
+    RewriterView *rewriterView = m_textEditorView->model()->rewriterView();
+
+    QTC_ASSERT(rewriterView, return);
+    ModelNode modelNode = rewriterView->nodeAtTextCursorPosition(cursorPosition);
+
+    if (!modelNode.isValid())
+        return;
+
+    auto targetProperty = modelNode.defaultNodeAbstractProperty();
+
+    if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ITEM_LIBRARY_INFO)) {
+        if (!m_draggedEntry.name().isEmpty()) {
+            m_textEditorView->executeInTransaction("TextEditorWidget::dropEventItem", [&] {
+                auto newQmlObjectNode = QmlItemNode::createQmlObjectNode(m_textEditorView,
+                                                                         m_draggedEntry,
+                                                                         QPointF(),
+                                                                         targetProperty,
+                                                                         false);
+            });
+        }
+    } else if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ASSETS)) {
+        const QStringList assetsPaths
+            = QString::fromUtf8(dropEvent->mimeData()->data(Constants::MIME_TYPE_ASSETS)).split(',');
+
+        QTC_ASSERT(!assetsPaths.isEmpty(), return);
+        auto assetTypeAndData = AssetsLibraryWidget::getAssetTypeAndData(assetsPaths.first());
+        QString assetType = assetTypeAndData.first;
+        QString assetData = QString::fromUtf8(assetTypeAndData.second);
+
+        ModelNode newModelNode;
+        ModelNode targetNode = targetProperty.parentModelNode();
+        QList<ModelNode> addedNodes;
+
+        for (const QString &assetPath : assetsPaths) {
+            auto assetTypeAndData = AssetsLibraryWidget::getAssetTypeAndData(assetPath);
+            QString assetType = assetTypeAndData.first;
+            QString assetData = QString::fromUtf8(assetTypeAndData.second);
+            bool moveNodesAfter = true; // Appending to parent is the default in text editor
+            if (assetType == Constants::MIME_TYPE_ASSET_IMAGE) {
+                newModelNode = ModelNodeOperations::handleItemLibraryImageDrop(assetPath,
+                                                                               targetProperty,
+                                                                               targetNode,
+                                                                               moveNodesAfter);
+            } else if (assetType == Constants::MIME_TYPE_ASSET_FONT) {
+                newModelNode = ModelNodeOperations::handleItemLibraryFontDrop(
+                    assetData, // assetData is fontFamily
+                    targetProperty,
+                    targetNode);
+            } else if (assetType == Constants::MIME_TYPE_ASSET_SHADER) {
+                newModelNode = ModelNodeOperations::handleItemLibraryShaderDrop(assetPath,
+                                                                                assetData == "f",
+                                                                                targetProperty,
+                                                                                targetNode,
+                                                                                moveNodesAfter);
+            } else if (assetType == Constants::MIME_TYPE_ASSET_SOUND) {
+                newModelNode = ModelNodeOperations::handleItemLibrarySoundDrop(assetPath,
+                                                                               targetProperty,
+                                                                               targetNode);
+            } else if (assetType == Constants::MIME_TYPE_ASSET_TEXTURE3D) {
+                newModelNode = ModelNodeOperations::handleItemLibraryTexture3dDrop(assetPath,
+                                                                                   targetProperty,
+                                                                                   targetNode,
+                                                                                   moveNodesAfter);
+            } else if (assetType == Constants::MIME_TYPE_ASSET_EFFECT) {
+                newModelNode = ModelNodeOperations::handleItemLibraryEffectDrop(assetPath,
+                                                                                targetNode);
+            }
+
+            if (newModelNode.isValid())
+                addedNodes.append(newModelNode);
+        }
+
+        if (!addedNodes.isEmpty())
+            m_textEditorView->setSelectedModelNodes(addedNodes);
+    } else {
+        const DesignerActionManager &actionManager
+            = QmlDesignerPlugin::instance()->viewManager().designerActionManager();
+        actionManager.handleExternalAssetsDrop(dropEvent->mimeData());
+    }
+    m_textEditorView->model()->endDrag();
+    m_textEditor->editorWidget()->updateFoldingHighlight(QTextCursor());
 }
 
 } // namespace QmlDesigner

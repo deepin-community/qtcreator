@@ -3,13 +3,13 @@
 
 #include "debuggeritemmanager.h"
 
-#include "debuggeritem.h"
 #include "debuggertr.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icore.h>
 
 #include <projectexplorer/devicesupport/devicemanager.h>
+#include <projectexplorer/kitaspect.h>
 #include <projectexplorer/kitoptionspage.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectexplorericons.h>
@@ -19,13 +19,13 @@
 #include <utils/detailswidget.h>
 #include <utils/environment.h>
 #include <utils/fileutils.h>
+#include <utils/futuresynchronizer.h>
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
 #include <utils/persistentsettings.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
-#include <utils/treemodel.h>
 #include <utils/winutils.h>
 
 #include <nanotrace/nanotrace.h>
@@ -101,50 +101,48 @@ private:
 // DebuggerTreeItem
 // --------------------------------------------------------------------------
 
-class DebuggerTreeItem : public TreeItem
+QVariant DebuggerTreeItem::data(int column, int role) const
 {
-public:
-    DebuggerTreeItem(const DebuggerItem &item, bool changed)
-        : m_item(item), m_orig(item), m_added(changed), m_changed(changed)
-    {}
-
-    QVariant data(int column, int role) const override
-    {
-        switch (role) {
-            case Qt::DisplayRole:
-                switch (column) {
-                case 0: return m_item.displayName();
-                case 1: return m_item.command().toUserOutput();
-                case 2: return m_item.engineTypeName();
-                }
-                break;
-
-            case Qt::FontRole: {
-                QFont font;
-                if (m_changed)
-                    font.setBold(true);
-                if (m_removed)
-                    font.setStrikeOut(true);
-                return font;
-            }
-
-            case Qt::DecorationRole:
-                if (column == 0)
-                    return m_item.decoration();
-                break;
-
-            case Qt::ToolTipRole:
-                return m_item.validityMessage();
+    switch (role) {
+    case Qt::DisplayRole:
+        switch (column) {
+        case 0:
+            return m_item.displayName();
+        case 1:
+            return m_item.command().toUserOutput();
+        case 2:
+            return m_item.engineTypeName();
         }
-        return QVariant();
+        break;
+
+    case Qt::FontRole: {
+        QFont font;
+        if (m_changed)
+            font.setBold(true);
+        if (m_removed)
+            font.setStrikeOut(true);
+        return font;
     }
 
-    DebuggerItem m_item; // Displayed, possibly unapplied data.
-    DebuggerItem m_orig; // Stored original data.
-    bool m_added;
-    bool m_changed;
-    bool m_removed = false;
-};
+    case Qt::DecorationRole:
+        if (column == 0)
+            return m_item.decoration();
+        break;
+
+    case Qt::ToolTipRole:
+        return m_item.validityMessage();
+
+    case KitAspect::IdRole:
+        return m_item.id();
+
+    case KitAspect::QualityRole:
+        return int(m_item.problem());
+
+    case KitAspect::IsNoneRole:
+        return !m_item.isValid();
+    }
+    return QVariant();
+}
 
 // --------------------------------------------------------------------------
 // DebuggerItemModel
@@ -378,7 +376,7 @@ DebuggerItemConfigWidget::DebuggerItemConfigWidget()
     // clang-format off
     using namespace Layouting;
     Form {
-        fieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow),
+        fieldGrowthPolicy(int(QFormLayout::AllNonFixedFieldsGrow)),
         Tr::tr("Name:"), m_displayNameLineEdit, br,
         Tr::tr("Path:"), m_binaryChooser, br,
         m_cdbLabel, br,
@@ -480,14 +478,14 @@ void DebuggerItemConfigWidget::binaryPathHasChanged()
     if (!m_generic) {
         m_updateWatcher.cancel();
 
-        DebuggerItem tmp;
         if (m_binaryChooser->filePath().isExecutableFile()) {
-            tmp = item();
-            m_updateWatcher.setFuture(Utils::asyncRun([tmp]() mutable {
+            m_updateWatcher.setFuture(Utils::asyncRun([tmp = item()]() mutable {
                 tmp.reinitializeFromFile();
                 return tmp;
             }));
+            Utils::futureSynchronizer()->addFuture(m_updateWatcher.future());
         } else {
+            const DebuggerItem tmp;
             setAbis(tmp.abiNames());
             m_version->setText(tmp.version());
             m_engineType = tmp.engineType();
@@ -549,7 +547,7 @@ void DebuggerItemModel::autoDetectCdbDebuggers()
     for (const QFileInfo &kitFolderFi : kitFolders) {
         const QString path = kitFolderFi.absoluteFilePath();
         QStringList abis = {"x86", "x64"};
-        if (HostOsInfo::hostArchitecture() == HostOsInfo::HostArchitectureArm64)
+        if (HostOsInfo::hostArchitecture() == Utils::OsArchArm64)
             abis << "arm64";
         for (const QString &abi: abis) {
             const QFileInfo cdbBinary(path + "/Debuggers/" + abi + "/cdb.exe");
@@ -606,8 +604,8 @@ static Utils::FilePaths searchGdbPathsFromRegistry()
 }
 
 void DebuggerItemModel::autoDetectGdbOrLldbDebuggers(const FilePaths &searchPaths,
-                                                              const QString &detectionSource,
-                                                              QString *logMessage)
+                                                     const QString &detectionSource,
+                                                     QString *logMessage)
 {
     const QStringList filters = {"gdb-i686-pc-mingw32", "gdb-i686-pc-mingw32.exe", "gdb",
                                  "gdb.exe", "lldb", "lldb.exe", "lldb-[1-9]*",
@@ -620,23 +618,24 @@ void DebuggerItemModel::autoDetectGdbOrLldbDebuggers(const FilePaths &searchPath
 
     if (searchPaths.front().osType() == OsTypeMac) {
         Process proc;
-        proc.setTimeoutS(2);
         proc.setCommand({"xcrun", {"--find", "lldb"}});
-        proc.runBlocking();
-        // FIXME:
+        using namespace std::chrono_literals;
+        proc.runBlocking(2s);
         if (proc.result() == ProcessResult::FinishedWithSuccess) {
-            QString lPath = proc.allOutput().trimmed();
-            if (!lPath.isEmpty()) {
-                const QFileInfo fi(lPath);
-                if (fi.exists() && fi.isExecutable() && !fi.isDir())
-                    suspects.append(FilePath::fromString(fi.absoluteFilePath()));
-            }
+            const FilePath lPath = FilePath::fromUserInput(proc.allOutput().trimmed());
+            if (lPath.isExecutableFile())
+                suspects.append(lPath);
         }
     }
 
     FilePaths paths = searchPaths;
-    if (!searchPaths.front().needsDevice())
+    if (!searchPaths.front().needsDevice()) {
         paths.append(searchGdbPathsFromRegistry());
+
+        const expected_str<FilePath> lldb = Core::ICore::lldbExecutable(CLANG_BINDIR);
+        if (lldb)
+            suspects.append(*lldb);
+    }
 
     paths = Utils::filteredUnique(paths);
 

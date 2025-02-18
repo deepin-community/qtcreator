@@ -3,6 +3,7 @@
 
 #include "findinopenfiles.h"
 
+#include "basefilefind.h"
 #include "textdocument.h"
 #include "texteditortr.h"
 
@@ -14,6 +15,28 @@
 using namespace Utils;
 
 namespace TextEditor::Internal {
+
+class FindInOpenFiles : public BaseFileFind
+{
+public:
+    FindInOpenFiles();
+
+private:
+    QString id() const final;
+    QString displayName() const final;
+    bool isEnabled() const final;
+    Utils::Store save() const final;
+    void restore(const Utils::Store &s) final;
+
+    QString label() const final;
+    QString toolTip() const final;
+
+    FileContainerProvider fileContainerProvider() const final;
+    void updateEnabledState() { emit enabledChanged(isEnabled()); }
+
+    // deprecated
+    QByteArray settingsKey() const final;
+};
 
 FindInOpenFiles::FindInOpenFiles()
 {
@@ -70,23 +93,29 @@ bool FindInOpenFiles::isEnabled() const
     return Core::DocumentModel::entryCount() > 0;
 }
 
-void FindInOpenFiles::writeSettings(QtcSettings *settings)
+const char kDefaultInclusion[] = "*";
+const char kDefaultExclusion[] = "";
+
+Store FindInOpenFiles::save() const
 {
-    settings->beginGroup("FindInOpenFiles");
-    writeCommonSettings(settings);
-    settings->endGroup();
+    Store s;
+    writeCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
+    return s;
 }
 
-void FindInOpenFiles::readSettings(QtcSettings *settings)
+void FindInOpenFiles::restore(const Store &s)
 {
-    settings->beginGroup("FindInOpenFiles");
-    readCommonSettings(settings, "*", "");
-    settings->endGroup();
+    readCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
 }
 
-void FindInOpenFiles::updateEnabledState()
+QByteArray FindInOpenFiles::settingsKey() const
 {
-    emit enabledChanged(isEnabled());
+    return "FindInOpenFiles";
+}
+
+void setupFindInOpenFiles()
+{
+    static FindInOpenFiles theFindInOpenFiles;
 }
 
 } // TextEditor::Internal

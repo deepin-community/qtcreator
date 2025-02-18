@@ -10,6 +10,7 @@
 #include <projectexplorer/devicesupport/devicemanager.h>
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/sshparameters.h>
+#include <projectexplorer/projectexplorerconstants.h>
 
 #include <utils/fancylineedit.h>
 #include <utils/layoutbuilder.h>
@@ -98,11 +99,19 @@ GenericLinuxDeviceConfigurationWidget::GenericLinuxDeviceConfigurationWidget(
     const int dmCount = dm->deviceCount();
     for (int i = 0; i < dmCount; ++i) {
         IDevice::ConstPtr dev =  dm->deviceAt(i);
-        m_linkDeviceComboBox->addItem(dev->displayName(), dev->id().toSetting());
+        if (dev->id() != device->id())
+            m_linkDeviceComboBox->addItem(dev->displayName(), dev->id().toSetting());
     }
 
     auto sshPortLabel = new QLabel(Tr::tr("&SSH port:"));
     sshPortLabel->setBuddy(m_sshPortSpinBox);
+
+    m_useSshPortForwardingForDebugging = new QCheckBox;
+    m_useSshPortForwardingForDebugging->setText(Tr::tr("Use SSH port forwarding for debugging"));
+    m_useSshPortForwardingForDebugging
+        ->setToolTip(Tr::tr("Enable debugging on remote targes which cannot expose gdbserver ports.\n"
+                            "The ssh tunneling is used to map the remote gdbserver port to localhost.\n"
+                            "The local and remote ports are determined automatically."));
 
     using namespace Layouting;
 
@@ -116,7 +125,8 @@ GenericLinuxDeviceConfigurationWidget::GenericLinuxDeviceConfigurationWidget(
         Tr::tr("GDB server executable:"), m_gdbServerLineEdit, br,
         Tr::tr("QML runtime executable:"), m_qmlRuntimeLineEdit, br,
         QString(), m_sourceProfileCheckBox, br,
-        Tr::tr("Access via:"), m_linkDeviceComboBox
+        QString(), m_useSshPortForwardingForDebugging, br,
+        Tr::tr("Access via:"), m_linkDeviceComboBox, br,
     }.attachTo(this);
 
     connect(m_hostLineEdit, &QLineEdit::editingFinished,
@@ -151,6 +161,8 @@ GenericLinuxDeviceConfigurationWidget::GenericLinuxDeviceConfigurationWidget(
             this, &GenericLinuxDeviceConfigurationWidget::sourceProfileCheckingChanged);
     connect(m_linkDeviceComboBox, &QComboBox::currentIndexChanged,
             this, &GenericLinuxDeviceConfigurationWidget::linkDeviceChanged);
+    connect(m_useSshPortForwardingForDebugging, &QCheckBox::toggled,
+            this, &GenericLinuxDeviceConfigurationWidget::sshPortForwardingForDebugging);
 
     initGui();
 }
@@ -252,6 +264,11 @@ void GenericLinuxDeviceConfigurationWidget::linkDeviceChanged(int index)
     device()->setExtraData(Constants::LinkDevice, deviceId);
 }
 
+void GenericLinuxDeviceConfigurationWidget::sshPortForwardingForDebugging(bool on)
+{
+    device()->setExtraData(ProjectExplorer::Constants::SSH_FORWARD_DEBUGSERVER_PORT, on);
+}
+
 void GenericLinuxDeviceConfigurationWidget::updateDeviceFromUi()
 {
     hostNameEditingFinished();
@@ -265,6 +282,7 @@ void GenericLinuxDeviceConfigurationWidget::updateDeviceFromUi()
     timeoutEditingFinished();
     sourceProfileCheckingChanged(m_sourceProfileCheckBox->isChecked());
     linkDeviceChanged(m_linkDeviceComboBox->currentIndex());
+    sshPortForwardingForDebugging(m_useSshPortForwardingForDebugging->isChecked());
     qmlRuntimeEditingFinished();
 }
 
@@ -307,13 +325,18 @@ void GenericLinuxDeviceConfigurationWidget::initGui()
     Id linkDeviceId = Id::fromSetting(device()->extraData(Constants::LinkDevice));
     auto dm = DeviceManager::instance();
     int found = -1;
+    int minus = 0;
     for (int i = 0, n = dm->deviceCount(); i < n; ++i) {
-        if (dm->deviceAt(i)->id() == linkDeviceId) {
+        const auto otherId = dm->deviceAt(i)->id();
+        if (otherId == linkDeviceId) {
             found = i;
             break;
+        } else if (otherId == device()->id()) {
+            // Since we ourselves do not appear in the combo box, we need to adjust the index.
+            minus = 1;
         }
     }
-    m_linkDeviceComboBox->setCurrentIndex(found + 1); // There's the "Direct" entry first.
+    m_linkDeviceComboBox->setCurrentIndex(found + 1 - minus); // There's the "Direct" entry first.
 
     m_hostLineEdit->setText(sshParams.host());
     m_sshPortSpinBox->setValue(sshParams.port());
@@ -325,6 +348,8 @@ void GenericLinuxDeviceConfigurationWidget::initGui()
         sshParams.authenticationType == SshParameters::AuthenticationTypeSpecificKey);
     m_gdbServerLineEdit->setFilePath(device()->debugServerPath());
     m_qmlRuntimeLineEdit->setFilePath(device()->qmlRunCommand());
+    m_useSshPortForwardingForDebugging->setChecked(
+                device()->extraData(ProjectExplorer::Constants::SSH_FORWARD_DEBUGSERVER_PORT).toBool());
 
     updatePortsWarningLabel();
 }

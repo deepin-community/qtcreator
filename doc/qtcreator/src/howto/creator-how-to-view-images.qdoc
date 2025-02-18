@@ -43,6 +43,10 @@
     Select \uicontrol {Set as Default} to use the current settings for the
     background and outline modes and fitting images to screen as default
     values for the image viewer.
+
+    \if defined(qtcreator)
+    \sa {Design UIs}{How To: Design UIs}, {UI Design}
+    \endif
 */
 
 /*!
@@ -56,7 +60,7 @@
     \ingroup creator-how-to-design
     \ingroup studio-how-to-image-viewer
 
-    \title Export SVG images
+    \title Create pixmaps from SVG images
 
     If you have a freely scalable icon in the SVG format, you can open it in the
     \l{View images}{image viewer} to export it to several images of different
@@ -67,4 +71,8 @@
 
     You can then use QIcon::addPixmap() to add the pixmaps to icons in
     different modes and states.
+
+    \if defined(qtcreator)
+    \sa {Design UIs}{How To: Design UIs}, {UI Design}
+    \endif
 */

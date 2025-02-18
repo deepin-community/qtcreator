@@ -4,13 +4,14 @@
 #include "clientrequest.h"
 
 using namespace LanguageServerProtocol;
+using namespace Tasking;
 
 namespace LanguageClient {
 
 ClientWorkspaceSymbolRequestTaskAdapter::ClientWorkspaceSymbolRequestTaskAdapter()
 {
     task()->setResponseCallback([this](const WorkspaceSymbolRequest::Response &response){
-        emit done(response.result().has_value());
+        emit done(toDoneResult(response.result().has_value()));
     });
 }
 
@@ -28,7 +29,8 @@ bool ClientWorkspaceSymbolRequest::preStartCheck()
         = client()->capabilities().workspaceSymbolProvider();
     if (!capability.has_value())
         return false;
-    if (std::holds_alternative<bool>(*capability) && !std::get<bool>(*capability))
+    const auto boolvalue = std::get_if<bool>(&*capability);
+    if (boolvalue && !*boolvalue)
         return false;
 
     return true;

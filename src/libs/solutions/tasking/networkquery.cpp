@@ -1,9 +1,12 @@
-// Copyright (C) 2023 The Qt Company Ltd.
+// Copyright (C) 2024 Jarek Kobus
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 #include "networkquery.h"
 
-#include <QNetworkAccessManager>
+#include <QtNetwork/QNetworkAccessManager>
+
+QT_BEGIN_NAMESPACE
 
 namespace Tasking {
 
@@ -16,13 +19,26 @@ void NetworkQuery::start()
     if (!m_manager) {
         qWarning("Can't start the NetworkQuery without the QNetworkAccessManager. "
                  "Stopping with an error.");
-        emit done(false);
+        emit done(DoneResult::Error);
         return;
     }
-    m_reply.reset(m_manager->get(m_request));
+    switch (m_operation) {
+    case NetworkOperation::Get:
+        m_reply.reset(m_manager->get(m_request));
+        break;
+    case NetworkOperation::Put:
+        m_reply.reset(m_manager->put(m_request, m_writeData));
+        break;
+    case NetworkOperation::Post:
+        m_reply.reset(m_manager->post(m_request, m_writeData));
+        break;
+    case NetworkOperation::Delete:
+        m_reply.reset(m_manager->deleteResource(m_request));
+        break;
+    }
     connect(m_reply.get(), &QNetworkReply::finished, this, [this] {
-        disconnect(m_reply.get(), nullptr, this, nullptr);
-        emit done(m_reply->error() == QNetworkReply::NoError);
+        disconnect(m_reply.get(), &QNetworkReply::finished, this, nullptr);
+        emit done(toDoneResult(m_reply->error() == QNetworkReply::NoError));
         m_reply.release()->deleteLater();
     });
     if (m_reply->isRunning())
@@ -31,8 +47,12 @@ void NetworkQuery::start()
 
 NetworkQuery::~NetworkQuery()
 {
-    if (m_reply)
+    if (m_reply) {
+        disconnect(m_reply.get(), &QNetworkReply::finished, this, nullptr);
         m_reply->abort();
+    }
 }
 
 } // namespace Tasking
+
+QT_END_NAMESPACE

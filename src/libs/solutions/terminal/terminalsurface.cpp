@@ -120,6 +120,7 @@ struct TerminalSurfacePrivate
             };
         m_vtermScreenCallbacks.sb_clear = [](void *user) {
             auto p = static_cast<TerminalSurfacePrivate *>(user);
+            emit p->q->cleared();
             return p->sb_clear();
         };
         m_vtermScreenCallbacks.bell = [](void *user) {
@@ -226,7 +227,7 @@ struct TerminalSurfacePrivate
     {
         TerminalCell result;
         result.width = cell.width;
-        result.text = QString::fromUcs4(cell.chars);
+        result.text = QString::fromUcs4(reinterpret_cast<const char32_t *>(cell.chars));
 
         const VTermColor *bg = &cell.bg;
         const VTermColor *fg = &cell.fg;
@@ -281,8 +282,10 @@ struct TerminalSurfacePrivate
 
     int sb_pushline(int cols, const VTermScreenCell *cells)
     {
+        auto oldSize = m_scrollback->size();
         m_scrollback->emplace(cols, cells);
-        emit q->fullSizeChanged(q->fullSize());
+        if (m_scrollback->size() != oldSize)
+            emit q->fullSizeChanged(q->fullSize());
         return 1;
     }
 
@@ -456,7 +459,11 @@ std::u32string::value_type TerminalSurface::fetchCharAt(int x, int y) const
     if (cell->width == 0)
         return 0;
 
-    QString s = QString::fromUcs4(cell->chars, 6).normalized(QString::NormalizationForm_C);
+    if (cell->chars[0] == 0xffffffff)
+        return 0;
+
+    QString s = QString::fromUcs4(reinterpret_cast<const char32_t *>(cell->chars), 6)
+                    .normalized(QString::NormalizationForm_C);
     const QList<uint> ucs4 = s.toUcs4();
     return std::u32string(ucs4.begin(), ucs4.end()).front();
 }
@@ -638,6 +645,11 @@ void TerminalSurface::sendFocus(bool hasFocus)
         vterm_state_focus_in(vts);
     else
         vterm_state_focus_out(vts);
+}
+
+bool TerminalSurface::isInAltScreen()
+{
+    return d->m_altscreen;
 }
 
 void TerminalSurface::setWriteToPty(WriteToPty writeToPty)

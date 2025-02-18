@@ -42,15 +42,16 @@
 namespace qbs {
 class CodeLocation;
 namespace Internal {
-enum class FallbackMode;
 class Item;
 class LoaderState;
 class ProductContext;
 class QualifiedId;
 
-Item *searchAndLoadModuleFile(LoaderState &loaderState, ProductContext &product,
-                              const CodeLocation &dependsItemLocation,
-                              const QualifiedId &moduleName, FallbackMode fallbackMode);
+Item *searchAndLoadModuleFile(
+    LoaderState &loaderState,
+    ProductContext &product,
+    const CodeLocation &dependsItemLocation,
+    const QualifiedId &moduleName);
 
 } // namespace Internal
 } // namespace qbs

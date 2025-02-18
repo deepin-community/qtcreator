@@ -5,6 +5,7 @@
 
 #include "documentsymbolcache.h"
 #include "languageclientmanager.h"
+#include "languageclienttr.h"
 #include "languageclientutils.h"
 
 #include <coreplugin/editormanager/ieditor.h>
@@ -23,6 +24,7 @@
 
 #include <QAction>
 #include <QBoxLayout>
+#include <QMenu>
 #include <QSortFilterProxyModel>
 
 using namespace LanguageServerProtocol;
@@ -113,10 +115,12 @@ public:
     void restoreSettings(const QVariantMap &map) override;
     QVariantMap settings() const override;
 
+    void contextMenuEvent(QContextMenuEvent *event) override;
+
 private:
     void handleResponse(const DocumentUri &uri, const DocumentSymbolsResult &response);
     void updateTextCursor(const QModelIndex &proxyIndex);
-    void updateSelectionInTree(const QTextCursor &currentCursor);
+    void updateSelectionInTree();
     void onItemActivated(const QModelIndex &index);
 
     QPointer<Client> m_client;
@@ -164,10 +168,7 @@ LanguageClientOutlineWidget::LanguageClientOutlineWidget(Client *client,
     connect(&m_view, &QAbstractItemView::activated,
             this, &LanguageClientOutlineWidget::onItemActivated);
     connect(m_editor->editorWidget(), &TextEditor::TextEditorWidget::cursorPositionChanged,
-            this, [this](){
-        if (m_sync)
-            updateSelectionInTree(m_editor->textCursor());
-    });
+            this, &LanguageClientOutlineWidget::updateSelectionInTree);
     setFocusProxy(&m_view);
 }
 
@@ -179,8 +180,7 @@ QList<QAction *> LanguageClientOutlineWidget::filterMenuActions() const
 void LanguageClientOutlineWidget::setCursorSynchronization(bool syncWithCursor)
 {
     m_sync = syncWithCursor;
-    if (m_sync && m_editor)
-        updateSelectionInTree(m_editor->textCursor());
+    updateSelectionInTree();
 }
 
 void LanguageClientOutlineWidget::setSorted(bool sorted)
@@ -204,20 +204,36 @@ QVariantMap LanguageClientOutlineWidget::settings() const
     return {{QString("LspOutline.Sort"), m_sorted}};
 }
 
+void LanguageClientOutlineWidget::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!event)
+        return;
+
+    QMenu contextMenu;
+    QAction *action = contextMenu.addAction(Tr::tr("Expand All"));
+    connect(action, &QAction::triggered, &m_view, &QTreeView::expandAll);
+    action = contextMenu.addAction(Tr::tr("Collapse All"));
+    connect(action, &QAction::triggered, &m_view, &QTreeView::collapseAll);
+
+    contextMenu.exec(event->globalPos());
+    event->accept();
+}
+
 void LanguageClientOutlineWidget::handleResponse(const DocumentUri &uri,
                                                  const DocumentSymbolsResult &result)
 {
     if (uri != m_uri)
         return;
-    if (std::holds_alternative<QList<SymbolInformation>>(result))
-        m_model.setInfo(std::get<QList<SymbolInformation>>(result));
-    else if (std::holds_alternative<QList<DocumentSymbol>>(result))
-        m_model.setInfo(std::get<QList<DocumentSymbol>>(result));
+    if (const auto i = std::get_if<QList<SymbolInformation>>(&result))
+        m_model.setInfo(*i);
+    else if (const auto s = std::get_if<QList<DocumentSymbol>>(&result))
+        m_model.setInfo(*s);
     else
         m_model.clear();
+    m_view.expandAll();
 
     // The list has changed, update the current items
-    updateSelectionInTree(m_editor->textCursor());
+    updateSelectionInTree();
 }
 
 void LanguageClientOutlineWidget::updateTextCursor(const QModelIndex &proxyIndex)
@@ -243,8 +259,11 @@ static LanguageClientOutlineItem *itemForCursor(const LanguageClientOutlineModel
     return result;
 }
 
-void LanguageClientOutlineWidget::updateSelectionInTree(const QTextCursor &currentCursor)
+void LanguageClientOutlineWidget::updateSelectionInTree()
 {
+    if (!m_sync || !m_editor)
+        return;
+    const QTextCursor currentCursor = m_editor->editorWidget()->textCursor();
     if (LanguageClientOutlineItem *item = itemForCursor(m_model, currentCursor)) {
         const QModelIndex index = m_proxyModel.mapFromSource(m_model.indexForItem(item));
         m_view.setCurrentIndex(index);
@@ -350,10 +369,10 @@ void OutlineComboBox::updateModel(const DocumentUri &resultUri, const DocumentSy
 {
     if (m_uri != resultUri)
         return;
-    if (std::holds_alternative<QList<SymbolInformation>>(result))
-        m_model.setInfo(std::get<QList<SymbolInformation>>(result));
-    else if (std::holds_alternative<QList<DocumentSymbol>>(result))
-        m_model.setInfo(std::get<QList<DocumentSymbol>>(result));
+    if (const auto i = std::get_if<QList<SymbolInformation>>(&result))
+        m_model.setInfo(*i);
+    else if (const auto s = std::get_if<QList<DocumentSymbol>>(&result))
+        m_model.setInfo(*s);
     else
         m_model.clear();
 

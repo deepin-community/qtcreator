@@ -19,11 +19,12 @@
 #include <coreplugin/helpmanager.h>
 #include <coreplugin/icore.h>
 #include <debugger/debuggerkitaspect.h>
-#include <utils/algorithm.h>
-#include <utils/filepath.h>
-#include <utils/infobar.h>
 #include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtversionmanager.h>
+#include <utils/algorithm.h>
+#include <utils/filepath.h>
+#include <utils/hostosinfo.h>
+#include <utils/infobar.h>
 
 #include <QMessageBox>
 #include <QPushButton>
@@ -255,7 +256,7 @@ McuKitManager::UpgradeOption McuSupportOptions::askForKitUpgrades()
     return McuKitManager::UpgradeOption::Ignore;
 }
 
-void McuSupportOptions::displayKitCreationMessages(const MessagesList &messages,
+void McuSupportOptions::displayKitCreationMessages(const MessagesList messages,
                                                    const SettingsHandler::Ptr &settingsHandler,
                                                    McuPackagePtr qtMCUsPackage)
 {
@@ -269,7 +270,7 @@ void McuSupportOptions::displayKitCreationMessages(const MessagesList &messages,
                              Tr::tr("Errors while creating Qt for MCUs kits"),
                              Utils::InfoBarEntry::GlobalSuppression::Enabled);
 
-    info.addCustomButton(Tr::tr("Details"), [=] {
+    info.addCustomButton(Tr::tr("Details"), [messages, &settingsHandler, qtMCUsPackage] {
         auto popup = new McuKitCreationDialog(messages, settingsHandler, qtMCUsPackage);
         popup->exec();
         delete popup;

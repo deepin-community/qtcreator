@@ -5,6 +5,7 @@
 
 #include "defaultstyle.h"
 #include "objectvisuals.h"
+#include "relationvisuals.h"
 #include "styledobject.h"
 #include "styledrelation.h"
 
@@ -14,6 +15,7 @@
 #include "qmt/diagram/ditem.h"
 #include "qmt/diagram/dannotation.h"
 #include "qmt/infrastructure/qmtassert.h"
+#include "qmt/stereotype/customrelation.h"
 
 #include <utils/algorithm.h>
 
@@ -73,25 +75,29 @@ bool operator==(const ObjectStyleKey &lhs, const ObjectStyleKey &rhs)
 class RelationStyleKey
 {
 public:
-    RelationStyleKey(StyleEngine::ElementType elementType = StyleEngine::TypeOther,
-                     DObject::VisualPrimaryRole visualPrimaryRole = DObject::PrimaryRoleNormal)
+    RelationStyleKey(StyleEngine::ElementType elementType, const RelationVisuals &relationVisuals,
+                     bool withObject = false)
         : m_elementType(elementType),
-          m_visualPrimaryRole(visualPrimaryRole)
+          m_relationVisuals(relationVisuals),
+        m_withObject(withObject)
     {
     }
 
     StyleEngine::ElementType m_elementType = StyleEngine::TypeOther;
-    DObject::VisualPrimaryRole m_visualPrimaryRole = DObject::PrimaryRoleNormal;
+    RelationVisuals m_relationVisuals;
+    bool m_withObject = false;
 };
 
 size_t qHash(const RelationStyleKey &styleKey)
 {
-    return ::qHash(styleKey.m_elementType) ^ ::qHash(styleKey.m_visualPrimaryRole);
+    return ::qHash(styleKey.m_elementType) ^ qHash(styleKey.m_relationVisuals);
 }
 
 bool operator==(const RelationStyleKey &lhs, const RelationStyleKey &rhs)
 {
-    return lhs.m_elementType == rhs.m_elementType && lhs.m_visualPrimaryRole == rhs.m_visualPrimaryRole;
+    return lhs.m_elementType == rhs.m_elementType
+           && lhs.m_relationVisuals == rhs.m_relationVisuals
+           && lhs.m_withObject == rhs.m_withObject;
 }
 
 class AnnotationStyleKey
@@ -319,13 +325,100 @@ const Style *DefaultStyleEngine::applyObjectStyle(const Style *baseStyle, const 
                             parameters);
 }
 
+const Style *DefaultStyleEngine::applyRelationStyle(const Style *baseStyle, ElementType elementType, const RelationVisuals &relationVisuals, const Parameters *parameters)
+{
+    Q_UNUSED(parameters);
+
+    RelationStyleKey key(elementType, relationVisuals);
+    const Style *derivedStyle = m_relationStyleMap.value(key);
+    if (!derivedStyle) {
+        auto style = new Style(baseStyle->type());
+        static QColor customColors[] = {
+            QColor(0xEE, 0x8E, 0x99).darker(110),  // ROLE_CUSTOM1,
+            QColor(0x80, 0xAF, 0x47).lighter(130), // ROLE_CUSTOM2,
+            QColor(0xFF, 0xA1, 0x5B).lighter(100), // ROLE_CUSTOM3,
+            QColor(0x55, 0xC4, 0xCF).lighter(120), // ROLE_CUSTOM4,
+            QColor(0xFF, 0xE1, 0x4B)               // ROLE_CUSTOM5,
+        };
+
+        int index = static_cast<int>(relationVisuals.visualPrimaryRole()) - static_cast<int>(DRelation::PrimaryRoleCustom1);
+        QColor lineColor = index >= 0 && index <= 4 ? customColors[index] : Qt::black;
+        switch (relationVisuals.visualSecondaryRole()) {
+        case DRelation::SecondaryRoleNone:
+            break;
+        case DRelation::SecondaryRoleWarning:
+            lineColor = Qt::yellow;
+            break;
+        case DRelation::SecondaryRoleError:
+            lineColor = Qt::red;
+            break;
+        case DRelation::SecondaryRoleSoften:
+            lineColor = Qt::gray;
+            break;
+        }
+
+        QColor fillColor = lineColor == Qt::black ? Qt::darkGray : lineColor.lighter(150);
+        QPen linePen = baseStyle->linePen();
+        linePen.setWidth(1);
+        linePen.setColor(lineColor);
+        style->setLinePen(linePen);
+        QBrush textBrush = baseStyle->textBrush();
+        textBrush.setColor(Qt::black);
+        style->setTextBrush(textBrush);
+        QBrush brush = baseStyle->fillBrush();
+        brush.setColor(fillColor);
+        brush.setStyle(Qt::SolidPattern);
+        style->setFillBrush(brush);
+        style->setNormalFont(baseStyle->normalFont());
+        style->setSmallFont(baseStyle->smallFont());
+        style->setHeaderFont(baseStyle->headerFont());
+        m_relationStyleMap.insert(key, style);
+        derivedStyle = style;
+    }
+    return derivedStyle;
+}
+
 const Style *DefaultStyleEngine::applyRelationStyle(const Style *baseStyle, const StyledRelation &styledRelation,
                                                     const Parameters *parameters)
 {
     Q_UNUSED(parameters)
 
     ElementType elementType = objectType(styledRelation.endA());
-    RelationStyleKey key(elementType, styledRelation.endA() ? styledRelation.endA()->visualPrimaryRole() : DObject::PrimaryRoleNormal);
+    RelationVisuals relationVisuals;
+    if (styledRelation.customRelation()) {
+        switch (styledRelation.customRelation()->colorType()) {
+        case CustomRelation::ColorType::EndA:
+            // TODO implement
+            break;
+        case CustomRelation::ColorType::EndB:
+            // TODO implement
+            break;
+        case CustomRelation::ColorType::Custom:
+            // TODO implement
+            break;
+        case CustomRelation::ColorType::Warning:
+            relationVisuals.setVisualSecondaryRole(DRelation::VisualSecondaryRole::SecondaryRoleWarning);
+            break;
+        case CustomRelation::ColorType::Error:
+            relationVisuals.setVisualSecondaryRole(DRelation::VisualSecondaryRole::SecondaryRoleError);
+            break;
+        case CustomRelation::ColorType::Soften:
+            relationVisuals.setVisualSecondaryRole(DRelation::VisualSecondaryRole::SecondaryRoleSoften);
+            break;
+        }
+        relationVisuals.setEmphasized(styledRelation.customRelation()->emphasized());
+    }
+    if (styledRelation.endA())
+        relationVisuals.setVisualObjectPrimaryRole(styledRelation.endA()->visualPrimaryRole());
+    if (styledRelation.relation()) {
+        if (styledRelation.relation()->visualPrimaryRole() != DRelation::VisualPrimaryRole::PrimaryRoleNormal)
+            relationVisuals.setVisualPrimaryRole(styledRelation.relation()->visualPrimaryRole());
+        if (styledRelation.relation()->visualSecondaryRole() != DRelation::VisualSecondaryRole::SecondaryRoleNone)
+            relationVisuals.setVisualSecondaryRole(styledRelation.relation()->visualSecondaryRole());
+        if (styledRelation.relation()->isVisualEmphasized())
+            relationVisuals.setEmphasized(styledRelation.relation()->isVisualEmphasized());
+    }
+    RelationStyleKey key(elementType, relationVisuals, true);
     const Style *derivedStyle = m_relationStyleMap.value(key);
     if (!derivedStyle) {
         auto style = new Style(baseStyle->type());
@@ -339,12 +432,36 @@ const Style *DefaultStyleEngine::applyRelationStyle(const Style *baseStyle, cons
         QColor lineColor = DefaultStyleEngine::lineColor(objectType(object), objectVisuals);
         QColor fillColor = lineColor;
 
+        static QColor customColors[] = {
+            QColor(0xEE, 0x8E, 0x99).darker(110),  // ROLE_CUSTOM1,
+            QColor(0x80, 0xAF, 0x47).lighter(130), // ROLE_CUSTOM2,
+            QColor(0xFF, 0xA1, 0x5B).lighter(100), // ROLE_CUSTOM3,
+            QColor(0x55, 0xC4, 0xCF).lighter(120), // ROLE_CUSTOM4,
+            QColor(0xFF, 0xE1, 0x4B)               // ROLE_CUSTOM5,
+        };
+
+        int index = static_cast<int>(relationVisuals.visualPrimaryRole()) - static_cast<int>(DRelation::PrimaryRoleCustom1);
+        lineColor = (index >= 0 && index <= 4) ? customColors[index] : lineColor;
+        switch (relationVisuals.visualSecondaryRole()) {
+        case DRelation::SecondaryRoleNone:
+            break;
+        case DRelation::SecondaryRoleWarning:
+            lineColor = QColor(0xffc800);
+            break;
+        case DRelation::SecondaryRoleError:
+            lineColor = Qt::red;
+            break;
+        case DRelation::SecondaryRoleSoften:
+            lineColor = Qt::gray;
+            break;
+        }
+
         QPen linePen = baseStyle->linePen();
-        linePen.setWidth(1);
+        linePen.setWidth(relationVisuals.isEmphasized() ? 3 : 1);
         linePen.setColor(lineColor);
         style->setLinePen(linePen);
         QBrush textBrush = baseStyle->textBrush();
-        textBrush.setColor(QColor("black"));
+        textBrush.setColor(Qt::black);
         style->setTextBrush(textBrush);
         QBrush brush = baseStyle->fillBrush();
         brush.setColor(fillColor);

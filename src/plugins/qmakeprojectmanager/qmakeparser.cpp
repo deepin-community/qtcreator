@@ -46,7 +46,7 @@ OutputLineParser::Result QMakeParser::handleLine(const QString &line, OutputForm
         BuildSystemTask t(type, description, absoluteFilePath(FilePath::fromUserInput(fileName)),
                           match.captured(2).toInt() /* line */);
         LinkSpecs linkSpecs;
-        addLinkSpecForAbsoluteFilePath(linkSpecs, t.file, t.line, fileNameOffset,
+        addLinkSpecForAbsoluteFilePath(linkSpecs, t.file, t.line, t.column, fileNameOffset,
                                        fileName.length());
         scheduleTask(t, 1);
         return {Status::Done, linkSpecs};
@@ -72,17 +72,22 @@ OutputLineParser::Result QMakeParser::handleLine(const QString &line, OutputForm
 
 #ifdef WITH_TESTS
 
-#include "qmakeprojectmanagerplugin.h"
-
 #include <projectexplorer/outputparser_test.h>
 
 #include <QTest>
 
-using namespace QmakeProjectManager::Internal;
+namespace QmakeProjectManager::Internal {
 
-namespace QmakeProjectManager {
+class QmakeOutputParserTest final : public QObject
+{
+    Q_OBJECT
 
-void QmakeProjectManagerPlugin::testQmakeOutputParsers_data()
+private slots:
+    void testQmakeOutputParsers_data();
+    void testQmakeOutputParsers();
+};
+
+void QmakeOutputParserTest::testQmakeOutputParsers_data()
 {
     QTest::addColumn<QString>("input");
     QTest::addColumn<OutputParserTester::Channel>("inputChannel");
@@ -162,7 +167,7 @@ void QmakeProjectManagerPlugin::testQmakeOutputParsers_data()
             << QString();
 }
 
-void QmakeProjectManagerPlugin::testQmakeOutputParsers()
+void QmakeOutputParserTest::testQmakeOutputParsers()
 {
     OutputParserTester testbench;
     testbench.addLineParser(new QMakeParser);
@@ -178,6 +183,13 @@ void QmakeProjectManagerPlugin::testQmakeOutputParsers()
                           outputLines);
 }
 
-} // QmakeProjectManager
+QObject *createQmakeOutputParserTest()
+{
+    return new QmakeOutputParserTest;
+}
+
+} // QmakeProjectManager::Internal
 
 #endif
+
+#include "qmakeparser.moc"

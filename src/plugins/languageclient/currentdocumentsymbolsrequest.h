@@ -30,7 +30,7 @@ public:
     CurrentDocumentSymbolsData currentDocumentSymbolsData() const { return m_currentDocumentSymbolsData; }
 
 signals:
-    void done(bool success);
+    void done(Tasking::DoneResult result);
 
 private:
     void clearConnections();
@@ -39,7 +39,7 @@ private:
     QList<QMetaObject::Connection> m_connections;
 };
 
-class LANGUAGECLIENT_EXPORT CurrentDocumentSymbolsRequestTaskAdapter
+class LANGUAGECLIENT_EXPORT CurrentDocumentSymbolsRequestTaskAdapter final
     : public Tasking::TaskAdapter<CurrentDocumentSymbolsRequest>
 {
 public:

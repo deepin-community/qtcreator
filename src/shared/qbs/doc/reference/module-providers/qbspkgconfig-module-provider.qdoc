@@ -87,6 +87,29 @@
 */
 
 /*!
+    \qmlproperty bool qbspkgconfig::definePrefix
+
+    If this property is \c true, then \QBS will override the ${prefix} variable in the packages
+    with a value that is guessed based on the location of the .pc file.
+
+    This option corresponds to the \c --define-prefix / \c --dont-define-prefix command line
+    options of the \c pkg-config tool.
+
+    \defaultvalue \c true on Windows, \c false otherwise
+*/
+
+/*!
+    \qmlproperty stringList qbspkgconfig::executableNames
+
+    The names of the \c pkg-config executable to search for.
+
+    Note that since newer distributions use \l{http://pkgconf.org}{pkgconf} by default, it has
+    higher priority over \c pkg-config.
+
+    \defaultvalue \c{["pkgconf", "pkg-config"]}
+*/
+
+/*!
     \qmlproperty path qbspkgconfig::sysroot
 
     Set this property if you need to overwrite the default search sysroot path used by
@@ -107,19 +130,4 @@
     \c{pkg-config} tool.
 
     \defaultvalue \c "" on macOS, \c qbs.sysroot on other platforms
-*/
-
-/*!
-    \qmlproperty bool qbspkgconfig::mergeDependencies
-    \obsolete
-
-    Holds whether dependencies should be merged by pkg-config or \QBS.
-
-    If set to true, dependencies are merged by pkg-config meaning each generated module
-    is self-contained and does not depend on other modules. If set to false, generated modules
-    may depend on other modules and property merging is done by \QBS.
-
-    \defaultvalue \c false
-
-    Deprecated in \QBS 2.2.0.
 */

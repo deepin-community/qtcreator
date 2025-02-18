@@ -78,8 +78,6 @@ private:
     explicit TestResultsPane(QObject *parent = nullptr);
 
     void onItemActivated(const QModelIndex &index);
-    void onRunAllTriggered();
-    void onRunSelectedTriggered();
     void checkAllFilter(bool checked);
     void filterMenuTriggered(QAction *action);
     bool eventFilter(QObject *object, QEvent *event) override;
@@ -102,6 +100,9 @@ private:
     void createMarks(const QModelIndex &parent = QModelIndex());
     void clearMarks();
 
+    void onSessionLoaded();
+    void onAboutToSaveSession();
+
     QStackedWidget *m_outputWidget;
     QFrame *m_summaryWidget;
     QLabel *m_summaryLabel;
@@ -117,6 +118,7 @@ private:
     QToolButton *m_stopTestRun;
     QToolButton *m_filterButton;
     QToolButton *m_outputToggleButton;
+    QToolButton *m_showDurationButton;
     Core::OutputWindow *m_textOutput;
     QMenu *m_filterMenu;
     bool m_autoScroll = false;

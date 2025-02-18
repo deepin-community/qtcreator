@@ -7,6 +7,7 @@
 #include "buildmanager.h"
 #include "deployconfiguration.h"
 #include "kit.h"
+#include "kitaspect.h"
 #include "kitmanager.h"
 #include "project.h"
 #include "projectexplorer.h"
@@ -150,7 +151,7 @@ class GenericModel : public TreeModel<GenericItem, GenericItem>
 public:
     GenericModel(QObject *parent) : TreeModel(parent) { }
 
-    void rebuild(const QList<QObject *> &objects)
+    void rebuild(const QObjectList &objects)
     {
         clear();
         for (QObject * const e : objects)
@@ -249,8 +250,8 @@ public:
     explicit ProjectListView(QWidget *parent = nullptr) : SelectorView(parent)
     {
         const auto model = new GenericModel(this);
-        model->rebuild(transform<QList<QObject *>>(ProjectManager::projects(),
-                                                   [](Project *p) { return p; }));
+        model->rebuild(transform<QObjectList>(ProjectManager::projects(),
+                                              [](Project *p) { return p; }));
         connect(ProjectManager::instance(), &ProjectManager::projectAdded,
                 this, [this, model](Project *project) {
             const GenericItem *projectItem = model->addItemForObject(project);
@@ -322,7 +323,7 @@ signals:
     void changeActiveProjectConfiguration(QObject *pc);
 
 public:
-    void setProjectConfigurations(const QList<QObject *> &list, QObject *active)
+    void setProjectConfigurations(const QObjectList &list, QObject *active)
     {
         theModel()->rebuild(list);
         resetOptimalWidth();
@@ -434,7 +435,7 @@ void TargetSelectorDelegate::paint(QPainter *painter,
     painter->save();
     painter->setClipping(false);
 
-    QColor textColor = creatorTheme()->color(Theme::MiniProjectTargetSelectorTextColor);
+    QColor textColor = creatorColor(Theme::MiniProjectTargetSelectorTextColor);
     if (option.state & QStyle::State_Selected) {
         QColor color;
         if (m_view->hasFocus()) {
@@ -494,7 +495,7 @@ SelectorView::SelectorView(QWidget *parent) : TreeView(parent)
     setSelectionBehavior(SelectRows);
     setAttribute(Qt::WA_MacShowFocusRect, false);
     setHeaderHidden(true);
-    const QColor bgColor = creatorTheme()->color(Theme::MiniProjectTargetSelectorBackgroundColor);
+    const QColor bgColor = creatorColor(Theme::MiniProjectTargetSelectorBackgroundColor);
     const QString bgColorName = creatorTheme()->flag(Theme::FlatToolBars)
             ? bgColor.lighter(120).name() : bgColor.name();
     setStyleSheet(QString::fromLatin1("QAbstractItemView { background: %1; border-style: none; }").arg(bgColorName));
@@ -552,16 +553,15 @@ int SelectorView::padding()
 /////////
 // KitAreaWidget
 /////////
-void doLayout(KitAspect *aspect, Layouting::LayoutItem &builder)
+void doLayout(KitAspect *aspect, Layouting::Layout &builder)
 {
     aspect->addToLayout(builder);
 }
 
 class KitAreaWidget : public QWidget
 {
-    Q_OBJECT
 public:
-    explicit KitAreaWidget(QWidget *parent = nullptr)
+    explicit KitAreaWidget(QWidget *parent)
         : QWidget(parent)
     {
         connect(KitManager::instance(), &KitManager::kitUpdated, this, &KitAreaWidget::updateKit);
@@ -587,7 +587,8 @@ public:
             if (k && k->isMutable(factory->id())) {
                 KitAspect *aspect = factory->createKitAspect(k);
                 m_kitAspects << aspect;
-                grid.addItems({aspect, Layouting::br});
+                grid.addItem(aspect);
+                grid.flush();
             }
         }
         m_gridWidget = grid.emerge();
@@ -599,7 +600,7 @@ public:
     }
 
 private:
-    void updateKit(ProjectExplorer::Kit *k)
+    void updateKit(Kit *k)
     {
         if (!m_kit || m_kit != k)
             return;
@@ -747,14 +748,10 @@ MiniProjectTargetSelector::MiniProjectTargetSelector(QAction *targetSelectorActi
 
 bool MiniProjectTargetSelector::event(QEvent *event)
 {
-    if (event->type() == QEvent::LayoutRequest) {
-        doLayout(true);
+    if (event->type() == QEvent::ShortcutOverride
+        && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        event->accept();
         return true;
-    } else if (event->type() == QEvent::ShortcutOverride) {
-        if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
-            event->accept();
-            return true;
-        }
     }
     return QWidget::event(event);
 }
@@ -857,7 +854,7 @@ QVector<int> MiniProjectTargetSelector::listWidgetWidths(int minSize, int maxSiz
     }
 }
 
-void MiniProjectTargetSelector::doLayout(bool keepSize)
+void MiniProjectTargetSelector::doLayout()
 {
     // An unconfigured project shows empty build/deploy/run sections
     // if there's a configured project in the seesion
@@ -868,15 +865,15 @@ void MiniProjectTargetSelector::doLayout(bool keepSize)
 
     m_kitAreaWidget->move(0, 0);
 
-    int oldSummaryLabelY = m_summaryLabel->y();
-
-    int kitAreaHeight = m_kitAreaWidget->isVisibleTo(this) ? m_kitAreaWidget->sizeHint().height() : 0;
+    const int kitAreaHeight = m_kitAreaWidget->isVisibleTo(this)
+        ? m_kitAreaWidget->sizeHint().height() : 0;
+    const int kitAreaWidth = m_kitAreaWidget->isVisibleTo(this)
+        ? m_kitAreaWidget->sizeHint().width() : 0;
 
     // 1. Calculate the summary label height
     int summaryLabelY = 1 + kitAreaHeight;
 
     int summaryLabelHeight = 0;
-    int oldSummaryLabelHeight = m_summaryLabel->height();
     bool onlySummary = false;
     // Count the number of lines
     int visibleLineCount = m_projectListWidget->isVisibleTo(this) ? 0 : 1;
@@ -895,9 +892,6 @@ void MiniProjectTargetSelector::doLayout(bool keepSize)
             summaryLabelHeight = m_summaryLabel->sizeHint().height();
     }
 
-    if (keepSize && oldSummaryLabelHeight > summaryLabelHeight)
-        summaryLabelHeight = oldSummaryLabelHeight;
-
     m_summaryLabel->move(0, summaryLabelY);
 
     // Height to be aligned with side bar button
@@ -909,6 +903,7 @@ void MiniProjectTargetSelector::doLayout(bool keepSize)
 
     QRect newGeometry;
 
+    const int minWidth = std::max({m_summaryLabel->sizeHint().width(), kitAreaWidth, 250});
     if (!onlySummary) {
         // list widget height
         int maxItemCount = m_projectListWidget->maxCount();
@@ -916,34 +911,20 @@ void MiniProjectTargetSelector::doLayout(bool keepSize)
             maxItemCount = qMax(maxItemCount, m_listWidgets[i]->maxCount());
 
         int titleWidgetsHeight = m_titleWidgets.first()->height();
-        if (keepSize) {
-            heightWithoutKitArea = height() - oldSummaryLabelY + 1;
-        } else {
-            // Clamp the size of the listwidgets to be at least as high as the sidebar button
-            // and at most half the height of the entire Qt Creator window.
-            heightWithoutKitArea = summaryLabelHeight
-                    + qBound(alignedWithActionHeight,
-                             maxItemCount * 30 + bottomMargin + titleWidgetsHeight,
-                             Core::ICore::mainWindow()->height() / 2);
-        }
+
+        // Clamp the size of the listwidgets to be at least as high as the sidebar button
+        // and at most half the height of the entire Qt Creator window.
+        heightWithoutKitArea = summaryLabelHeight
+                               + qBound(alignedWithActionHeight,
+                                        maxItemCount * 30 + bottomMargin + titleWidgetsHeight,
+                                        Core::ICore::mainWindow()->height() / 2);
 
         int titleY = summaryLabelY + summaryLabelHeight;
         int listY = titleY + titleWidgetsHeight;
         int listHeight = heightWithoutKitArea + kitAreaHeight - bottomMargin - listY + 1;
 
         // list widget widths
-        int minWidth = qMax(m_summaryLabel->sizeHint().width(), 250);
-        minWidth = qMax(minWidth, m_kitAreaWidget->sizeHint().width());
-        if (keepSize) {
-            // Do not make the widget smaller then it was before
-            int oldTotalListWidgetWidth = m_projectListWidget->isVisibleTo(this) ?
-                    m_projectListWidget->width() : 0;
-            for (int i = TARGET; i < LAST; ++i)
-                oldTotalListWidgetWidth += m_listWidgets[i]->width();
-            minWidth = qMax(minWidth, oldTotalListWidgetWidth);
-        }
-
-        QVector<int> widths = listWidgetWidths(minWidth, 1000);
+        QVector<int> widths = listWidgetWidths(minWidth, Core::ICore::mainWindow()->width() * 0.9);
 
         const int runColumnWidth = widths[RUN] == -1 ? 0 : RunColumnWidth;
         int x = 0;
@@ -970,13 +951,10 @@ void MiniProjectTargetSelector::doLayout(bool keepSize)
         m_kitAreaWidget->resize(x - 1, kitAreaHeight);
         newGeometry.setSize({x, heightWithoutKitArea + kitAreaHeight});
     } else {
-        if (keepSize)
-            heightWithoutKitArea = height() - oldSummaryLabelY + 1;
-        else
-            heightWithoutKitArea = qMax(summaryLabelHeight + bottomMargin, alignedWithActionHeight);
+        heightWithoutKitArea = qMax(summaryLabelHeight + bottomMargin, alignedWithActionHeight);
         m_summaryLabel->resize(m_summaryLabel->sizeHint().width(), heightWithoutKitArea - bottomMargin);
         m_kitAreaWidget->resize(m_kitAreaWidget->sizeHint());
-        newGeometry.setSize({m_summaryLabel->width() + 1, heightWithoutKitArea + kitAreaHeight});
+        newGeometry.setSize({minWidth + 1, heightWithoutKitArea + kitAreaHeight});
     }
 
     newGeometry.translate(statusBar->mapToGlobal(QPoint{0, 0}));
@@ -1219,13 +1197,13 @@ void MiniProjectTargetSelector::changeStartupProject(Project *project)
     }
 
     if (project) {
-        QList<QObject *> list;
+        QObjectList list;
         const QList<Target *> targets = project->targets();
         for (Target *t : targets)
             list.append(t);
         m_listWidgets[TARGET]->setProjectConfigurations(list, project->activeTarget());
     } else {
-        m_listWidgets[TARGET]->setProjectConfigurations(QList<QObject *>(), nullptr);
+        m_listWidgets[TARGET]->setProjectConfigurations({}, nullptr);
     }
 
     updateActionAndSummary();
@@ -1264,17 +1242,17 @@ void MiniProjectTargetSelector::activeTargetChanged(Target *target)
                    this, &MiniProjectTargetSelector::updateActionAndSummary);
 
     if (m_target) {
-        QList<QObject *> bl;
+        QObjectList bl;
         for (BuildConfiguration *bc : target->buildConfigurations())
             bl.append(bc);
         m_listWidgets[BUILD]->setProjectConfigurations(bl, target->activeBuildConfiguration());
 
-        QList<QObject *> dl;
+        QObjectList dl;
         for (DeployConfiguration *dc : target->deployConfigurations())
             dl.append(dc);
         m_listWidgets[DEPLOY]->setProjectConfigurations(dl, target->activeDeployConfiguration());
 
-        QList<QObject *> rl;
+        QObjectList rl;
         for (RunConfiguration *rc : target->runConfigurations())
             rl.append(rc);
         m_listWidgets[RUN]->setProjectConfigurations(rl, target->activeRunConfiguration());
@@ -1303,9 +1281,9 @@ void MiniProjectTargetSelector::activeTargetChanged(Target *target)
         connect(m_target, &Target::activeRunConfigurationChanged,
                 this, &MiniProjectTargetSelector::activeRunConfigurationChanged);
     } else {
-        m_listWidgets[BUILD]->setProjectConfigurations(QList<QObject *>(), nullptr);
-        m_listWidgets[DEPLOY]->setProjectConfigurations(QList<QObject *>(), nullptr);
-        m_listWidgets[RUN]->setProjectConfigurations(QList<QObject *>(), nullptr);
+        m_listWidgets[BUILD]->setProjectConfigurations({}, nullptr);
+        m_listWidgets[DEPLOY]->setProjectConfigurations({}, nullptr);
+        m_listWidgets[RUN]->setProjectConfigurations({}, nullptr);
         m_buildConfiguration = nullptr;
         m_deployConfiguration = nullptr;
         m_runConfiguration = nullptr;
@@ -1360,7 +1338,7 @@ void MiniProjectTargetSelector::activeRunConfigurationChanged(RunConfiguration *
 
 void MiniProjectTargetSelector::setVisible(bool visible)
 {
-    doLayout(false);
+    doLayout();
     QWidget::setVisible(visible);
     m_projectAction->setChecked(visible);
     if (visible) {
@@ -1555,7 +1533,7 @@ void MiniProjectTargetSelector::updateSummary()
     }
     if (summary != m_summaryLabel->text()) {
         m_summaryLabel->setText(summary);
-        doLayout(false);
+        doLayout();
     }
 }
 
@@ -1563,7 +1541,7 @@ void MiniProjectTargetSelector::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
     painter.fillRect(rect(), StyleHelper::baseColor());
-    painter.setPen(creatorTheme()->color(Theme::MiniProjectTargetSelectorBorderColor));
+    painter.setPen(creatorColor(Theme::MiniProjectTargetSelectorBorderColor));
     // draw border on top and right
     QRectF borderRect = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     painter.drawLine(borderRect.topLeft(), borderRect.topRight());

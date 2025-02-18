@@ -20,12 +20,6 @@ public:
 
     bool equals(const ExtraEncodingSettings &s) const;
 
-    friend bool operator==(const ExtraEncodingSettings &a, const ExtraEncodingSettings &b)
-    { return a.equals(b); }
-
-    friend bool operator!=(const ExtraEncodingSettings &a, const ExtraEncodingSettings &b)
-    { return !a.equals(b); }
-
     static QStringList lineTerminationModeNames();
 
     enum Utf8BomSetting {
@@ -34,6 +28,17 @@ public:
         AlwaysDelete = 2
     };
     Utf8BomSetting m_utf8BomSetting;
+
+    enum LineEndingSetting {
+      Unix = 0,
+      Windows = 1
+    };
+    LineEndingSetting m_lineEndingSetting;
 };
+
+void setupExtraEncodingSettings();
+void updateGlobalExtraEncodingSettings(const ExtraEncodingSettings &newExtraEncodingSettings);
+
+TEXTEDITOR_EXPORT ExtraEncodingSettings &globalExtraEncodingSettings();
 
 } // TextEditor

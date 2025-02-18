@@ -9,7 +9,7 @@
 
 #include <projectexplorer/devicesupport/deviceusedportsgatherer.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <qmldebug/qmldebugcommandlinearguments.h>
 
@@ -27,8 +27,7 @@ public:
         setId("QnxQmlProfilerSupport");
         appendMessage(Tr::tr("Preparing remote side..."), LogMessageFormat);
 
-        auto portsGatherer = new PortsGatherer(runControl);
-        addStartDependency(portsGatherer);
+        runControl->requestQmlChannel();
 
         auto slog2InfoRunner = new Slog2InfoRunner(runControl);
         addStartDependency(slog2InfoRunner);
@@ -37,22 +36,28 @@ public:
         profiler->addStartDependency(this);
         addStopDependency(profiler);
 
-        setStartModifier([this, portsGatherer, profiler] {
-            const QUrl serverUrl = portsGatherer->findEndPoint();
-            profiler->recordData("QmlServerUrl", serverUrl);
-
+        setStartModifier([this] {
             CommandLine cmd = commandLine();
-            cmd.addArg(QmlDebug::qmlDebugTcpArguments(QmlDebug::QmlProfilerServices, serverUrl));
+            cmd.addArg(QmlDebug::qmlDebugTcpArguments(QmlDebug::QmlProfilerServices, qmlChannel()));
             setCommandLine(cmd);
         });
     }
 };
 
-QnxQmlProfilerWorkerFactory::QnxQmlProfilerWorkerFactory()
+class QnxQmlProfilerWorkerFactory final : public RunWorkerFactory
 {
-    setProduct<QnxQmlProfilerSupport>();
-    // FIXME: Shouldn't this use the run mode id somehow?
-    addSupportedRunConfig(Constants::QNX_RUNCONFIG_ID);
+public:
+    QnxQmlProfilerWorkerFactory()
+    {
+        setProduct<QnxQmlProfilerSupport>();
+        // FIXME: Shouldn't this use the run mode id somehow?
+        addSupportedRunConfig(Constants::QNX_RUNCONFIG_ID);
+    }
+};
+
+void setupQnxQmlProfiler()
+{
+    static QnxQmlProfilerWorkerFactory theQnxQmlProfilerWorkerFactory;
 }
 
 } // Qnx::Internal

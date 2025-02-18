@@ -102,7 +102,10 @@ public:
     void walCheckpointFull() override
     {
         std::lock_guard<std::mutex> lock{m_databaseMutex};
-        m_databaseBackend.walCheckpointFull();
+        try {
+            m_databaseBackend.walCheckpointFull();
+        } catch (const StatementIsBusy &) {
+        }
     }
 
     void setUpdateHook(void *object,
@@ -160,6 +163,9 @@ public:
     void immediateSessionBegin() override;
     void sessionCommit() override;
     void sessionRollback() override;
+
+    void resetDatabaseForTestsOnly();
+    void clearAllTablesForTestsOnly();
 
 private:
     void initializeTables();

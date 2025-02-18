@@ -3,8 +3,12 @@
 
 #pragma once
 
+#include "iossimulator.h"
+
 #include <utils/filepath.h>
 #include <utils/port.h>
+
+#include <solutions/tasking/tasktree.h>
 
 #include <QObject>
 #include <QMap>
@@ -58,6 +62,7 @@ signals:
     void deviceInfo(Ios::IosToolHandler *handler, const QString &deviceId,
                     const Ios::IosToolHandler::Dict &info);
     void appOutput(Ios::IosToolHandler *handler, const QString &output);
+    void message(const QString &msg);
     void errorMsg(Ios::IosToolHandler *handler, const QString &msg);
     void toolExited(Ios::IosToolHandler *handler, int code);
     void finished(Ios::IosToolHandler *handler);
@@ -66,5 +71,30 @@ private:
     friend class Ios::Internal::IosToolHandlerPrivate;
     Ios::Internal::IosToolHandlerPrivate *d;
 };
+
+// for Tasking:
+
+class IosToolRunner
+{
+public:
+    using StartHandler = std::function<void(IosToolHandler *)>;
+    void setStartHandler(const StartHandler &startHandler);
+    void setDeviceType(const Internal::IosDeviceType &type);
+
+private:
+    friend class IosToolTaskAdapter;
+    std::unique_ptr<IosToolHandler> m_iosToolHandler;
+    StartHandler m_startHandler;
+    Internal::IosDeviceType m_deviceType = Internal::IosDeviceType::IosDevice;
+};
+
+class IosToolTaskAdapter final : public Tasking::TaskAdapter<IosToolRunner>
+{
+public:
+    IosToolTaskAdapter();
+    void start() final;
+};
+
+using IosToolTask = Tasking::CustomTask<IosToolTaskAdapter>;
 
 } // namespace Ios

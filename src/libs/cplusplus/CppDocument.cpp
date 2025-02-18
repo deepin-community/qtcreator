@@ -128,7 +128,6 @@ protected:
     bool visit(UsingNamespaceDirective *) override { return false; }
     bool visit(UsingDeclaration *) override { return false; }
     bool visit(NamespaceAlias *) override { return false; }
-    bool visit(Declaration *) override { return false; }
     bool visit(Argument *) override { return false; }
     bool visit(TypenameArgument *) override { return false; }
     bool visit(BaseClass *) override { return false; }
@@ -156,6 +155,13 @@ protected:
                 return process(symbol);
         }
         return true;
+    }
+
+    bool visit(Declaration *decl) override
+    {
+        if (const auto func = decl->type().type()->asFunctionType())
+            return process(func);
+        return false;
     }
 
     // Objective-C
@@ -350,6 +356,15 @@ void Document::addUndefinedMacroUse(const QByteArray &name,
     _undefinedMacroUses.append(use);
 }
 
+int Document::pragmaOnceLine() const
+{
+    for (const Pragma &p : _pragmas) {
+        if (p.tokens.size() == 1 && p.tokens.first() == "once")
+            return p.line;
+    }
+    return -1;
+}
+
 /*!
     \class Document::MacroUse
     \brief The MacroUse class represents the usage of a macro in a
@@ -527,7 +542,7 @@ Document::Ptr Document::create(const FilePath &filePath)
 void Document::setUtf8Source(const QByteArray &source)
 {
     _source = source;
-    _translationUnit->setSource(_source.constBegin(), _source.size());
+    _translationUnit->setSource(_source.constData(), _source.size());
 }
 
 LanguageFeatures Document::languageFeatures() const

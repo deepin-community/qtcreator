@@ -76,7 +76,7 @@ TimelineGraphicsScene::TimelineGraphicsScene(TimelineWidget *parent,
 
     setSceneRect(m_layout->geometry());
 
-    connect(m_layout, &QGraphicsWidget::geometryChanged, this, [this]() {
+    connect(m_layout, &QGraphicsWidget::geometryChanged, this, [this] {
         auto rect = m_layout->geometry();
 
         setSceneRect(rect);
@@ -487,9 +487,10 @@ QmlTimeline TimelineGraphicsScene::currentTimeline() const
 {
     QmlTimeline timeline(timelineModelNode());
     if (timeline.isValid()) {
-        QTC_ASSERT(timeline == timelineView()->currentTimeline(), ;);
+        QTC_CHECK(timeline == timelineView()->currentTimelineNode());
     }
-    return timelineView()->currentTimeline();
+
+    return timelineView()->currentTimelineNode();
 }
 
 QRectF AbstractScrollGraphicsScene::selectionBounds() const

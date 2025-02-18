@@ -76,10 +76,9 @@ ModuleProviderLoader::ModuleProviderLoader(LoaderState &loaderState)
     : m_loaderState(loaderState) {}
 
 ModuleProviderLoader::ModuleProviderResult ModuleProviderLoader::executeModuleProviders(
-        ProductContext &productContext,
-        const CodeLocation &dependsItemLocation,
-        const QualifiedId &moduleName,
-        FallbackMode fallbackMode)
+    ProductContext &productContext,
+    const CodeLocation &dependsItemLocation,
+    const QualifiedId &moduleName)
 {
     ModuleProviderLoader::ModuleProviderResult result;
     try {
@@ -98,18 +97,6 @@ ModuleProviderLoader::ModuleProviderResult ModuleProviderLoader::executeModulePr
         }
         result = executeModuleProvidersHelper(
             productContext, dependsItemLocation, moduleName, providersToRun);
-
-        if (fallbackMode == FallbackMode::Enabled
-                && !result.providerFound
-                && !providerNames) {
-                qCDebug(lcModuleLoader) << "Specific module provider not found for"
-                                    << moduleName.toString()  << ", setting up fallback.";
-            result = executeModuleProvidersHelper(
-                    productContext,
-                    dependsItemLocation,
-                    moduleName,
-                    {{moduleName, ModuleProviderLookup::Fallback}});
-        }
     } catch (const ErrorInfo &error) {
         auto ei = error;
         ei.prepend(
@@ -168,6 +155,7 @@ ModuleProviderLoader::findOrCreateProviderInfo(
         const QualifiedId &moduleName, const QualifiedId &name, ModuleProviderLookup lookupType,
         const QVariantMap &qbsModule)
 {
+    QBS_CHECK(product.providerConfig);
     const QVariantMap config = product.providerConfig->value(name.toString()).toMap();
     std::lock_guard lock(m_loaderState.topLevelProject().moduleProvidersCacheLock());
     ModuleProvidersCacheKey cacheKey{name.toString(), {}, config, qbsModule, int(lookupType)};
@@ -290,9 +278,6 @@ QString ModuleProviderLoader::findModuleProviderFile(
                 fullPath = FileInfo::resolvePath(fullPath, component);
             fullPath = FileInfo::resolvePath(fullPath, QStringLiteral("provider.qbs"));
             break;
-        case ModuleProviderLookup::Fallback:
-            fullPath = FileInfo::resolvePath(fullPath, QStringLiteral("__fallback/provider.qbs"));
-            break;
         }
         if (!FileInfo::exists(fullPath)) {
             qCDebug(lcModuleLoader) << "No module provider found at" << fullPath;
@@ -377,7 +362,9 @@ ModuleProviderLoader::EvaluationResult ModuleProviderLoader::evaluateModuleProvi
                  BuiltinDeclarations::instance().nameForType(ItemType::ModuleProvider)));
     }
 
-    providerItem->setScope(createProviderScope(product, qbsModule));
+    Item * const scope = createProviderScope(product, qbsModule);
+    for (auto it = providerItem->properties().begin(); it != providerItem->properties().end(); ++it)
+        it.value()->setScope(scope, {});
     providerItem->setProperty(
         StringConstants::nameProperty(),
         VariantValue::create(name.toString()));
@@ -397,8 +384,18 @@ ModuleProviderLoader::EvaluationResult ModuleProviderLoader::evaluateModuleProvi
 
     ProbesResolver(m_loaderState).resolveProbes(product, providerItem);
 
-    EvalContextSwitcher contextSwitcher(m_loaderState.evaluator().engine(),
-                                        EvalContext::ModuleProvider);
+    const bool condition = m_loaderState.evaluator().boolValue(
+        providerItem, StringConstants::conditionProperty());
+    if (!condition) {
+        qCDebug(lcModuleLoader) << "Provider condition is false, skipping";
+        return {{}, isEager};
+    }
+
+    EvalContextSwitcher contextSwitcher(
+        m_loaderState.evaluator().engine(), EvalContext::ModuleProvider);
+
+    checkPropertyDeclarations(providerItem, m_loaderState);
+    checkAllowedValues(providerItem);
     auto searchPaths = m_loaderState.evaluator().stringListValue(
         providerItem, QStringLiteral("relativeSearchPaths"));
     auto prependBaseDir = [&outputBaseDir](const auto &path) {
@@ -406,6 +403,21 @@ ModuleProviderLoader::EvaluationResult ModuleProviderLoader::evaluateModuleProvi
     };
     std::transform(searchPaths.begin(), searchPaths.end(), searchPaths.begin(), prependBaseDir);
     return {searchPaths, isEager};
+}
+
+void ModuleProviderLoader::checkAllowedValues(Item *providerItem)
+{
+    for (const auto &propertyDeclaration : providerItem->propertyDeclarations()) {
+        if (!propertyDeclaration.shouldCheckAllowedValues())
+            continue;
+        const auto &name = propertyDeclaration.name();
+        if (name == QStringLiteral("relativeSearchPaths"))
+            continue;
+        const auto value = m_loaderState.evaluator().variantValue(providerItem, name);
+        const auto propertyValue = providerItem->property(name);
+        propertyDeclaration.checkAllowedValues(
+            value, propertyValue->location(), name, m_loaderState);
+    }
 }
 
 } // namespace Internal

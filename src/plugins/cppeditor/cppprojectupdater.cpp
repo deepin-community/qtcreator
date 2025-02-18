@@ -11,36 +11,45 @@
 #include <coreplugin/progressmanager/taskprogress.h>
 
 #include <projectexplorer/extracompiler.h>
+#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectupdater.h>
+#include <projectexplorer/rawprojectpart.h>
+
+#include <solutions/tasking/tasktreerunner.h>
 
 #include <utils/algorithm.h>
 #include <utils/async.h>
+#include <utils/futuresynchronizer.h>
 #include <utils/qtcassert.h>
 
 using namespace ProjectExplorer;
+using namespace Tasking;
 using namespace Utils;
 
-namespace CppEditor {
+namespace CppEditor::Internal {
 
-CppProjectUpdater::CppProjectUpdater() = default;
-CppProjectUpdater::~CppProjectUpdater() = default;
-
-void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo)
+class CppProjectUpdater final : public ProjectUpdater
 {
-    update(projectUpdateInfo, {});
-}
+public:
+    void update(const ProjectUpdateInfo &projectUpdateInfo,
+                const QList<ExtraCompiler *> &extraCompilers) final;
+    void cancel() final;
+
+private:
+    FutureSynchronizer m_futureSynchronizer;
+    TaskTreeRunner m_taskTreeRunner;
+};
 
 void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
-                               const QList<ProjectExplorer::ExtraCompiler *> &extraCompilers)
+                               const QList<ExtraCompiler *> &extraCompilers)
 {
     // Stop previous update.
     cancel();
 
-    const QList<QPointer<ProjectExplorer::ExtraCompiler>> compilers =
+    const QList<QPointer<ExtraCompiler>> compilers =
         Utils::transform(extraCompilers, [](ExtraCompiler *compiler) {
             return QPointer<ExtraCompiler>(compiler);
         });
-
-    using namespace ProjectExplorer;
 
     // Run the project info generator in a worker thread and continue if that one is finished.
     const auto infoGenerator = [=](QPromise<ProjectInfo::ConstPtr> &promise) {
@@ -51,21 +60,21 @@ void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
         promise.addResult(generator.generate(promise));
     };
 
-    using namespace Tasking;
     struct UpdateStorage {
         ProjectInfo::ConstPtr projectInfo = nullptr;
     };
-    const TreeStorage<UpdateStorage> storage;
-    const auto setupInfoGenerator = [=](Async<ProjectInfo::ConstPtr> &async) {
+    const Storage<UpdateStorage> storage;
+    const auto onInfoGeneratorSetup = [this, infoGenerator](Async<ProjectInfo::ConstPtr> &async) {
         async.setConcurrentCallData(infoGenerator);
         async.setFutureSynchronizer(&m_futureSynchronizer);
     };
-    const auto onInfoGeneratorDone = [=](const Async<ProjectInfo::ConstPtr> &async) {
+    const auto onInfoGeneratorDone = [storage](const Async<ProjectInfo::ConstPtr> &async) {
         if (async.isResultAvailable())
             storage->projectInfo = async.result();
     };
-    QList<GroupItem> tasks{parallel};
-    tasks.append(AsyncTask<ProjectInfo::ConstPtr>(setupInfoGenerator, onInfoGeneratorDone));
+    GroupItems tasks{parallel};
+    tasks.append(AsyncTask<ProjectInfo::ConstPtr>(onInfoGeneratorSetup, onInfoGeneratorDone,
+                                                  CallDoneIf::Success));
     for (QPointer<ExtraCompiler> compiler : compilers) {
         if (compiler && compiler->isDirty())
             tasks.append(compiler->compileFileItem());
@@ -83,40 +92,38 @@ void CppProjectUpdater::update(const ProjectUpdateInfo &projectUpdateInfo,
         GeneratedCodeModelSupport::update(extraCompilers);
         auto updateFuture = CppModelManager::updateProjectInfo(storage->projectInfo, compilerFiles);
         m_futureSynchronizer.addFuture(updateFuture);
-        m_taskTree.release()->deleteLater();
-    };
-    const auto onError = [this] {
-        m_taskTree.release()->deleteLater();
     };
 
     const Group root {
-        Tasking::Storage(storage),
+        storage,
         Group(tasks),
-        onGroupDone(onDone),
-        onGroupError(onError)
+        onGroupDone(onDone, CallDoneIf::Success)
     };
-    m_taskTree.reset(new TaskTree(root));
-    auto progress = new Core::TaskProgress(m_taskTree.get());
-    progress->setDisplayName(Tr::tr("Preparing C++ Code Model"));
-    m_taskTree->start();
+    m_taskTreeRunner.start(root, [](TaskTree *taskTree) {
+        auto progress = new Core::TaskProgress(taskTree);
+        progress->setDisplayName(Tr::tr("Preparing C++ Code Model"));
+    });
 }
 
 void CppProjectUpdater::cancel()
 {
-    m_taskTree.reset();
+    m_taskTreeRunner.reset();
     m_futureSynchronizer.cancelAllFutures();
 }
 
-namespace Internal {
-CppProjectUpdaterFactory::CppProjectUpdaterFactory()
+class CppProjectUpdaterFactory final : public ProjectUpdaterFactory
 {
-    setObjectName("CppProjectUpdaterFactory");
+public:
+    CppProjectUpdaterFactory()
+    {
+        setLanguage(Constants::CXX_LANGUAGE_ID);
+        setCreator([] { return new CppProjectUpdater; });
+    }
+};
+
+void setupCppProjectUpdater()
+{
+    static CppProjectUpdaterFactory theCppProjectUpdaterFactory;
 }
 
-CppProjectUpdaterInterface *CppProjectUpdaterFactory::create()
-{
-    return new CppProjectUpdater;
-}
-} // namespace Internal
-
-} // namespace CppEditor
+} //  CppEditor::Internal

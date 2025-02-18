@@ -12,9 +12,10 @@
 #include "settingswidget.h"
 
 #ifdef WITH_TESTS
-#include "readexporteddiagnosticstest.h"
 #include "clangtoolspreconfiguredsessiontests.h"
 #include "clangtoolsunittests.h"
+#include "inlinesuppresseddiagnostics.h"
+#include "readexporteddiagnosticstest.h"
 #endif
 
 #include <utils/icon.h>
@@ -36,7 +37,6 @@
 #include <texteditor/texteditor.h>
 
 #include <projectexplorer/kitaspects.h>
-#include <projectexplorer/projectpanelfactory.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/taskhub.h>
 
@@ -49,15 +49,9 @@
 
 using namespace Core;
 using namespace ProjectExplorer;
+using namespace Utils;
 
 namespace ClangTools::Internal {
-
-static ProjectPanelFactory *m_projectPanelFactoryInstance = nullptr;
-
-ProjectPanelFactory *projectPanelFactory()
-{
-    return m_projectPanelFactoryInstance;
-}
 
 class ClangToolsPluginPrivate
 {
@@ -79,7 +73,7 @@ public:
     ClangTidyTool clangTidyTool;
     ClazyTool clazyTool;
     ClangToolsOptionsPage optionsPage;
-    QMap<Core::IDocument *, DocumentClangToolRunner *> documentRunners;
+    QHash<Core::IDocument *, DocumentClangToolRunner *> documentRunners;
     DocumentQuickFixFactory quickFixFactory;
 };
 
@@ -102,13 +96,7 @@ void ClangToolsPlugin::initialize()
 
     registerAnalyzeActions();
 
-    auto panelFactory = m_projectPanelFactoryInstance = new ProjectPanelFactory;
-    panelFactory->setPriority(100);
-    panelFactory->setId(Constants::PROJECT_PANEL_ID);
-    panelFactory->setDisplayName(Tr::tr("Clang Tools"));
-    panelFactory->setCreateWidgetFunction(
-        [](Project *project) { return new ClangToolsProjectSettingsWidget(project); });
-    ProjectPanelFactory::registerFactory(panelFactory);
+    setupClangToolsProjectPanel();
 
     connect(Core::EditorManager::instance(),
             &Core::EditorManager::currentEditorChanged,
@@ -116,6 +104,7 @@ void ClangToolsPlugin::initialize()
             &ClangToolsPlugin::onCurrentEditorChanged);
 
 #ifdef WITH_TESTS
+    addTestCreator(createInlineSuppressedDiagnosticsTest);
     addTest<PreconfiguredSessionTests>();
     addTest<ClangToolsUnitTests>();
     addTest<ReadExportedDiagnosticsTest>();
@@ -138,7 +127,7 @@ void ClangToolsPlugin::onCurrentEditorChanged()
 
 void ClangToolsPlugin::registerAnalyzeActions()
 {
-    const char * const menuGroupId = "ClangToolsCppGroup";
+    const Id menuGroupId = "ClangToolsCppGroup";
     ActionContainer * const mtoolscpp
         = ActionManager::actionContainer(CppEditor::Constants::M_TOOLS_CPP);
     if (mtoolscpp) {
@@ -153,11 +142,11 @@ void ClangToolsPlugin::registerAnalyzeActions()
     }
 
     for (const auto &toolInfo : {std::make_tuple(ClangTidyTool::instance(),
-                                                 Constants::RUN_CLANGTIDY_ON_PROJECT,
-                                                 Constants::RUN_CLANGTIDY_ON_CURRENT_FILE),
+                                                 Id(Constants::RUN_CLANGTIDY_ON_PROJECT),
+                                                 Id(Constants::RUN_CLANGTIDY_ON_CURRENT_FILE)),
                                  std::make_tuple(ClazyTool::instance(),
-                                                 Constants::RUN_CLAZY_ON_PROJECT,
-                                                 Constants::RUN_CLAZY_ON_CURRENT_FILE)}) {
+                                                 Id(Constants::RUN_CLAZY_ON_PROJECT),
+                                                 Id(Constants::RUN_CLAZY_ON_CURRENT_FILE))}) {
         ClangTool * const tool = std::get<0>(toolInfo);
         ActionManager::registerAction(tool->startAction(), std::get<1>(toolInfo));
         Command *cmd = ActionManager::registerAction(tool->startOnCurrentFileAction(),
@@ -189,10 +178,11 @@ void ClangToolsPlugin::registerAnalyzeActions()
         widget->toolBar()->addWidget(button);
         const auto toolsMenu = new QMenu(widget);
         button->setMenu(toolsMenu);
-        for (const auto &toolInfo : {std::make_pair(ClangTidyTool::instance(),
-                                                    Constants::RUN_CLANGTIDY_ON_CURRENT_FILE),
-                                     std::make_pair(ClazyTool::instance(),
-                                                    Constants::RUN_CLAZY_ON_CURRENT_FILE)}) {
+        for (const auto &toolInfo :
+             {std::pair<ClangTool *, Utils::Id>(
+                  ClangTidyTool::instance(), Constants::RUN_CLANGTIDY_ON_CURRENT_FILE),
+              std::pair<ClangTool *, Utils::Id>(
+                  ClazyTool::instance(), Constants::RUN_CLAZY_ON_CURRENT_FILE)}) {
             ClangTool * const tool = toolInfo.first;
             Command * const cmd = ActionManager::command(toolInfo.second);
             QAction *const action = toolsMenu->addAction(tool->name(), [editor, tool] {

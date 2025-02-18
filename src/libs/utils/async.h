@@ -7,6 +7,7 @@
 
 #include "futuresynchronizer.h"
 #include "qtcassert.h"
+#include "threadutils.h"
 
 #include <solutions/tasking/tasktree.h>
 
@@ -54,7 +55,7 @@ auto asyncRun(Function &&function, Args &&...args)
 template <typename R, typename T>
 const QFuture<T> &onResultReady(const QFuture<T> &future, R *receiver, void(R::*member)(const T &))
 {
-    auto watcher = new QFutureWatcher<T>();
+    auto watcher = new QFutureWatcher<T>(receiver);
     QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, &QObject::deleteLater);
     QObject::connect(watcher, &QFutureWatcherBase::resultReadyAt, receiver, [=](int index) {
         (receiver->*member)(watcher->future().resultAt(index));
@@ -72,7 +73,7 @@ const QFuture<T> &onResultReady(const QFuture<T> &future, R *receiver, void(R::*
 template <typename T, typename Function>
 const QFuture<T> &onResultReady(const QFuture<T> &future, QObject *guard, Function f)
 {
-    auto watcher = new QFutureWatcher<T>();
+    auto watcher = new QFutureWatcher<T>(guard);
     QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, &QObject::deleteLater);
     QObject::connect(watcher, &QFutureWatcherBase::resultReadyAt, guard, [f, watcher](int index) {
         f(watcher->future().resultAt(index));
@@ -90,7 +91,7 @@ template<typename R, typename T>
 const QFuture<T> &onFinished(const QFuture<T> &future,
                              R *receiver, void (R::*member)(const QFuture<T> &))
 {
-    auto watcher = new QFutureWatcher<T>();
+    auto watcher = new QFutureWatcher<T>(receiver);
     QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, &QObject::deleteLater);
     QObject::connect(watcher, &QFutureWatcherBase::finished, receiver,
                      [=] { (receiver->*member)(watcher->future()); });
@@ -107,7 +108,7 @@ const QFuture<T> &onFinished(const QFuture<T> &future,
 template<typename T, typename Function>
 const QFuture<T> &onFinished(const QFuture<T> &future, QObject *guard, Function f)
 {
-    auto watcher = new QFutureWatcher<T>();
+    auto watcher = new QFutureWatcher<T>(guard);
     QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, &QObject::deleteLater);
     QObject::connect(watcher, &QFutureWatcherBase::finished, guard, [f, watcher] {
         f(watcher->future());
@@ -130,7 +131,9 @@ template <typename ResultType>
 class Async : public AsyncBase
 {
 public:
-    Async() {
+    Async()
+        : m_synchronizer(isMainThread() ? futureSynchronizer() : nullptr)
+    {
         connect(&m_watcher, &QFutureWatcherBase::finished, this, &AsyncBase::done);
         connect(&m_watcher, &QFutureWatcherBase::resultReadyAt, this, &AsyncBase::resultReadyAt);
     }
@@ -168,6 +171,7 @@ public:
 
     QFuture<ResultType> future() const { return m_watcher.future(); }
     ResultType result() const { return m_watcher.result(); }
+    ResultType takeResult() const { return m_watcher.future().takeResult(); }
     ResultType resultAt(int index) const { return m_watcher.resultAt(index); }
     QList<ResultType> results() const { return future().results(); }
     bool isResultAvailable() const { return future().resultCount(); }
@@ -176,7 +180,7 @@ private:
     template <typename Function, typename ...Args>
     void wrapConcurrent(Function &&function, Args &&...args)
     {
-        m_startHandler = [=] {
+        m_startHandler = [this, function = std::forward<Function>(function), args...] {
             return asyncRun(m_threadPool, m_priority, function, args...);
         };
     }
@@ -184,7 +188,7 @@ private:
     template <typename Function, typename ...Args>
     void wrapConcurrent(std::reference_wrapper<const Function> &&wrapper, Args &&...args)
     {
-        m_startHandler = [=] {
+        m_startHandler = [this, wrapper = std::forward<std::reference_wrapper<const Function>>(wrapper), args...] {
             return asyncRun(m_threadPool, m_priority, std::forward<const Function>(wrapper.get()),
                             args...);
         };
@@ -199,12 +203,12 @@ private:
 };
 
 template <typename ResultType>
-class AsyncTaskAdapter : public Tasking::TaskAdapter<Async<ResultType>>
+class AsyncTaskAdapter final : public Tasking::TaskAdapter<Async<ResultType>>
 {
 public:
     AsyncTaskAdapter() {
         this->connect(this->task(), &AsyncBase::done, this, [this] {
-            emit this->done(!this->task()->isCanceled());
+            emit this->done(Tasking::toDoneResult(!this->task()->isCanceled()));
         });
     }
     void start() final { this->task()->start(); }

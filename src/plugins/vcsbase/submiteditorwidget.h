@@ -84,7 +84,7 @@ signals:
     void submitActionEnabledChanged(bool);
 
 protected:
-    virtual void changeEvent(QEvent *event) override;
+    void changeEvent(QEvent *event) override;
     virtual QString cleanupDescription(const QString &) const;
     virtual QString commitName() const;
     void insertTopWidget(QWidget *w);
@@ -95,6 +95,8 @@ protected:
     void verifyDescription();
 
 private:
+    enum { MinSubjectLength = 20, MaxSubjectLength = 72, WarningSubjectLength = 55 };
+
     void updateCheckAllComboBox();
     void checkAllToggled();
 
@@ -110,6 +112,7 @@ private:
     int checkedFilesCount() const;
     void wrapDescription();
     void trimDescription();
+    void clearDescriptionHint();
 
     SubmitEditorWidgetPrivate *d;
 };

@@ -15,7 +15,7 @@ file(STRINGS VERSION QBS_VERSION)
 project(Qbs VERSION ${QBS_VERSION})
 
 # Force C++ standard, do not fall back, do not use compiler extensions
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -65,6 +65,8 @@ if (QBS_INSTALL_HTML_DOCS OR QBS_INSTALL_QCH_DOCS)
         find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Help REQUIRED)
     endif()
 endif()
+
+add_definitions(-DQT_NO_QSNPRINTF -D_UCRT_NOISY_NAN)
 
 add_subdirectory(src)
 add_subdirectory(doc)

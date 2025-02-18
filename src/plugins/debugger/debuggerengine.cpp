@@ -27,7 +27,6 @@
 #include "sourceutils.h"
 #include "stackhandler.h"
 #include "stackwindow.h"
-#include "terminal.h"
 #include "threadshandler.h"
 #include "watchhandler.h"
 #include "watchutils.h"
@@ -53,11 +52,12 @@
 #include <utils/algorithm.h>
 #include <utils/basetreeview.h>
 #include <utils/checkablemessagebox.h>
+#include <utils/fileutils.h>
 #include <utils/macroexpander.h>
-#include <utils/process.h>
 #include <utils/processhandle.h>
 #include <utils/processinterface.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/styledbar.h>
 #include <utils/utilsicons.h>
 
@@ -66,7 +66,6 @@
 #include <QDebug>
 #include <QDir>
 #include <QDockWidget>
-#include <QFileInfo>
 #include <QHeaderView>
 #include <QTextBlock>
 #include <QTimer>
@@ -267,8 +266,8 @@ public:
 
         connect(&settings().enableReverseDebugging, &BaseAspect::changed, this, [this] {
             updateState();
-            if (m_companionEngine)
-                m_companionEngine->d->updateState();
+            for (const QPointer<DebuggerEngine> &companion : std::as_const(m_companionEngines))
+                companion->d->updateState();
         });
         static int contextCount = 0;
         m_context = Context(Id("Debugger.Engine.").withSuffix(++contextCount));
@@ -445,13 +444,12 @@ public:
     DebuggerRunParameters m_runParameters;
     IDevice::ConstPtr m_device;
 
-    QPointer<DebuggerEngine> m_companionEngine;
+    QList<QPointer<DebuggerEngine>> m_companionEngines;
     bool m_isPrimaryEngine = true;
 
     // The current state.
     DebuggerState m_state = DebuggerNotReady;
 
-//    Terminal m_terminal;
     ProcessHandle m_inferiorPid;
 
     BreakHandler m_breakHandler;
@@ -512,6 +510,7 @@ public:
     QAction m_abortAction{Tr::tr("Abort Debugging")};
     QAction m_stepIntoAction{Tr::tr("Step Into")};
     QAction m_stepOutAction{Tr::tr("Step Out")};
+    QAction m_toggleEnableBreakpointsAction{Tr::tr("Disable All Breakpoints")};
     QAction m_runToLineAction{Tr::tr("Run to Line")}; // In the debug menu
     QAction m_runToSelectedFunctionAction{Tr::tr("Run to Selected Function")};
     QAction m_jumpToLineAction{Tr::tr("Jump to Line")};
@@ -530,7 +529,7 @@ public:
     OptionalAction m_operateInReverseDirectionAction{Tr::tr("Reverse Direction")};
     OptionalAction m_snapshotAction{Tr::tr("Take Snapshot of Process State")};
 
-    QPointer<TerminalRunner> m_terminalRunner;
+    QPointer<DebuggerRunTool> m_runTool;
     DebuggerToolTipManager m_toolTipManager;
     Context m_context;
 };
@@ -553,8 +552,10 @@ void DebuggerEnginePrivate::setupViews()
         = new Perspective(perspectiveId, m_engine->displayName(), parentPerspectiveId, settingsId);
 
     m_progress.setProgressRange(0, 1000);
-    FutureProgress *fp = ProgressManager::addTask(m_progress.future(),
-        Tr::tr("Launching Debugger"), "Debugger.Launcher");
+    const QString msg = m_companionEngines.isEmpty()
+            ? Tr::tr("Launching Debugger")
+            : Tr::tr("Launching %1 Debugger").arg(m_debuggerName);
+    FutureProgress *fp = ProgressManager::addTask(m_progress.future(), msg, "Debugger.Launcher");
     connect(fp, &FutureProgress::canceled, m_engine, &DebuggerEngine::quitDebugger);
     m_progress.reportStarted();
 
@@ -791,6 +792,28 @@ void DebuggerEnginePrivate::setupViews()
 
     connect(&m_watchAction, &QAction::triggered,
             m_engine, &DebuggerEngine::handleAddToWatchWindow);
+
+    m_toggleEnableBreakpointsAction.setIcon(Icons::BREAKPOINT_DISABLED.icon()); // FIXME better icon
+    m_toggleEnableBreakpointsAction.setCheckable(true);
+    m_perspective->addToolBarAction(&m_toggleEnableBreakpointsAction);
+    connect(&m_toggleEnableBreakpointsAction, &QAction::triggered,
+            m_engine, [this](bool checked) {
+        BreakHandler *handler = m_engine->breakHandler();
+        const auto bps = m_engine->breakHandler()->breakpoints();
+        for (const auto &bp : bps) {
+            if (auto gbp = bp->globalBreakpoint())
+                gbp->setEnabled(!checked, false);
+            handler->requestBreakpointEnabling(bp, !checked);
+        }
+    });
+    connect(m_engine->breakHandler(), &BreakHandler::dataChanged,
+            m_engine, [this] {
+        const auto bps = m_engine->breakHandler()->breakpoints();
+        const auto [enabled, disabled] = Utils::partition(bps, &BreakpointItem::isEnabled);
+        if (!enabled.isEmpty() && !disabled.isEmpty())
+            return;
+        m_toggleEnableBreakpointsAction.setChecked(!disabled.isEmpty());
+    });
 
     m_perspective->addToolBarAction(&m_recordForReverseOperationAction);
     connect(&m_recordForReverseOperationAction, &QAction::triggered,
@@ -1050,9 +1073,8 @@ void DebuggerEngine::setRunId(const QString &id)
 
 void DebuggerEngine::setRunTool(DebuggerRunTool *runTool)
 {
+    d->m_runTool = runTool;
     d->m_device = runTool->device();
-
-    d->m_terminalRunner = runTool->terminalRunner();
 
     validateRunParameters(d->m_runParameters);
 
@@ -1134,9 +1156,9 @@ IDevice::ConstPtr DebuggerEngine::device() const
     return d->m_device;
 }
 
-DebuggerEngine *DebuggerEngine::companionEngine() const
+QList<DebuggerEngine *> DebuggerEngine::companionEngines() const
 {
-    return d->m_companionEngine;
+    return Utils::transform(d->m_companionEngines, &QPointer<DebuggerEngine>::get);
 }
 
 DebuggerState DebuggerEngine::state() const
@@ -1437,6 +1459,9 @@ void DebuggerEnginePrivate::updateState()
     if (!m_threadLabel)
         return;
     QTC_ASSERT(m_threadLabel, return);
+
+    if (m_isDying)
+        return;
 
     const DebuggerState state = m_state;
     const bool companionPreventsAction = m_engine->companionPreventsActions();
@@ -1762,6 +1787,10 @@ void DebuggerEngine::showMessage(const QString &msg, int channel, int timeout) c
             d->m_logWindow->showInput(LogInput, msg);
             d->m_logWindow->showOutput(LogInput, msg);
             break;
+        case LogOutput:
+        case LogWarning:
+            d->m_logWindow->showOutput(channel, msg);
+            break;
         case LogError:
             d->m_logWindow->showInput(LogError, "ERROR: " + msg);
             d->m_logWindow->showOutput(LogError, "ERROR: " + msg);
@@ -1776,7 +1805,7 @@ void DebuggerEngine::showMessage(const QString &msg, int channel, int timeout) c
             emit appendMessageRequested(msg, StdErrFormat, false);
             break;
         default:
-            d->m_logWindow->showOutput(channel, msg);
+            d->m_logWindow->showOutput(channel, QString("[%1] %2").arg(debuggerName(), msg));
             break;
     }
 }
@@ -1793,6 +1822,9 @@ void DebuggerEngine::notifyDebuggerProcessFinished(const ProcessResultData &resu
     switch (state()) {
     case DebuggerFinished:
         // Nothing to do.
+        break;
+    case EngineSetupRequested:
+        notifyEngineSetupFailed();
         break;
     case EngineShutdownRequested:
     case InferiorShutdownRequested:
@@ -1849,8 +1881,8 @@ void DebuggerEngine::setState(DebuggerState state, bool forced)
     showMessage(msg, LogDebug);
 
     d->updateState();
-    if (d->m_companionEngine)
-        d->m_companionEngine->d->updateState();
+    for (const QPointer<DebuggerEngine> &companion : std::as_const(d->m_companionEngines))
+        companion->d->updateState();
 
     if (oldState != d->m_state)
         emit EngineManager::instance()->engineStateChanged(this);
@@ -1893,7 +1925,7 @@ QString DebuggerEngine::nativeStartupCommands() const
         return !trimmed.isEmpty() && !trimmed.startsWith('#');
     });
 
-    return expand(lines.join('\n'));
+    return lines.join('\n');
 }
 
 Perspective *DebuggerEngine::perspective() const
@@ -2011,11 +2043,16 @@ void DebuggerEngine::quitDebugger()
     case EngineShutdownRequested:
     case InferiorShutdownRequested:
         break;
-    case EngineRunFailed:
-    case DebuggerFinished:
+    case DebuggerNotReady:
+    case EngineSetupFailed:
     case InferiorShutdownFinished:
+    case EngineRunFailed:
+    case EngineShutdownFinished:
+    case DebuggerFinished:
         break;
-    default:
+    case InferiorRunRequested:
+    case InferiorRunFailed:
+    case InferiorStopRequested:
         // FIXME: We should disable the actions connected to that.
         notifyInferiorIll();
         break;
@@ -2037,9 +2074,9 @@ void DebuggerEngine::progressPing()
     d->m_progress.setProgressValue(progress);
 }
 
-void DebuggerEngine::setCompanionEngine(DebuggerEngine *engine)
+void DebuggerEngine::addCompanionEngine(DebuggerEngine *engine)
 {
-    d->m_companionEngine = engine;
+    d->m_companionEngines << engine;
 }
 
 void DebuggerEngine::setSecondaryEngine()
@@ -2047,9 +2084,33 @@ void DebuggerEngine::setSecondaryEngine()
     d->m_isPrimaryEngine = false;
 }
 
-TerminalRunner *DebuggerEngine::terminal() const
+bool DebuggerEngine::usesTerminal() const
 {
-    return d->m_terminalRunner;
+    return d->m_runParameters.useTerminal;
+}
+
+qint64 DebuggerEngine::applicationPid() const
+{
+    QTC_CHECK(usesTerminal());
+    return d->m_runParameters.applicationPid;
+}
+
+qint64 DebuggerEngine::applicationMainThreadId() const
+{
+    QTC_CHECK(usesTerminal());
+    return d->m_runParameters.applicationMainThreadId;
+}
+
+void DebuggerEngine::interruptTerminal() const
+{
+    QTC_ASSERT(usesTerminal(), return);
+    d->m_runTool->interruptTerminal();
+}
+
+void DebuggerEngine::kickoffTerminalProcess() const
+{
+    QTC_ASSERT(usesTerminal(), return);
+    d->m_runTool->kickoffTerminalProcess();
 }
 
 void DebuggerEngine::selectWatchData(const QString &)
@@ -2411,6 +2472,7 @@ void DebuggerEngine::updateWatchData(const QString &iname)
     // e.g. when changing the expression in a watcher.
     UpdateParameters params;
     params.partialVariable = iname;
+    params.qmlFocusOnFrame = false;
     doUpdateLocals(params);
 }
 
@@ -2607,6 +2669,8 @@ bool DebuggerRunParameters::isCppDebugging() const
     return cppEngineType == GdbEngineType
         || cppEngineType == LldbEngineType
         || cppEngineType == CdbEngineType
+        || cppEngineType == GdbDapEngineType
+        || cppEngineType == LldbDapEngineType
         || cppEngineType == UvscEngineType;
 }
 
@@ -2630,7 +2694,7 @@ QString DebuggerEngine::formatStartParameters() const
     str << '\n';
     if (!sp.inferior.command.isEmpty()) {
         str << "Executable: " << sp.inferior.command.toUserOutput();
-        if (d->m_terminalRunner)
+        if (usesTerminal())
             str << " [terminal]";
         str << '\n';
         if (!sp.inferior.workingDirectory.isEmpty())
@@ -2849,7 +2913,7 @@ void CppDebuggerEngine::validateRunParameters(DebuggerRunParameters &rp)
             }
             if (globalRegExpSourceMap.isEmpty())
                 return;
-            if (QSharedPointer<Utils::ElfMapper> mapper = reader.readSection(".debug_str")) {
+            if (std::shared_ptr<ElfMapper> mapper = reader.readSection(".debug_str")) {
                 const char *str = mapper->start;
                 const char *limit = str + mapper->fdlen;
                 bool found = false;

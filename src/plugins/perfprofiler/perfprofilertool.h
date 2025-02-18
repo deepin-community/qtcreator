@@ -13,6 +13,7 @@
 #include <tracing/timelinezoomcontrol.h>
 #include <utils/fileinprojectfinder.h>
 
+#include <QCoreApplication>
 #include <QLabel>
 #include <QToolButton>
 
@@ -36,8 +37,6 @@ public:
 
     static PerfProfilerTool *instance();
 
-    PerfProfilerTraceManager *traceManager() const;
-    PerfTimelineModelManager *modelManager() const;
     Timeline::TimelineZoomControl *zoomControl() const;
 
     bool isRecording() const;
@@ -101,19 +100,20 @@ private:
     QMenu *m_filterMenu = nullptr;
     QToolButton *m_aggregateButton = nullptr;
     QToolButton *m_tracePointsButton = nullptr;
-    QList<QObject *> m_objectsToDelete;
+    QObjectList m_objectsToDelete;
 
     PerfProfilerTraceView *m_traceView = nullptr;
     PerfProfilerStatisticsView *m_statisticsView = nullptr;
     PerfProfilerFlameGraphView *m_flameGraphView = nullptr;
 
-    PerfProfilerTraceManager *m_traceManager = nullptr;
-    PerfTimelineModelManager *m_modelManager = nullptr;
     Timeline::TimelineZoomControl *m_zoomControl = nullptr;
     Utils::FileInProjectFinder m_fileFinder;
     bool m_readerRunning = false;
     bool m_processRunning = false;
 };
+
+void setupPerfProfilerTool();
+void destroyPerfProfilerTool();
 
 } // namespace Internal
 } // namespace PerfProfiler

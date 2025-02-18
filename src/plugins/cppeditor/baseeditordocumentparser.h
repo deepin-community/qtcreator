@@ -6,8 +6,10 @@
 #include "cppeditor_global.h"
 #include "cpptoolsreuse.h"
 #include "cppworkingcopy.h"
+#include "projectpart.h"
 
 #include <projectexplorer/project.h>
+#include <utils/cpplanguage_details.h>
 
 #include <QObject>
 #include <QMutex>
@@ -34,11 +36,11 @@ public:
         QByteArray editorDefines;
         QString preferredProjectPartId;
 
-        bool operator==(const Configuration &other)
+        friend bool operator==(const Configuration &left, const Configuration &right)
         {
-            return usePrecompiledHeaders == other.usePrecompiledHeaders
-                    && editorDefines == other.editorDefines
-                    && preferredProjectPartId == other.preferredProjectPartId;
+            return left.usePrecompiledHeaders == right.usePrecompiledHeaders
+                && left.editorDefines == right.editorDefines
+                && left.preferredProjectPartId == right.preferredProjectPartId;
         }
     };
 

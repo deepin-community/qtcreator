@@ -28,15 +28,13 @@ public:
 
         m_targetAspect.setSettingsKey(TARGET_KEY);
         m_targetAspect.setLabelText(Tr::tr("Target:"));
-
-        addMacroExpander();
     }
 
 protected:
     bool init() final
     {
-        m_source = m_sourceAspect();
-        m_target = m_targetAspect();
+        m_source = m_sourceAspect.expandedValue();
+        m_target = m_targetAspect.expandedValue();
         return m_source.exists();
     }
 
@@ -52,13 +50,13 @@ private:
             streamer.setDestination(m_target);
             return SetupResult::Continue;
         };
-        const auto onDone = [this](const FileStreamer &) {
-            addOutput(Tr::tr("Copying finished."), OutputFormat::NormalMessage);
+        const auto onDone = [this](DoneWith result) {
+            if (result == DoneWith::Success)
+                addOutput(Tr::tr("Copying finished."), OutputFormat::NormalMessage);
+            else
+                addOutput(Tr::tr("Copying failed."), OutputFormat::ErrorMessage);
         };
-        const auto onError = [this](const FileStreamer &) {
-            addOutput(Tr::tr("Copying failed."), OutputFormat::ErrorMessage);
-        };
-        return FileStreamerTask(onSetup, onDone, onError);
+        return FileStreamerTask(onSetup, onDone);
     }
 
     FilePath m_source;

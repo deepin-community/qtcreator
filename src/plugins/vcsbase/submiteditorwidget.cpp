@@ -36,6 +36,7 @@
 #include <QTreeView>
 #include <QVBoxLayout>
 
+using namespace Core;
 using namespace Utils;
 
 enum { debug = 0 };
@@ -95,15 +96,16 @@ struct SubmitEditorWidgetPrivate
     // A pair of position/action to extend context menus
     typedef QPair<int, QPointer<QAction> > AdditionalContextMenuAction;
 
-    Core::MiniSplitter *splitter;
-    QGroupBox *descriptionBox;
-    QVBoxLayout *descriptionLayout;
-    QLabel *descriptionHint;
-    Utils::CompletingTextEdit *description;
-    QCheckBox *checkAllCheckBox;
-    QTreeView *fileView;
-    QHBoxLayout *buttonLayout;
-    QVBoxLayout *vboxLayout;
+    MiniSplitter *splitter = nullptr;
+    QGroupBox *descriptionBox = nullptr;
+    QVBoxLayout *descriptionLayout = nullptr;
+    QLabel *descriptionHint = nullptr;
+    CompletingTextEdit *description = nullptr;
+    QCheckBox *checkAllCheckBox = nullptr;
+    QTreeView *fileView = nullptr;
+    QHBoxLayout *buttonLayout = nullptr;
+    QLabel *error = nullptr;
+    QVBoxLayout *vboxLayout = nullptr;
 
     QList<AdditionalContextMenuAction> descriptionEditContextMenuActions;
     QVBoxLayout *m_fieldLayout = nullptr;
@@ -112,6 +114,7 @@ struct SubmitEditorWidgetPrivate
     QActionPushButton *m_submitButton = nullptr;
     QString m_description;
     QTimer delayedVerifyDescriptionTimer;
+    int m_delayedVerifyDescriptionInterval = 2000;
 
     int m_lineWidth = defaultLineWidth;
     int m_activatedRow = -1;
@@ -153,7 +156,6 @@ SubmitEditorWidget::SubmitEditorWidget() :
     d->descriptionLayout->addWidget(d->description);
 
     d->delayedVerifyDescriptionTimer.setSingleShot(true);
-    d->delayedVerifyDescriptionTimer.setInterval(500);
     connect(&d->delayedVerifyDescriptionTimer, &QTimer::timeout,
             this, &SubmitEditorWidget::verifyDescription);
 
@@ -175,7 +177,7 @@ SubmitEditorWidget::SubmitEditorWidget() :
     verticalLayout_2->addWidget(d->checkAllCheckBox);
     verticalLayout_2->addWidget(d->fileView);
 
-    d->splitter = new Core::MiniSplitter(scrollAreaWidgetContents);
+    d->splitter = new MiniSplitter(scrollAreaWidgetContents);
     d->splitter->setObjectName("splitter");
     d->splitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     d->splitter->setOrientation(Qt::Horizontal);
@@ -186,12 +188,15 @@ SubmitEditorWidget::SubmitEditorWidget() :
     d->buttonLayout->setContentsMargins(0, -1, -1, -1);
     QToolButton *openSettingsButton = new QToolButton;
     openSettingsButton->setIcon(Utils::Icons::SETTINGS.icon());
-    openSettingsButton->setToolTip(Core::ICore::msgShowOptionsDialog());
+    openSettingsButton->setToolTip(ICore::msgShowOptionsDialog());
     connect(openSettingsButton, &QToolButton::clicked,  this, [] {
-        Core::ICore::showOptionsDialog(Constants::VCS_COMMON_SETTINGS_ID);
+        ICore::showOptionsDialog(Constants::VCS_COMMON_SETTINGS_ID);
     });
     d->buttonLayout->addWidget(openSettingsButton);
     d->buttonLayout->addItem(new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum));
+
+    d->error = new QLabel();
+    d->buttonLayout->addWidget(d->error);
 
     d->vboxLayout = new QVBoxLayout(scrollAreaWidgetContents);
     d->vboxLayout->setSpacing(6);
@@ -250,14 +255,28 @@ void SubmitEditorWidget::registerActions(QAction *editorUndoAction, QAction *edi
     }
 
     if (submitAction) {
+        auto updateSubmitEnabled = [this, submitAction] {
+            QString errorMessage;
+            const bool submitEnabled = canSubmit(&errorMessage);
+            submitAction->setEnabled(submitEnabled);
+
+            if (submitEnabled || errorMessage.isEmpty()) {
+                d->error->clear();
+            } else {
+                const QString hint = QString("<font color=\"%1\">")
+                    .arg(Utils::creatorColor(Utils::Theme::TextColorError).name());
+                d->error->setText(hint + Tr::tr("Cannot commit: %1").arg(errorMessage));
+            }
+        };
+
         if (debug) {
             const SubmitFileModel *model = fileModel();
             int count = model ? model->rowCount() : 0;
             qDebug() << Q_FUNC_INFO << submitAction << count << "items";
         }
-        d->m_commitEnabled = !canSubmit();
-        connect(this, &SubmitEditorWidget::submitActionEnabledChanged,
-                submitAction, &QAction::setEnabled);
+        updateSubmitEnabled();
+        connect(this, &SubmitEditorWidget::submitActionEnabledChanged, this, updateSubmitEnabled);
+        connect(this, &SubmitEditorWidget::submitActionTextChanged, this, updateSubmitEnabled);
         connect(this, &SubmitEditorWidget::submitActionTextChanged,
                 submitAction, &QAction::setText);
         d->m_submitButton = new QActionPushButton(submitAction);
@@ -334,6 +353,12 @@ void SubmitEditorWidget::wrapDescription()
         }
         cursor.movePosition(QTextCursor::NextBlock);
     }
+}
+
+void VcsBase::SubmitEditorWidget::clearDescriptionHint()
+{
+    d->descriptionHint->setText(QString());
+    d->descriptionHint->setToolTip(QString());
 }
 
 QString SubmitEditorWidget::descriptionText() const
@@ -578,14 +603,12 @@ void SubmitEditorWidget::hideDescription()
 void SubmitEditorWidget::verifyDescription()
 {
     if (!isEnabled()) {
-        d->descriptionHint->setText(QString());
-        d->descriptionHint->setToolTip(QString());
+        clearDescriptionHint();
         return;
     }
 
     auto fontColor = [](Utils::Theme::Color color) {
-        return QString("<font color=\"%1\">")
-                .arg(Utils::creatorTheme()->color(color).name());
+        return QString("<font color=\"%1\">").arg(Utils::creatorColor(color).name());
     };
     const QString hint = fontColor(Utils::Theme::OutputPanes_TestWarnTextColor);
     const QString warning = fontColor(Utils::Theme::TextColorError);
@@ -604,7 +627,6 @@ void SubmitEditorWidget::verifyDescription()
         subjectLength = descriptionLength;
     }
 
-    enum { MinSubjectLength = 20, MaxSubjectLength = 72, WarningSubjectLength = 55 };
     QStringList hints;
     if (0 < subjectLength && subjectLength < MinSubjectLength)
         hints.append(warning + Tr::tr("Warning: The commit subject is very short."));
@@ -635,7 +657,17 @@ void SubmitEditorWidget::verifyDescription()
 void SubmitEditorWidget::descriptionTextChanged()
 {
     d->m_description = cleanupDescription(d->description->toPlainText());
-    d->delayedVerifyDescriptionTimer.start();
+
+    if (d->m_description.isEmpty()) {
+        d->m_delayedVerifyDescriptionInterval = 2000;
+        clearDescriptionHint();
+    } else if (d->m_description.length() > MinSubjectLength || d->m_description.contains("\n")) {
+        d->m_delayedVerifyDescriptionInterval = 100;
+    } else {
+        d->m_delayedVerifyDescriptionInterval = 2000;
+    }
+    d->delayedVerifyDescriptionTimer.start(d->m_delayedVerifyDescriptionInterval);
+
     wrapDescription();
     trimDescription();
     // append field entries
@@ -733,7 +765,8 @@ void SubmitEditorWidget::insertDescriptionEditContextMenuAction(int pos, QAction
 
 void SubmitEditorWidget::editorCustomContextMenuRequested(const QPoint &pos)
 {
-    QScopedPointer<QMenu> menu(d->description->createStandardContextMenu());
+    QMenu *menu = d->description->createStandardContextMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
     // Extend
     for (const SubmitEditorWidgetPrivate::AdditionalContextMenuAction &a :
          std::as_const(d->descriptionEditContextMenuActions)) {

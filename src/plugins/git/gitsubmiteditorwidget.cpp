@@ -37,6 +37,7 @@ public:
     GitSubmitPanel()
     {
         repositoryLabel = new QLabel(Tr::tr("repository"));
+        repositoryLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         branchLabel = new QLabel(Tr::tr("branch")); // FIXME: Isn't this overwritten soon?
         showHeadLabel = new QLabel("<a href=\"head\">" + Tr::tr("Show HEAD") + "</a>");
 
@@ -64,18 +65,18 @@ public:
 
         editGroup = new QGroupBox(Tr::tr("Commit Information"));
         Grid {
-            Tr::tr("Author:"), authorLineEdit, invalidAuthorLabel, st, br,
+            Tr::tr("Author:"), authorLineEdit, invalidAuthorLabel, br,
             Tr::tr("Email:"), emailLineEdit, invalidEmailLabel, br,
             empty, Row { bypassHooksCheckBox, signOffCheckBox, st }
         }.attachTo(editGroup);
 
-        Column {
+        Row {
             Group {
                 title(Tr::tr("General Information")),
                 Form {
                     Tr::tr("Repository:"), repositoryLabel, br,
                     Tr::tr("Branch:"), branchLabel, br,
-                    Span(2, showHeadLabel)
+                    empty, showHeadLabel
                 }
             },
             editGroup,
@@ -119,8 +120,7 @@ void GitSubmitEditorWidget::setPanelInfo(const GitSubmitEditorPanelInfo &info)
 {
     m_gitSubmitPanel->repositoryLabel->setText(info.repository.toUserOutput());
     if (info.branch.contains("(no branch)")) {
-        const QString errorColor =
-                Utils::creatorTheme()->color(Utils::Theme::TextColorError).name();
+        const QString errorColor = Utils::creatorColor(Utils::Theme::TextColorError).name();
         m_gitSubmitPanel->branchLabel->setText(QString::fromLatin1("<span style=\"color:%1\">%2</span>")
                                                 .arg(errorColor, Tr::tr("Detached HEAD")));
     } else {
@@ -128,7 +128,7 @@ void GitSubmitEditorWidget::setPanelInfo(const GitSubmitEditorPanelInfo &info)
     }
 }
 
-QString GitSubmitEditorWidget::amendSHA1() const
+QString GitSubmitEditorWidget::amendHash() const
 {
     return m_logChangeWidget ? m_logChangeWidget->commit() : QString();
 }

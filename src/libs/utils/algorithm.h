@@ -22,7 +22,9 @@
 
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 
 namespace Utils
 {
@@ -82,6 +84,10 @@ template<typename T, typename R, typename S>
 Q_REQUIRED_RESULT typename T::value_type findOr(const T &container,
                                                 typename T::value_type other,
                                                 R S::*member);
+template<typename T, typename F>
+Q_REQUIRED_RESULT std::optional<typename T::value_type> findOr(const T &container,
+                                                               std::nullopt_t,
+                                                               F function);
 
 /////////////////////////
 // findOrDefault
@@ -249,10 +255,10 @@ template<template<typename> class C, // result container type
          typename SC,                // input container type
          typename F,                 // function type
          typename Value = typename std::decay_t<SC>::value_type,
-         typename Result = std::decay_t<std::result_of_t<F(Value &)>>,
+         typename Result = std::decay_t<std::invoke_result_t<F, Value&>>,
          typename ResultContainer = C<Result>>
 Q_REQUIRED_RESULT decltype(auto) transform(SC &&container, F function);
-#ifdef Q_CC_CLANG
+#if __cpp_template_template_args < 201611L
 // "Matching of template template-arguments excludes compatible templates"
 // http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0522r0.html (P0522R0)
 // in C++17 makes the above match e.g. C=std::vector even though that takes two
@@ -266,7 +272,7 @@ template<template<typename, typename> class C, // result container type
          typename SC,                          // input container type
          typename F,                           // function type
          typename Value = typename std::decay_t<SC>::value_type,
-         typename Result = std::decay_t<std::result_of_t<F(Value &)>>,
+         typename Result = std::decay_t<std::invoke_result_t<F, Value&>>,
          typename ResultContainer = C<Result, std::allocator<Result>>>
 Q_REQUIRED_RESULT decltype(auto) transform(SC &&container, F function);
 #endif
@@ -391,6 +397,12 @@ bool allOf(const T &container, F predicate)
     return std::all_of(std::begin(container), std::end(container), predicate);
 }
 
+template<typename T, typename F>
+bool allOf(const std::initializer_list<T> &initializerList, F predicate)
+{
+    return std::all_of(std::begin(initializerList), std::end(initializerList), predicate);
+}
+
 // allOf taking a member function pointer
 template<typename T, typename R, typename S>
 bool allOf(const T &container, R (S::*predicate)() const)
@@ -445,6 +457,30 @@ bool contains(const C &container, R S::*member)
     return anyOf(container, std::mem_fn(member));
 }
 
+template<typename T, std::size_t Size, typename V>
+[[nodiscard]] bool contains(const T (&array)[Size], const V &value)
+{
+    auto begin = std::begin(array);
+    auto end = std::end(array);
+
+    auto found = std::find(begin, end, value);
+
+    return found != end;
+}
+
+//////////////////
+// containsInSorted
+/////////////////
+
+template<typename C, typename V>
+[[nodiscard]] bool containsInSorted(const C &container, const V &value)
+{
+    auto begin = std::begin(container);
+    auto end = std::end(container);
+
+    return std::binary_search(begin, end, value);
+}
+
 //////////////////
 // findOr
 /////////////////
@@ -471,6 +507,21 @@ Q_REQUIRED_RESULT
 typename T::value_type findOr(const T &container, typename T::value_type other, R S::*member)
 {
     return findOr(container, other, std::mem_fn(member));
+}
+
+template<typename C, typename F>
+Q_REQUIRED_RESULT typename std::optional<typename C::value_type> findOr(const C &container,
+                                                                        std::nullopt_t,
+                                                                        F function)
+{
+    typename C::const_iterator begin = std::begin(container);
+    typename C::const_iterator end = std::end(container);
+
+    typename C::const_iterator it = std::find_if(begin, end, function);
+    if (it == end)
+        return std::nullopt;
+
+    return *it;
 }
 
 //////////////////
@@ -782,7 +833,7 @@ Q_REQUIRED_RESULT decltype(auto) transform(SC &&container, F function)
     return transform<ResultContainer>(std::forward<SC>(container), function);
 }
 
-#ifdef Q_CC_CLANG
+#if __cpp_template_template_args < 201611L
 template<template<typename, typename> class C, // result container type
          typename SC,                          // input container type
          typename F,                           // function type
@@ -880,7 +931,7 @@ template<template<typename...> class C, // container type
          typename F, // function type
          typename... CArgs> // Arguments to SC
 Q_REQUIRED_RESULT
-decltype(auto) transform(C<CArgs...> &container, F function)
+auto transform(C<CArgs...> &container, F function) -> decltype(auto)
 {
     return transform<C, C<CArgs...> &>(container, function);
 }
@@ -912,7 +963,7 @@ decltype(auto) transform(C<CArgs...> &container, R S::*p)
 template<template<typename...> class C = QList, // result container
          typename F> // Arguments to C
 Q_REQUIRED_RESULT
-decltype(auto) transform(const QStringList &container, F function)
+auto transform(const QStringList &container, F function)
 {
     return transform<C, const QList<QString> &>(static_cast<QList<QString>>(container), function);
 }
@@ -957,6 +1008,14 @@ C filtered(const C &container, R (S::*predicate)() const)
     C out;
     std::copy_if(std::begin(container), std::end(container),
                  inserter(out), std::mem_fn(predicate));
+    return out;
+}
+
+template<typename C, typename R, typename S>
+Q_REQUIRED_RESULT C filtered(const C &container, R S::*predicate)
+{
+    C out;
+    std::copy_if(std::begin(container), std::end(container), inserter(out), std::mem_fn(predicate));
     return out;
 }
 
@@ -1410,13 +1469,13 @@ OutputContainer setUnionMerge(InputContainer1 &&input1,
 }
 
 template<typename Container>
-auto usize(const Container &container)
+constexpr auto usize(const Container &container)
 {
     return static_cast<std::make_unsigned_t<decltype(std::size(container))>>(std::size(container));
 }
 
 template<typename Container>
-auto ssize(const Container &container)
+constexpr auto ssize(const Container &container)
 {
     return static_cast<std::make_signed_t<decltype(std::size(container))>>(std::size(container));
 }
@@ -1505,6 +1564,17 @@ template <class Key, class T>
 void addToHash(QHash<Key, T> *result, const QHash<Key, T> &additionalContents)
 {
     result->insert(additionalContents);
+}
+
+template <typename Tuple, std::size_t... I>
+static std::size_t tupleHashHelper(uint seed, const Tuple &tuple, std::index_sequence<I...>)
+{
+    return qHashMulti(seed, (std::get<I>(tuple), ...));
+}
+
+template<typename... T> std::size_t qHash(const std::tuple<T...> &tuple, uint seed = 0)
+{
+    return tupleHashHelper(seed, tuple, std::make_index_sequence<sizeof...(T)>());
 }
 
 // Workaround for missing information from QSet::insert()

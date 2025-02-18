@@ -266,17 +266,14 @@ GroupData ProjectPrivate::createGroupDataFromGroup(const GroupPtr &resolvedGroup
     group.d->name = resolvedGroup->name;
     group.d->prefix = resolvedGroup->prefix;
     group.d->location = resolvedGroup->location;
-    for (const auto &sa : resolvedGroup->files) {
+    QBS_ASSERT(resolvedGroup->files, return group);
+    for (const auto &sa : *resolvedGroup->files) {
         ArtifactData artifact = createApiSourceArtifact(sa);
         setupInstallData(artifact, product);
-        group.d->sourceArtifacts.push_back(artifact);
-    }
-    if (resolvedGroup->wildcards) {
-        for (const auto &sa : resolvedGroup->wildcards->files) {
-            ArtifactData artifact = createApiSourceArtifact(sa);
-            setupInstallData(artifact, product);
+        if (sa->fromWildcard)
             group.d->sourceArtifactsFromWildcards.push_back(artifact);
-        }
+        else
+            group.d->sourceArtifacts.push_back(artifact);
     }
     std::sort(group.d->sourceArtifacts.begin(),
               group.d->sourceArtifacts.end());
@@ -465,10 +462,12 @@ void ProjectPrivate::addFiles(const ProductData &product, const GroupData &group
     // due to conditions.
     for (const GroupPtr &group : std::as_const(groupContext.resolvedGroups)) {
         for (const QString &filePath : std::as_const(filesContext.absoluteFilePaths)) {
-            for (const auto &sa : group->files) {
-                if (sa->absoluteFilePath == filePath) {
-                    throw ErrorInfo(Tr::tr("File '%1' already exists in group '%2'.")
-                                    .arg(filePath, group->name));
+            if (group->files) {
+                for (const auto &sa : *group->files) {
+                    if (sa->absoluteFilePath == filePath) {
+                        throw ErrorInfo(Tr::tr("File '%1' already exists in group '%2'.")
+                                            .arg(filePath, group->name));
+                    }
                 }
             }
         }
@@ -493,7 +492,8 @@ void ProjectPrivate::removeFiles(const ProductData &product, const GroupData &gr
     }
     QStringList filesNotFound = filesContext.absoluteFilePaths;
     std::vector<SourceArtifactPtr> sourceArtifacts;
-    for (const SourceArtifactPtr &sa : groupContext.resolvedGroups.front()->files) {
+    QBS_ASSERT(groupContext.resolvedGroups.front()->files, return);
+    for (const SourceArtifactPtr &sa : *groupContext.resolvedGroups.front()->files) {
         if (filesNotFound.removeOne(sa->absoluteFilePath))
             sourceArtifacts << sa;
     }
@@ -662,8 +662,9 @@ void ProjectPrivate::retrieveProjectData(ProjectData &projectData,
         product.d->properties = resolvedProduct->productProperties;
         product.d->moduleProperties.d->m_map = resolvedProduct->moduleProperties;
         for (const GroupPtr &resolvedGroup : resolvedProduct->groups) {
-            if (resolvedGroup->targetOfModule.isEmpty())
+            if (resolvedGroup->targetOfModule.isEmpty() && resolvedGroup->files) {
                 product.d->groups << createGroupDataFromGroup(resolvedGroup, resolvedProduct);
+            }
         }
         if (resolvedProduct->enabled) {
             QBS_CHECK(resolvedProduct->buildData);
@@ -801,8 +802,14 @@ RunEnvironment Project::getRunEnvironment(const ProductData &product,
         const QStringList &setupRunEnvConfig, Settings *settings) const
 {
     const ResolvedProductPtr resolvedProduct = d->internalProduct(product);
-    return RunEnvironment(resolvedProduct, d->internalProject, installOptions, environment,
-                          setupRunEnvConfig, settings, d->logger);
+    return {
+        resolvedProduct,
+        d->internalProject,
+        installOptions,
+        environment,
+        setupRunEnvConfig,
+        settings,
+        d->logger};
 }
 
 /*!
@@ -958,6 +965,12 @@ std::set<QString> Project::buildSystemFiles() const
 {
     QBS_ASSERT(isValid(), return {});
     return rangeTo<std::set<QString>>(d->internalProject->buildSystemFiles);
+}
+
+CodeLinks Project::codeLinks() const
+{
+    QBS_ASSERT(isValid(), return {});
+    return d->internalProject->codeLinks;
 }
 
 RuleCommandList Project::ruleCommands(const ProductData &product,

@@ -4,6 +4,7 @@
 #include "mesonactionsmanager.h"
 #include "mesonbuildconfiguration.h"
 #include "mesonbuildsystem.h"
+#include "mesonpluginconstants.h"
 #include "mesonproject.h"
 #include "mesonrunconfiguration.h"
 #include "ninjabuildstep.h"
@@ -12,10 +13,6 @@
 
 #include <extensionsystem/iplugin.h>
 
-#include <projectexplorer/projectexplorerconstants.h>
-#include <projectexplorer/projectmanager.h>
-#include <projectexplorer/runcontrol.h>
-
 #include <utils/fsengine/fileiconprovider.h>
 
 using namespace ProjectExplorer;
@@ -23,41 +20,30 @@ using namespace Utils;
 
 namespace MesonProjectManager::Internal {
 
-class MesonProjectPluginPrivate
-{
-public:
-    ToolsSettingsPage m_toolslSettingsPage;
-    ToolsSettingsAccessor m_toolsSettings;
-    MesonBuildStepFactory m_buildStepFactory;
-    MesonBuildConfigurationFactory m_buildConfigurationFactory;
-    MesonRunConfigurationFactory m_runConfigurationFactory;
-    MesonActionsManager m_actions;
-    MachineFileManager m_machineFilesManager;
-    SimpleTargetRunnerFactory m_mesonRunWorkerFactory{{m_runConfigurationFactory.runConfigurationId()}};
-};
-
 class MesonProjectPlugin final : public ExtensionSystem::IPlugin
 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "MesonProjectManager.json")
 
-public:
-    ~MesonProjectPlugin() final
-    {
-        delete d;
-    }
-
-private:
     void initialize() final
     {
-        d = new MesonProjectPluginPrivate;
+        setupToolsSettingsPage();
+        setupToolsSettingsAccessor();
 
-        ProjectManager::registerProjectType<MesonProject>(Constants::Project::MIMETYPE);
+        setupMesonBuildSystem();
+        setupMesonBuildConfiguration();
+        setupNinjaBuildStep();
+
+        setupMesonRunConfiguration();
+        setupMesonRunAndDebugWorkers();
+
+        setupMesonProject();
+
+        setupMesonActions(this);
+
         FileIconProvider::registerIconOverlayForFilename(Constants::Icons::MESON, "meson.build");
         FileIconProvider::registerIconOverlayForFilename(Constants::Icons::MESON, "meson_options.txt");
     }
-
-    class MesonProjectPluginPrivate *d = nullptr;
 };
 
 } // MesonProjectManager::Internal

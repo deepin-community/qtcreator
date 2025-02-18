@@ -39,6 +39,7 @@
 #include "rulesapplicator.h"
 
 #include "buildgraph.h"
+#include "cppmodulesscanner.h"
 #include "projectbuilddata.h"
 #include "qtmocscanner.h"
 #include "rulecommands.h"
@@ -73,22 +74,21 @@ namespace qbs {
 namespace Internal {
 
 RulesApplicator::RulesApplicator(
-        ResolvedProductPtr product,
-        const std::unordered_map<QString, const ResolvedProduct *> &productsByName,
-        const std::unordered_map<QString, const ResolvedProject *> &projectsByName,
-        Logger logger)
+    ResolvedProductPtr product,
+    const std::unordered_map<QString, const ResolvedProduct *> &productsByName,
+    const std::unordered_map<QString, const ResolvedProject *> &projectsByName,
+    Logger logger)
     : m_product(std::move(product))
     // m_productsByName and m_projectsByName are references, cannot move-construct
     , m_productsByName(productsByName)
     , m_projectsByName(projectsByName)
-    , m_mocScanner(nullptr)
     , m_logger(std::move(logger))
-{
-}
+{}
 
 RulesApplicator::~RulesApplicator()
 {
     delete m_mocScanner;
+    delete m_cxxModulesScanner;
 }
 
 void RulesApplicator::applyRule(RuleNode *ruleNode, const ArtifactSet &inputArtifacts,
@@ -109,6 +109,10 @@ void RulesApplicator::applyRule(RuleNode *ruleNode, const ArtifactSet &inputArti
     if (m_rule->name.startsWith(QLatin1String("QtCoreMocRule"))) {
         delete m_mocScanner;
         m_mocScanner = new QtMocScanner(m_product, engine(), scope());
+    }
+    if (m_rule->name.startsWith(QLatin1String("cpp_compiler"))) {
+        delete m_cxxModulesScanner;
+        m_cxxModulesScanner = new CppModulesScanner(engine(), scope());
     }
     ScopedJsValue prepareScriptContext(jsContext(), engine()->newObject());
     JS_SetPrototype(jsContext(), prepareScriptContext, engine()->globalObject());
@@ -293,8 +297,9 @@ void RulesApplicator::doApply(const ArtifactSet &inputArtifacts, JSValue prepare
             }
             outputArtifact->properties->setValue(artifactModulesCfg);
             if (!outputInfo.newlyCreated
-                    && (outputArtifact->fileTags() != outputInfo.oldFileTags
-                        || outputArtifact->properties->value() != outputInfo.oldProperties)) {
+                && (outputArtifact->fileTags() != outputInfo.oldFileTags
+                    || !qVariantMapsEqual(
+                        outputArtifact->properties->value(), outputInfo.oldProperties))) {
                 invalidateArtifactAsRuleInputIfNecessary(outputArtifact);
             }
         }
@@ -419,11 +424,7 @@ RulesApplicator::OutputArtifactInfo RulesApplicator::createOutputArtifactFromRul
 RulesApplicator::OutputArtifactInfo RulesApplicator::createOutputArtifact(const QString &filePath,
         const FileTags &fileTags, bool alwaysUpdated, const ArtifactSet &inputArtifacts)
 {
-    QString outputPath = filePath;
-    // don't let the output artifact "escape" its build dir
-    outputPath.replace(StringConstants::dotDot(), QStringLiteral("dotdot"));
-    outputPath = resolveOutPath(outputPath);
-
+    const QString outputPath = resolveOutPath(filePath);
     if (m_rule->isDynamic()) {
         const Set<FileTag> undeclaredTags = fileTags - m_rule->collectedOutputFileTags();
         if (!undeclaredTags.empty()) {
@@ -664,8 +665,10 @@ Artifact *RulesApplicator::createOutputArtifactFromScriptValue(const JSValue &ob
             connect(outputInfo.artifact, dependency);
     }
     ArtifactBindingsExtractor().apply(engine(), outputInfo.artifact, obj);
-    if (!outputInfo.newlyCreated && (outputInfo.artifact->fileTags() != outputInfo.oldFileTags
-            || outputInfo.artifact->properties->value() != outputInfo.oldProperties)) {
+    if (!outputInfo.newlyCreated
+        && (outputInfo.artifact->fileTags() != outputInfo.oldFileTags
+            || !qVariantMapsEqual(
+                outputInfo.artifact->properties->value(), outputInfo.oldProperties))) {
         invalidateArtifactAsRuleInputIfNecessary(outputInfo.artifact);
     }
     return outputInfo.artifact;
@@ -673,9 +676,14 @@ Artifact *RulesApplicator::createOutputArtifactFromScriptValue(const JSValue &ob
 
 QString RulesApplicator::resolveOutPath(const QString &path) const
 {
-    QString buildDir = m_product->topLevelProject()->buildDirectory;
-    QString result = FileInfo::resolvePath(buildDir, path);
-    result = QDir::cleanPath(result);
+    const QString buildDir = m_product->topLevelProject()->buildDirectory;
+    QString result = QDir::cleanPath(FileInfo::resolvePath(buildDir, path));
+    if (!result.startsWith(buildDir + QLatin1Char('/'))) {
+        throw ErrorInfo(
+            Tr::tr("Refusing to create artifact '%1' outside of build directory '%2'.")
+                .arg(QDir::toNativeSeparators(result), QDir::toNativeSeparators(buildDir)),
+            m_rule->prepareScript.location());
+    }
     return result;
 }
 

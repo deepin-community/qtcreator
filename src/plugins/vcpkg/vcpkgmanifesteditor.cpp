@@ -10,6 +10,7 @@
 
 #include <coreplugin/icore.h>
 
+#include <utils/fileutils.h>
 #include <utils/icon.h>
 #include <utils/layoutbuilder.h>
 #include <utils/stringutils.h>
@@ -19,6 +20,7 @@
 
 #include <texteditor/fontsettings.h>
 #include <texteditor/textdocument.h>
+#include <texteditor/texteditor.h>
 #include <texteditor/texteditorsettings.h>
 
 #include <QDialogButtonBox>
@@ -28,47 +30,18 @@
 #include <QPlainTextEdit>
 #include <QToolBar>
 
+using namespace TextEditor;
+using namespace Utils;
+
 namespace Vcpkg::Internal {
 
-class CMakeCodeDialog : public QDialog
-{
-public:
-    explicit CMakeCodeDialog(const QStringList &packages, QWidget *parent = nullptr);
-
-private:
-    static QString cmakeCodeForPackage(const QString &package);
-    static QString cmakeCodeForPackages(const QStringList &packages);
-};
-
-CMakeCodeDialog::CMakeCodeDialog(const QStringList &packages, QWidget *parent)
-    : QDialog(parent)
-{
-    resize(600, 600);
-
-    auto codeBrowser = new QPlainTextEdit;
-    const TextEditor::FontSettings &fs = TextEditor::TextEditorSettings::fontSettings();
-    codeBrowser->setFont(fs.font());
-    codeBrowser->setPlainText(cmakeCodeForPackages(packages));
-
-    auto buttonBox = new QDialogButtonBox(QDialogButtonBox::Close);
-
-    using namespace Layouting;
-    Column {
-        Tr::tr("Copy paste the required lines into your CMakeLists.txt:"),
-        codeBrowser,
-        buttonBox,
-    }.attachTo(this);
-
-    connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-}
-
-QString CMakeCodeDialog::cmakeCodeForPackage(const QString &package)
+static QString cmakeCodeForPackage(const QString &package)
 {
     QString result;
 
-    const Utils::FilePath usageFile = settings().vcpkgRoot() / "ports" / package / "usage";
+    const FilePath usageFile = settings().vcpkgRoot() / "ports" / package / "usage";
     if (usageFile.exists()) {
-        Utils::FileReader reader;
+        FileReader reader;
         if (reader.fetch(usageFile))
             result = QString::fromUtf8(reader.data());
     } else {
@@ -77,14 +50,13 @@ R"(The package %1 provides CMake targets:
 
     # this is heuristically generated, and may not be correct
     find_package(%1 CONFIG REQUIRED)
-    target_link_libraries(main PRIVATE %1::%1))"
-                     ).arg(package);
+    target_link_libraries(main PRIVATE %1::%1))" ).arg(package);
     }
 
     return result;
 }
 
-QString CMakeCodeDialog::cmakeCodeForPackages(const QStringList &packages)
+static QString cmakeCodeForPackages(const QStringList &packages)
 {
     QString result;
     for (const QString &package : packages)
@@ -92,7 +64,31 @@ QString CMakeCodeDialog::cmakeCodeForPackages(const QStringList &packages)
     return result;
 }
 
-class VcpkgManifestEditorWidget : public TextEditor::TextEditorWidget
+class CMakeCodeDialog final : public QDialog
+{
+public:
+    explicit CMakeCodeDialog(const QStringList &packages)
+    {
+        resize(600, 600);
+
+        auto codeBrowser = new QPlainTextEdit;
+        codeBrowser->setFont(TextEditorSettings::fontSettings().font());
+        codeBrowser->setPlainText(cmakeCodeForPackages(packages));
+
+        auto buttonBox = new QDialogButtonBox(QDialogButtonBox::Close);
+
+        using namespace Layouting;
+        Column {
+            Tr::tr("Copy paste the required lines into your CMakeLists.txt:"),
+            codeBrowser,
+            buttonBox,
+        }.attachTo(this);
+
+        connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    }
+};
+
+class VcpkgManifestEditorWidget final : public TextEditor::TextEditorWidget
 {
 public:
     VcpkgManifestEditorWidget()
@@ -146,21 +142,11 @@ private:
     QAction *m_cmakeCodeAction;
 };
 
-static TextEditor::TextDocument *createVcpkgManifestDocument()
+static TextDocument *createVcpkgManifestDocument()
 {
-    auto doc = new TextEditor::TextDocument;
+    auto doc = new TextDocument;
     doc->setId(Constants::VCPKGMANIFEST_EDITOR_ID);
     return doc;
-}
-
-VcpkgManifestEditorFactory::VcpkgManifestEditorFactory()
-{
-    setId(Constants::VCPKGMANIFEST_EDITOR_ID);
-    setDisplayName(Tr::tr("Vcpkg Manifest Editor"));
-    addMimeType(Constants::VCPKGMANIFEST_MIMETYPE);
-    setDocumentCreator(createVcpkgManifestDocument);
-    setEditorWidgetCreator([] { return new VcpkgManifestEditorWidget; });
-    setUseGenericHighlighter(true);
 }
 
 QByteArray addDependencyToManifest(const QByteArray &manifest, const QString &package)
@@ -171,6 +157,25 @@ QByteArray addDependencyToManifest(const QByteArray &manifest, const QString &pa
     dependencies.append(package);
     jsonObject.insert(dependenciesKey, dependencies);
     return QJsonDocument(jsonObject).toJson();
+}
+
+class VcpkgManifestEditorFactory final : public TextEditorFactory
+{
+public:
+    VcpkgManifestEditorFactory()
+    {
+        setId(Constants::VCPKGMANIFEST_EDITOR_ID);
+        setDisplayName(Tr::tr("Vcpkg Manifest Editor"));
+        addMimeType(Constants::VCPKGMANIFEST_MIMETYPE);
+        setDocumentCreator(createVcpkgManifestDocument);
+        setEditorWidgetCreator([] { return new VcpkgManifestEditorWidget; });
+        setUseGenericHighlighter(true);
+    }
+};
+
+void setupVcpkgManifestEditor()
+{
+    static VcpkgManifestEditorFactory theVcpkgManifestEditorFactory;
 }
 
 } // namespace Vcpkg::Internal

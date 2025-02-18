@@ -36,8 +36,6 @@ class PluginManager;
 
 namespace Internal {
 
-class PluginSpecPrivate;
-
 class EXTENSIONSYSTEM_TEST_EXPORT PluginManagerPrivate : public QObject
 {
 public:
@@ -51,8 +49,11 @@ public:
     // Plugin operations
     void checkForProblematicPlugins();
     void loadPlugins();
+    void loadPluginsAtRuntime(const QSet<PluginSpec *> &plugins);
+    void addPlugins(const QVector<PluginSpec *> &specs);
+
     void shutdown();
-    void setPluginPaths(const QStringList &paths);
+    void setPluginPaths(const Utils::FilePaths &paths);
     const QVector<ExtensionSystem::PluginSpec *> loadQueue();
     void loadPlugin(PluginSpec *spec, PluginSpec::State destState);
     void resolveDependencies();
@@ -66,6 +67,9 @@ public:
     void setGlobalSettings(Utils::QtcSettings *settings);
     void readSettings();
     void writeSettings();
+
+    bool acceptTermsAndConditions(PluginSpec *spec);
+    void setAcceptTermsAndConditionsCallback(const std::function<bool(PluginSpec *)> &callback);
 
     class TestSpec {
     public:
@@ -90,13 +94,14 @@ public:
     QHash<QString, QVector<PluginSpec *>> pluginCategories;
     QVector<PluginSpec *> pluginSpecs;
     std::vector<TestSpec> testSpecs;
-    QStringList pluginPaths;
+    Utils::FilePaths pluginPaths;
     QString pluginIID;
-    QVector<QObject *> allObjects;      // ### make this a QVector<QPointer<QObject> > > ?
+    QObjectList allObjects;      // ### make this a QList<QPointer<QObject> > > ?
     QStringList defaultDisabledPlugins; // Plugins/Ignored from install settings
     QStringList defaultEnabledPlugins; // Plugins/ForceEnabled from install settings
     QStringList disabledPlugins;
     QStringList forceEnabledPlugins;
+    QStringList pluginsWithAcceptedTermsAndConditions;
     // delayed initialization
     QTimer delayedInitializeTimer;
     std::queue<PluginSpec *> delayedInitializeQueue;
@@ -114,13 +119,13 @@ public:
     Utils::QtcSettings *settings = nullptr;
     Utils::QtcSettings *globalSettings = nullptr;
 
+    std::function<bool(PluginSpec *)> acceptTermsAndConditionsCallback;
+
     // Look in argument descriptions of the specs for the option.
     PluginSpec *pluginForOption(const QString &option, bool *requiresArgument) const;
-    PluginSpec *pluginByName(const QString &name) const;
+    PluginSpec *pluginById(const QString &id) const;
 
-    // used by tests
-    static PluginSpec *createSpec();
-    static PluginSpecPrivate *privateSpec(PluginSpec *spec);
+    static void addTestCreator(IPlugin *plugin, const std::function<QObject *()> &testCreator);
 
     mutable QReadWriteLock m_lock;
 
@@ -137,7 +142,6 @@ public:
     QWaitCondition m_scenarioWaitCondition;
 
     PluginManager::ProcessData m_creatorProcessData;
-    std::unique_ptr<Utils::FutureSynchronizer> m_futureSynchronizer;
 
 private:
     PluginManager *q;
@@ -150,8 +154,9 @@ private:
                    QVector<ExtensionSystem::PluginSpec *> &circularityCheckQueue);
     void stopAll();
     void deleteAll();
+    void checkForDuplicatePlugins();
 
-#ifdef WITH_TESTS
+#ifdef EXTENSIONSYSTEM_WITH_TESTOPTION
     void startTests();
 #endif
 };

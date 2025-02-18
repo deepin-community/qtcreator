@@ -56,6 +56,7 @@
 #include <tools/stringconstants.h>
 
 #include <algorithm>
+#include <unordered_map>
 
 namespace qbs {
 namespace Internal {
@@ -72,6 +73,7 @@ Item *Item::clone(ItemPool &pool) const
     Item *dup = create(&pool, type());
     dup->m_id = m_id;
     dup->m_location = m_location;
+    dup->m_endPosition = m_endPosition;
     dup->m_prototype = m_prototype;
     dup->m_scope = m_scope;
     dup->m_outerItem = m_outerItem;
@@ -91,6 +93,8 @@ Item *Item::clone(ItemPool &pool) const
          ++it) {
         dup->m_properties.insert(it.key(), it.value()->clone(pool));
     }
+
+    adaptScopesOfClonedAlternatives(dup);
 
     return dup;
 }
@@ -141,7 +145,8 @@ ValuePtr Item::property(const QString &name) const
     ValuePtr value;
     const Item *item = this;
     do {
-        if ((value = item->m_properties.value(name)))
+        value = item->m_properties.value(name);
+        if (value)
             break;
         item = item->m_prototype;
     } while (item);
@@ -171,7 +176,7 @@ ItemValuePtr Item::itemProperty(const QString &name, const Item *itemTemplate,
     if (v && v->type() == Value::ItemValueType)
         return std::static_pointer_cast<ItemValue>(v);
     if (!itemTemplate)
-        return ItemValuePtr();
+        return {};
     const bool createdByPropertiesBlock = itemValue && itemValue->createdByPropertiesBlock();
     ItemValuePtr result = ItemValue::create(Item::create(&pool, itemTemplate->type()),
                                             createdByPropertiesBlock);
@@ -179,11 +184,63 @@ ItemValuePtr Item::itemProperty(const QString &name, const Item *itemTemplate,
     return result;
 }
 
+// Such scopes were potentially set up in PropertiesBlockConverter.
+void Item::adaptScopesOfClonedAlternatives(Item *clone) const
+{
+    if (m_type != ItemType::Module && m_type != ItemType::Product)
+        return;
+
+    std::unordered_map<Item *, std::vector<JSSourceValue *>> valuesPerGroupScope;
+    const std::function<void(const PropertyMap &)> collectScopedValues =
+        [&](const PropertyMap &props) {
+            for (const auto &prop : props) {
+                switch (prop->type()) {
+                case Value::VariantValueType:
+                    break;
+                case Value::ItemValueType:
+                    collectScopedValues(static_cast<ItemValue *>(prop.get())->item()->properties());
+                    break;
+                case Value::JSSourceValueType:
+                    for (const JSSourceValue::Alternative &alt :
+                         static_cast<JSSourceValue *>(prop.get())->alternatives()) {
+                        if (alt.value->scope() && alt.value->scope()->type() == ItemType::Group)
+                            valuesPerGroupScope[alt.value->scope()].push_back(alt.value.get());
+                    }
+                    break;
+                }
+            }
+        };
+    const std::function<Item *(Item *, const Item *, const Item *)> getClonedGroup =
+        [&](Item *group, const Item *parent, const Item *clonedParent) -> Item * {
+        for (int i = 0; i < int(parent->m_children.size()); ++i) {
+            Item * const child = parent->m_children.at(i);
+            Item * const clonedChild = clonedParent->m_children.at(i);
+            QBS_CHECK(child->type() == clonedChild->type());
+            if (child == group)
+                return clonedChild;
+            if (child->type() == ItemType::Group) {
+                if (Item * const clonedGroup = getClonedGroup(group, child, clonedChild))
+                    return clonedGroup;
+            }
+        }
+        return nullptr;
+    };
+    collectScopedValues(clone->m_properties);
+    for (const auto &[group, values] : valuesPerGroupScope) {
+        Item * const clonedGroup = getClonedGroup(group, this, clone);
+        QBS_CHECK(clonedGroup);
+        for (JSSourceValue * const v : values) {
+            QBS_CHECK(v->scope() == group);
+            v->setScope(clonedGroup, {});
+        }
+    }
+}
+
 JSSourceValuePtr Item::sourceProperty(const QString &name) const
 {
     ValuePtr v = property(name);
     if (!v || v->type() != Value::JSSourceValueType)
-        return JSSourceValuePtr();
+        return {};
     return std::static_pointer_cast<JSSourceValue>(v);
 }
 
@@ -191,7 +248,7 @@ VariantValuePtr Item::variantProperty(const QString &name) const
 {
     ValuePtr v = property(name);
     if (!v || v->type() != Value::VariantValueType)
-        return VariantValuePtr();
+        return {};
     return std::static_pointer_cast<VariantValue>(v);
 }
 
@@ -281,6 +338,11 @@ bool Item::isPresentModule() const
     // Initial value is "true" as JS source, overwritten one is always QVariant(false).
     const ValueConstPtr v = property(StringConstants::presentProperty());
     return v && v->type() == Value::JSSourceValueType;
+}
+
+bool Item::isFallbackModule() const
+{
+    return hasProperty(QLatin1String("__fallback"));
 }
 
 void Item::setupForBuiltinType(DeprecationWarningMode deprecationMode, Logger &logger)
@@ -494,12 +556,19 @@ Item *createNonPresentModule(ItemPool &pool, const QString &name, const QString 
     return module;
 }
 
-void setScopeForDescendants(Item *item, Item *scope)
+void setScopeForDescendants(Item *item, Item *scope, bool insertIds)
 {
     for (Item * const child : item->children()) {
         child->setScope(scope);
-        setScopeForDescendants(child, scope);
+        if (insertIds && !child->id().isEmpty())
+            scope->setProperty(child->id(), ItemValue::create(child));
+        setScopeForDescendants(child, scope, insertIds);
     }
+}
+
+CodeRange Item::codeRange() const
+{
+    return {{m_location.line(), m_location.column()}, m_endPosition};
 }
 
 } // namespace Internal

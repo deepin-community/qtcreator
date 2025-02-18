@@ -41,6 +41,7 @@
 #include "clangclprobe.h"
 #include "cosmicprobe.h"
 #include "dmcprobe.h"
+#include "emscriptenprobe.h"
 #include "gccprobe.h"
 #include "iarewprobe.h"
 #include "keilprobe.h"
@@ -60,6 +61,8 @@
 #include <QtCore/qdir.h>
 #include <QtCore/qoperatingsystemversion.h>
 #include <QtCore/qtextstream.h>
+
+#include <cstdio>
 
 #ifdef Q_OS_WIN
 // We need defines for Windows 8.
@@ -86,16 +89,21 @@ QStringList systemSearchPaths()
 
 QString findExecutable(const QString &fileName)
 {
-    QString fullFileName = fileName;
-    if (HostOsInfo::isWindowsHost()
-            && !fileName.endsWith(QLatin1String(".exe"), Qt::CaseInsensitive)) {
-        fullFileName += QLatin1String(".exe");
+    QStringList suffixList{QString()};
+
+    if (HostOsInfo::isWindowsHost()) {
+        if (!fileName.endsWith(QLatin1String(".exe"), Qt::CaseInsensitive)
+            && !fileName.endsWith(QLatin1String(".bat"), Qt::CaseInsensitive))
+            suffixList = QStringList{QStringLiteral(".exe"), QStringLiteral(".bat")};
     }
     const auto ppaths = systemSearchPaths();
+
     for (const QString &ppath : ppaths) {
-        const QString fullPath = ppath + QLatin1Char('/') + fullFileName;
-        if (QFileInfo::exists(fullPath))
-            return QDir::cleanPath(fullPath);
+        for (const auto &suffix : suffixList) {
+            const QString fullPath = ppath + QLatin1Char('/') + fileName + suffix;
+            if (QFileInfo::exists(fullPath))
+                return QDir::cleanPath(fullPath);
+        }
     }
     return {};
 }
@@ -106,6 +114,7 @@ QString toolchainTypeFromCompilerName(const QString &compilerName)
         return QStringLiteral("msvc");
     if (compilerName == QLatin1String("clang-cl.exe"))
         return QStringLiteral("clang-cl");
+
     const auto types = { QStringLiteral("clang"), QStringLiteral("llvm"),
                          QStringLiteral("mingw"), QStringLiteral("gcc") };
     for (const auto &type : types) {
@@ -114,6 +123,8 @@ QString toolchainTypeFromCompilerName(const QString &compilerName)
     }
     if (compilerName == QLatin1String("g++"))
         return QStringLiteral("gcc");
+    if (isEmscriptenCompiler(compilerName))
+        return QStringLiteral("emscripten");
     if (isIarCompiler(compilerName))
         return QStringLiteral("iar");
     if (isKeilCompiler(compilerName))
@@ -148,6 +159,7 @@ void probe(Settings *settings)
     cosmicProbe(settings, profiles);
     dmcProbe(settings, profiles);
     watcomProbe(settings, profiles);
+    emscriptenProbe(settings, profiles);
 
     if (profiles.empty()) {
         qStderr << Tr::tr("Could not detect any toolchains. No profile created.") << Qt::endl;
@@ -179,6 +191,8 @@ void createProfile(const QString &profileName, const QString &toolchainType,
         createClangClProfile(compiler, settings, profileName);
     else if (toolchain.contains(QLatin1String("msvc")))
         createMsvcProfile(compiler, settings, profileName);
+    else if (toolchain.contains(QLatin1String("emscripten")))
+        createEmscriptenProfile(compiler, settings, profileName);
     else if (toolchain.contains(QLatin1String("gcc")))
         createGccProfile(compiler, settings, realToolchainType, profileName);
     else if (toolchain.contains(QLatin1String("iar")))
@@ -232,10 +246,10 @@ static inline QByteArray fileIdWin7(HANDLE handle)
     BY_HANDLE_FILE_INFORMATION info;
     if (GetFileInformationByHandle(handle, &info)) {
         char buffer[sizeof "01234567:0123456701234567\0"];
-        qsnprintf(buffer, sizeof(buffer), "%lx:%08lx%08lx",
-                  info.dwVolumeSerialNumber,
-                  info.nFileIndexHigh,
-                  info.nFileIndexLow);
+        std::snprintf(buffer, sizeof(buffer), "%lx:%08lx%08lx",
+                      info.dwVolumeSerialNumber,
+                      info.nFileIndexHigh,
+                      info.nFileIndexLow);
         return QByteArray(buffer);
     }
     return {};

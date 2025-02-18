@@ -28,7 +28,6 @@ QtcPlugin {
             "buildconfiguration.cpp", "buildconfiguration.h",
             "buildinfo.cpp", "buildinfo.h",
             "buildmanager.cpp", "buildmanager.h",
-            "buildprogress.cpp", "buildprogress.h",
             "buildpropertiessettings.cpp", "buildpropertiessettings.h",
             "buildsettingspropertiespage.cpp", "buildsettingspropertiespage.h",
             "buildstep.cpp", "buildstep.h",
@@ -75,9 +74,9 @@ QtcPlugin {
             "headerpath.h",
             "importwidget.cpp", "importwidget.h",
             "ioutputparser.cpp", "ioutputparser.h",
-            "ipotentialkit.h",
             "itaskhandler.h",
             "kit.cpp", "kit.h",
+            "kitaspect.cpp", "kitaspect.h",
             "kitaspects.cpp", "kitaspects.h",
             "kitchooser.cpp", "kitchooser.h",
             "kitfeatureprovider.h",
@@ -90,6 +89,7 @@ QtcPlugin {
             "makestep.cpp", "makestep.h",
             "miniprojecttargetselector.cpp", "miniprojecttargetselector.h",
             "msvcparser.cpp", "msvcparser.h",
+            "msvctoolchain.cpp", "msvctoolchain.h",
             "namedwidget.cpp", "namedwidget.h",
             "osparser.cpp", "osparser.h",
             "panelswidget.cpp", "panelswidget.h",
@@ -103,6 +103,7 @@ QtcPlugin {
             "projectexplorer.cpp", "projectexplorer.h",
             "projectexplorer.qrc",
             "projectexplorer_export.h",
+            "projectexplorer_test.h",
             "projectexplorerconstants.cpp",
             "projectexplorerconstants.h",
             "projectexplorericons.h", "projectexplorericons.cpp",
@@ -119,6 +120,7 @@ QtcPlugin {
             "projecttree.cpp",
             "projecttree.h",
             "projecttreewidget.cpp", "projecttreewidget.h",
+            "projectupdater.cpp", "projectupdater.h",
             "projectwindow.cpp", "projectwindow.h",
             "projectwizardpage.cpp", "projectwizardpage.h",
             "rawprojectpart.cpp", "rawprojectpart.h",
@@ -144,6 +146,7 @@ QtcPlugin {
             "toolchain.cpp", "toolchain.h",
             "toolchaincache.h",
             "toolchainconfigwidget.cpp", "toolchainconfigwidget.h",
+            "toolchainkitaspect.cpp", "toolchainkitaspect.h",
             "toolchainmanager.cpp", "toolchainmanager.h",
             "toolchainoptionspage.cpp", "toolchainoptionspage.h",
             "toolchainsettingsaccessor.cpp", "toolchainsettingsaccessor.h",
@@ -152,6 +155,7 @@ QtcPlugin {
             "vcsannotatetaskhandler.cpp", "vcsannotatetaskhandler.h",
             "waitforstopdialog.cpp", "waitforstopdialog.h",
             "windebuginterface.cpp", "windebuginterface.h",
+            "workspaceproject.cpp", "workspaceproject.h",
             "xcodebuildparser.cpp", "xcodebuildparser.h"
         ]
     }
@@ -203,6 +207,7 @@ QtcPlugin {
             "desktopdevicefactory.cpp", "desktopdevicefactory.h",
             "devicecheckbuildstep.cpp", "devicecheckbuildstep.h",
             "devicefactoryselectiondialog.cpp", "devicefactoryselectiondialog.h",
+            "devicekitaspects.cpp", "devicekitaspects.h",
             "devicemanager.cpp", "devicemanager.h",
             "devicemanagermodel.cpp", "devicemanagermodel.h",
             "deviceprocessesdialog.cpp", "deviceprocessesdialog.h",
@@ -219,7 +224,8 @@ QtcPlugin {
             "sshparameters.cpp", "sshparameters.h",
             "sshsettings.cpp", "sshsettings.h",
             "sshsettingspage.cpp", "sshsettingspage.h",
-            "desktopprocesssignaloperation.cpp", "desktopprocesssignaloperation.h"
+            "desktopdeviceconfigurationwidget.cpp", "desktopdeviceconfigurationwidget.h",
+            "desktopprocesssignaloperation.cpp", "desktopprocesssignaloperation.h",
         ]
     }
 
@@ -227,15 +233,6 @@ QtcPlugin {
         name: "Images"
         prefix: "images/"
         files: ["*.png"]
-    }
-
-    Group {
-        name: "WindowsToolChains"
-        condition: qbs.targetOS.contains("windows") || qtc.withPluginTests
-        files: [
-            "msvctoolchain.cpp",
-            "msvctoolchain.h",
-        ]
     }
 
     QtcTestFiles {

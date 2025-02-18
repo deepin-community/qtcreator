@@ -7,17 +7,22 @@
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectimporter.h"
 #include "cmakeprojectmanagertr.h"
+#include "presetsmacros.h"
 
 #include <coreplugin/icontext.h>
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildinfo.h>
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/kitaspects.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectnodes.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/taskhub.h>
+
 #include <qtsupport/qtkitaspect.h>
+
+#include <utils/mimeconstants.h>
 
 using namespace ProjectExplorer;
 using namespace Utils;
@@ -25,11 +30,25 @@ using namespace CMakeProjectManager::Internal;
 
 namespace CMakeProjectManager {
 
+static FilePath cmakeListTxtFromFilePath(const FilePath &filepath)
+{
+    if (filepath.endsWith(Constants::CMAKE_CACHE_TXT)) {
+        QString errorMessage;
+        const CMakeConfig config = CMakeConfig::fromFile(filepath, &errorMessage);
+        const FilePath cmakeListsTxt = config.filePathValueOf("CMAKE_HOME_DIRECTORY")
+                                           .pathAppended(Constants::CMAKE_LISTS_TXT);
+        if (cmakeListsTxt.exists())
+            return cmakeListsTxt;
+    }
+    return filepath;
+}
+
 /*!
   \class CMakeProject
 */
 CMakeProject::CMakeProject(const FilePath &fileName)
-    : Project(Constants::CMAKE_MIMETYPE, fileName)
+    : Project(Utils::Constants::CMAKE_MIMETYPE, cmakeListTxtFromFilePath(fileName))
+    , m_settings(this, true)
 {
     setId(CMakeProjectManager::Constants::CMAKE_PROJECT_ID);
     setProjectLanguages(Core::Context(ProjectExplorer::Constants::CXX_LANGUAGE_ID));
@@ -42,6 +61,9 @@ CMakeProject::CMakeProject(const FilePath &fileName)
     setHasMakeInstallEquivalent(false);
 
     readPresets();
+
+    if (fileName.endsWith(Constants::CMAKE_CACHE_TXT))
+        m_buildDirToImport = fileName.parentDir();
 }
 
 CMakeProject::~CMakeProject()
@@ -55,7 +77,7 @@ Tasks CMakeProject::projectIssues(const Kit *k) const
 
     if (!CMakeKitAspect::cmakeTool(k))
         result.append(createProjectTask(Task::TaskType::Error, Tr::tr("No cmake tool set.")));
-    if (ToolChainKitAspect::toolChains(k).isEmpty())
+    if (ToolchainKitAspect::toolChains(k).isEmpty())
         result.append(createProjectTask(Task::TaskType::Warning, Tr::tr("No compilers set in kit.")));
 
     result.append(m_issues);
@@ -86,6 +108,21 @@ PresetsData CMakeProject::presetsData() const
     return m_presetsData;
 }
 
+template<typename T>
+static QStringList recursiveInheritsList(const T &presetsHash, const QStringList &inheritsList)
+{
+    QStringList result;
+    for (const QString &inheritFrom : inheritsList) {
+        result << inheritFrom;
+        if (presetsHash.contains(inheritFrom)) {
+            auto item = presetsHash[inheritFrom];
+            if (item.inherits)
+                result << recursiveInheritsList(presetsHash, item.inherits.value());
+        }
+    }
+    return result;
+}
+
 Internal::PresetsData CMakeProject::combinePresets(Internal::PresetsData &cmakePresetsData,
                                                    Internal::PresetsData &cmakeUserPresetsData)
 {
@@ -99,6 +136,14 @@ Internal::PresetsData CMakeProject::combinePresets(Internal::PresetsData &cmakeP
             result.include->append(cmakeUserPresetsData.include.value());
     } else {
         result.include = cmakeUserPresetsData.include;
+    }
+
+    result.vendor = cmakePresetsData.vendor;
+    if (result.vendor) {
+        if (cmakeUserPresetsData.vendor)
+            result.vendor->insert(cmakeUserPresetsData.vendor.value());
+    } else {
+        result.vendor = cmakeUserPresetsData.vendor;
     }
 
     auto combinePresetsInternal = [](auto &presetsHash,
@@ -117,6 +162,8 @@ Internal::PresetsData CMakeProject::combinePresets(Internal::PresetsData &cmakeP
                                                && left.inherits.value().contains(right.name);
 
                 const bool inheritsGreater = left.inherits && right.inherits
+                                             && !left.inherits.value().isEmpty()
+                                             && !right.inherits.value().isEmpty()
                                              && left.inherits.value().first()
                                                     > right.inherits.value().first();
 
@@ -132,12 +179,14 @@ Internal::PresetsData CMakeProject::combinePresets(Internal::PresetsData &cmakeP
                 if (!p.inherits)
                     continue;
 
-                for (const QString &inheritFromName : p.inherits.value()) {
-                    if (presetsHash.contains(inheritFromName)) {
-                        p.inheritFrom(presetsHash[inheritFromName]);
+                const QStringList inheritsList = recursiveInheritsList(presetsHash,
+                                                                       p.inherits.value());
+                Utils::reverseForeach(inheritsList, [&presetsHash, &p](const QString &inheritFrom) {
+                    if (presetsHash.contains(inheritFrom)) {
+                        p.inheritFrom(presetsHash[inheritFrom]);
                         presetsHash[p.name] = p;
                     }
-                }
+                });
             }
         };
 
@@ -189,7 +238,7 @@ void CMakeProject::setupBuildPresets(Internal::PresetsData &presetsData)
 {
     for (auto &buildPreset : presetsData.buildPresets) {
         if (buildPreset.inheritConfigureEnvironment) {
-            if (!buildPreset.configurePreset) {
+            if (!buildPreset.configurePreset && !buildPreset.hidden) {
                 TaskHub::addTask(BuildSystemTask(
                     Task::TaskType::Error,
                     Tr::tr("Build preset %1 is missing a corresponding configure preset.")
@@ -207,6 +256,11 @@ void CMakeProject::setupBuildPresets(Internal::PresetsData &presetsData)
                       .environment;
         }
     }
+}
+
+Internal::CMakeSpecificSettings &CMakeProject::settings()
+{
+    return m_settings;
 }
 
 void CMakeProject::readPresets()
@@ -281,6 +335,23 @@ void CMakeProject::readPresets()
 
     m_presetsData = combinePresets(cmakePresetsData, cmakeUserPresetsData);
     setupBuildPresets(m_presetsData);
+
+    for (const auto &configPreset : m_presetsData.configurePresets) {
+        if (configPreset.hidden)
+            continue;
+
+        if (configPreset.condition) {
+            if (!CMakePresets::Macros::evaluatePresetCondition(configPreset, projectFilePath()))
+                continue;
+        }
+        m_presetsData.havePresets = true;
+        break;
+    }
+}
+
+FilePath CMakeProject::buildDirectoryToImport() const
+{
+    return m_buildDirToImport;
 }
 
 bool CMakeProject::setupTarget(Target *t)

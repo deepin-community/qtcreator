@@ -7,8 +7,9 @@
 #include <qtsupport/baseqtversion.h>
 #include <utils/filepath.h>
 
-namespace QmakeProjectManager {
-namespace Internal {
+#include <optional>
+
+namespace QmakeProjectManager::Internal {
 
 struct QMakeAssignment
 {
@@ -21,13 +22,15 @@ class MakeFileParse
 {
 public:
     enum class Mode { FilterKnownConfigValues, DoNotFilterKnownConfigValues };
-    MakeFileParse(const Utils::FilePath &makefile, Mode mode);
+    MakeFileParse(const Utils::FilePath &makefile, Mode mode,
+                  std::optional<Utils::FilePath> projectFile = std::nullopt);
 
     enum MakefileState { MakefileMissing, CouldNotParse, Okay };
 
     MakefileState makeFileState() const;
     Utils::FilePath qmakePath() const;
     Utils::FilePath srcProFile() const;
+    Utils::FilePath qtConfPath() const { return m_qtConfFile;}
     QMakeStepConfig config() const;
 
     QString unparsedArguments() const;
@@ -57,11 +60,15 @@ private:
     MakefileState m_state;
     Utils::FilePath m_qmakePath;
     Utils::FilePath m_srcProFile;
+    Utils::FilePath m_qtConfFile;
 
     QmakeBuildConfig m_qmakeBuildConfig;
     QMakeStepConfig m_config;
     QString m_unparsedArguments;
 };
 
-} // namespace Internal
-} // namespace QmakeProjectManager
+#ifdef WITH_TESTS
+QObject *createQmakeMakeFileParserTest();
+#endif
+
+} // QmakeProjectManager::Internal

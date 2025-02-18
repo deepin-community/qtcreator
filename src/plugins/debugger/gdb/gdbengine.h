@@ -15,7 +15,7 @@
 #include <debugger/outputcollector.h>
 
 #include <utils/id.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QProcess>
 #include <QTextCodec>
@@ -116,7 +116,6 @@ private: ////////// General Interface //////////
 
     QHash<int, DebuggerCommand> m_commandForToken;
     QHash<int, int> m_flagsForToken;
-    int commandTimeoutTime() const;
     QTimer m_commandTimer;
 
     QString m_pendingConsoleStreamOutput;
@@ -142,6 +141,7 @@ private: ////////// General Interface //////////
     void handleStop2(const GdbMi &data);
     void handleStop3();
     void resetCommandQueue();
+    void updateStateForStop();
 
     // Gdb initialization sequence
     void handleShowVersion(const DebuggerResponse &response);

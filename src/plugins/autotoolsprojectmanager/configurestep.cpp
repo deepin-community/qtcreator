@@ -7,15 +7,14 @@
 #include "autotoolsprojectmanagertr.h"
 
 #include <projectexplorer/abstractprocessstep.h>
+#include <projectexplorer/buildstep.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/target.h>
 
 #include <utils/aspects.h>
-#include <utils/process.h>
-
-#include <QDateTime>
+#include <utils/qtcprocess.h>
 
 using namespace ProjectExplorer;
 using namespace Utils;
@@ -45,10 +44,7 @@ public:
         arguments.setSettingsKey("AutotoolsProjectManager.ConfigureStep.AdditionalArguments");
         arguments.setLabelText(Tr::tr("Arguments:"));
         arguments.setHistoryCompleter("AutotoolsPM.History.ConfigureArgs");
-
-        connect(&arguments, &BaseAspect::changed, this, [this] {
-            m_runConfigure = true;
-        });
+        arguments.addOnChanged(this, [this] { m_runConfigure = true; });
 
         setCommandLineProvider([this] {
             return getCommandLine(arguments());
@@ -88,7 +84,7 @@ Tasking::GroupItem ConfigureStep::runRecipe()
 
         if (!m_runConfigure) {
             emit addOutput(Tr::tr("Configuration unchanged, skipping configure step."), OutputFormat::NormalMessage);
-            return SetupResult::StopWithDone;
+            return SetupResult::StopWithSuccess;
         }
 
         ProcessParameters *param = processParameters();
@@ -98,9 +94,12 @@ Tasking::GroupItem ConfigureStep::runRecipe()
         }
         return SetupResult::Continue;
     };
-    const auto onDone = [this] { m_runConfigure = false; };
 
-    return Group { onGroupSetup(onSetup), onGroupDone(onDone), defaultProcessTask() };
+    return Group {
+        onGroupSetup(onSetup),
+        onGroupDone([this] { m_runConfigure = false; }, CallDoneIf::Success),
+        defaultProcessTask()
+    };
 }
 
 // ConfigureStepFactory
@@ -111,12 +110,21 @@ Tasking::GroupItem ConfigureStep::runRecipe()
  * The factory is used to create instances of ConfigureStep.
  */
 
-ConfigureStepFactory::ConfigureStepFactory()
+class ConfigureStepFactory final : public BuildStepFactory
 {
-    registerStep<ConfigureStep>(Constants::CONFIGURE_STEP_ID);
-    setDisplayName(Tr::tr("Configure", "Display name for AutotoolsProjectManager::ConfigureStep id."));
-    setSupportedProjectType(Constants::AUTOTOOLS_PROJECT_ID);
-    setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_BUILD);
+public:
+    ConfigureStepFactory()
+    {
+        registerStep<ConfigureStep>(Constants::CONFIGURE_STEP_ID);
+        setDisplayName(Tr::tr("Configure", "Display name for AutotoolsProjectManager::ConfigureStep id."));
+        setSupportedProjectType(Constants::AUTOTOOLS_PROJECT_ID);
+        setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_BUILD);
+    }
+};
+
+void setupConfigureStep()
+{
+    static ConfigureStepFactory theConfigureStepFactory;
 }
 
 } // AutotoolsProjectManager::Internal

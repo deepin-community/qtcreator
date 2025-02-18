@@ -535,8 +535,8 @@ bool findPath(BuildGraphNode *u, BuildGraphNode *v, QList<BuildGraphNode *> &pat
  */
 void connect(BuildGraphNode *p, BuildGraphNode *c)
 {
-    QBS_CHECK(p != c);
     qCDebug(lcBuildGraph).noquote() << "connect" << p->toString() << "->" << c->toString();
+    QBS_CHECK(p != c);
     if (c->type() == BuildGraphNode::ArtifactNodeType) {
         auto const ac = static_cast<Artifact *>(c);
         for (const Artifact *child : filterByType<Artifact>(p->children)) {
@@ -710,7 +710,7 @@ void updateArtifactFromSourceArtifact(const ResolvedProductPtr &product,
     const QVariantMap oldModuleProperties = artifact->properties->value();
     setArtifactData(artifact, sourceArtifact);
     if (oldFileTags != artifact->fileTags()
-            || oldModuleProperties != artifact->properties->value()) {
+        || !qVariantMapsEqual(oldModuleProperties, artifact->properties->value())) {
         invalidateArtifactAsRuleInputIfNecessary(artifact);
     }
 }
@@ -766,7 +766,7 @@ void updateGeneratedArtifacts(ResolvedProduct *product)
             provideFullFileTagsAndProperties(artifact);
             applyPerArtifactProperties(artifact);
             if (oldFileTags != artifact->fileTags()
-                    || oldModuleProperties != artifact->properties->value()) {
+                || !qVariantMapsEqual(oldModuleProperties, artifact->properties->value())) {
                 invalidateArtifactAsRuleInputIfNecessary(artifact);
             }
         }

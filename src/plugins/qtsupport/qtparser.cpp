@@ -8,12 +8,6 @@
 
 #include <QFileInfo>
 
-#ifdef WITH_TESTS
-#include "qtsupportplugin.h"
-#include <projectexplorer/outputparser_test.h>
-#include <QTest>
-#endif
-
 using namespace ProjectExplorer;
 
 namespace QtSupport {
@@ -51,7 +45,7 @@ Utils::OutputLineParser::Result QtParser::handleLine(const QString &line, Utils:
         LinkSpecs linkSpecs;
         const Utils::FilePath file
                 = absoluteFilePath(Utils::FilePath::fromUserInput(match.captured("file")));
-        addLinkSpecForAbsoluteFilePath(linkSpecs, file, lineno, match, "file");
+        addLinkSpecForAbsoluteFilePath(linkSpecs, file, lineno, -1, match, "file");
         CompileTask task(type, match.captured("description").trimmed(), file, lineno);
         task.column = match.captured("column").toInt();
         scheduleTask(task, 1);
@@ -68,7 +62,7 @@ Utils::OutputLineParser::Result QtParser::handleLine(const QString &line, Utils:
             message.prepend(": ").prepend(fileName);
         } else if (fileName.endsWith(".ui")) {
             filePath = absoluteFilePath(Utils::FilePath::fromUserInput(fileName));
-            addLinkSpecForAbsoluteFilePath(linkSpecs, filePath, -1, match, "file");
+            addLinkSpecForAbsoluteFilePath(linkSpecs, filePath, -1, -1, match, "file");
         } else {
             isUicMessage = false;
         }
@@ -85,7 +79,7 @@ Utils::OutputLineParser::Result QtParser::handleLine(const QString &line, Utils:
         LinkSpecs linkSpecs;
         const Utils::FilePath file
                 = absoluteFilePath(Utils::FilePath::fromUserInput(match.captured("file")));
-        addLinkSpecForAbsoluteFilePath(linkSpecs, file, 0, match, "file");
+        addLinkSpecForAbsoluteFilePath(linkSpecs, file, -1, -1, match, "file");
         CompileTask task(type, match.captured("description"), file);
         scheduleTask(task, 1);
         return {Status::Done, linkSpecs};
@@ -101,7 +95,7 @@ Utils::OutputLineParser::Result QtParser::handleLine(const QString &line, Utils:
         if (!ok)
             lineno = -1;
         LinkSpecs linkSpecs;
-        addLinkSpecForAbsoluteFilePath(linkSpecs, file, lineno, match, "file");
+        addLinkSpecForAbsoluteFilePath(linkSpecs, file, lineno, -1, match, "file");
         CompileTask task(type, match.captured("description"), file, lineno,
                          match.captured("column").toInt());
         scheduleTask(task, 1);
@@ -111,12 +105,27 @@ Utils::OutputLineParser::Result QtParser::handleLine(const QString &line, Utils:
     return Status::NotHandled;
 }
 
-// Unit tests:
+} // namespace QtSupport
+
 
 #ifdef WITH_TESTS
-namespace Internal {
 
-void QtSupportPlugin::testQtOutputParser_data()
+#include <projectexplorer/outputparser_test.h>
+
+#include <QTest>
+
+namespace QtSupport::Internal {
+
+class QtOutputParserTest final : public QObject
+{
+    Q_OBJECT
+
+public slots:
+    void testQtOutputParser_data();
+    void testQtOutputParser();
+};
+
+void QtOutputParserTest::testQtOutputParser_data()
 {
     QTest::addColumn<QString>("input");
     QTest::addColumn<OutputParserTester::Channel>("inputChannel");
@@ -242,7 +251,7 @@ void QtSupportPlugin::testQtOutputParser_data()
             << QString();
 }
 
-void QtSupportPlugin::testQtOutputParser()
+void QtOutputParserTest::testQtOutputParser()
 {
     OutputParserTester testbench;
     testbench.addLineParser(new QtParser);
@@ -256,7 +265,13 @@ void QtSupportPlugin::testQtOutputParser()
     testbench.testParsing(input, inputChannel, tasks, childStdOutLines, childStdErrLines, outputLines);
 }
 
-} // namespace Internal
-#endif
+QObject *createQtOutputParserTest()
+{
+    return new QtOutputParserTest;
+}
 
-} // namespace QtSupport
+} // QtSupport::Internal
+
+#include "qtparser.moc"
+
+#endif // WITH_TESTS

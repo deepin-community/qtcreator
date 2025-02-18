@@ -3,6 +3,7 @@
 
 #include "currentprojectfind.h"
 
+#include "allprojectsfind.h"
 #include "project.h"
 #include "projectexplorertr.h"
 #include "projectmanager.h"
@@ -12,9 +13,34 @@
 #include <utils/qtcsettings.h>
 
 using namespace ProjectExplorer;
-using namespace ProjectExplorer::Internal;
 using namespace TextEditor;
 using namespace Utils;
+
+namespace ProjectExplorer::Internal {
+
+class CurrentProjectFind final : public AllProjectsFind
+{
+public:
+    CurrentProjectFind();
+
+private:
+    QString id() const final;
+    QString displayName() const final;
+
+    bool isEnabled() const final;
+
+    Utils::Store save() const final;
+    void restore(const Utils::Store &s) final;
+
+    // deprecated
+    QByteArray settingsKey() const final;
+
+    QString label() const final;
+
+    TextEditor::FileContainerProvider fileContainerProvider() const final;
+    void handleProjectChanged();
+    void setupSearch(Core::SearchResult *search) final;
+};
 
 CurrentProjectFind::CurrentProjectFind()
 {
@@ -92,16 +118,29 @@ void CurrentProjectFind::setupSearch(Core::SearchResult *search)
     });
 }
 
-void CurrentProjectFind::writeSettings(QtcSettings *settings)
+const char kDefaultInclusion[] = "*";
+const char kDefaultExclusion[] = "";
+
+Store CurrentProjectFind::save() const
 {
-    settings->beginGroup("CurrentProjectFind");
-    writeCommonSettings(settings);
-    settings->endGroup();
+    Store s;
+    writeCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
+    return s;
 }
 
-void CurrentProjectFind::readSettings(QtcSettings *settings)
+void CurrentProjectFind::restore(const Store &s)
 {
-    settings->beginGroup("CurrentProjectFind");
-    readCommonSettings(settings, "*", "");
-    settings->endGroup();
+    readCommonSettings(s, kDefaultInclusion, kDefaultExclusion);
 }
+
+QByteArray CurrentProjectFind::settingsKey() const
+{
+    return "CurrentProjectFind";
+}
+
+void setupCurrentProjectFind()
+{
+    static CurrentProjectFind theCurrentProjectFind;
+}
+
+} // ProjectExplorer::Internal

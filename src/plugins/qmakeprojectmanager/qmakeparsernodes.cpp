@@ -4,7 +4,6 @@
 #include "qmakeparsernodes.h"
 
 #include "qmakeproject.h"
-#include "qmakeprojectmanagerconstants.h"
 #include "qmakeprojectmanagertr.h"
 
 #include <android/androidconstants.h>
@@ -14,7 +13,6 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/iversioncontrol.h>
 #include <coreplugin/vcsmanager.h>
-#include <cppeditor/cppeditorconstants.h>
 
 #include <projectexplorer/editorconfiguration.h>
 #include <projectexplorer/extracompiler.h>
@@ -31,8 +29,10 @@
 #include <utils/algorithm.h>
 #include <utils/async.h>
 #include <utils/filesystemwatcher.h>
+#include <utils/fileutils.h>
+#include <utils/mimeconstants.h>
 #include <utils/mimeutils.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 #include <utils/temporarydirectory.h>
@@ -501,7 +501,7 @@ bool QmakePriFile::addSubProject(const FilePath &proFile)
         uniqueProFilePaths.append(simplifyProFilePath(proFile));
 
     FilePaths failedFiles;
-    changeFiles(QLatin1String(Constants::PROFILE_MIMETYPE), uniqueProFilePaths, &failedFiles, AddToProFile);
+    changeFiles(Utils::Constants::PROFILE_MIMETYPE, uniqueProFilePaths, &failedFiles, AddToProFile);
 
     return failedFiles.isEmpty();
 }
@@ -509,12 +509,12 @@ bool QmakePriFile::addSubProject(const FilePath &proFile)
 bool QmakePriFile::removeSubProjects(const FilePath &proFilePath)
 {
     FilePaths failedOriginalFiles;
-    changeFiles(QLatin1String(Constants::PROFILE_MIMETYPE), {proFilePath}, &failedOriginalFiles, RemoveFromProFile);
+    changeFiles(Utils::Constants::PROFILE_MIMETYPE, {proFilePath}, &failedOriginalFiles, RemoveFromProFile);
 
     FilePaths simplifiedProFiles = Utils::transform(failedOriginalFiles, &simplifyProFilePath);
 
     FilePaths failedSimplifiedFiles;
-    changeFiles(QLatin1String(Constants::PROFILE_MIMETYPE), simplifiedProFiles, &failedSimplifiedFiles, RemoveFromProFile);
+    changeFiles(Utils::Constants::PROFILE_MIMETYPE, simplifiedProFiles, &failedSimplifiedFiles, RemoveFromProFile);
 
     return failedSimplifiedFiles.isEmpty();
 }
@@ -538,7 +538,7 @@ bool QmakePriFile::addFiles(const FilePaths &filePaths, FilePaths *notAdded)
     for (auto it = typeFileMap.constBegin(); it != typeFileMap.constEnd(); ++it) {
         const FilePaths &typeFiles = *it;
         FilePaths qrcFiles; // the list of qrc files referenced from ui files
-        if (it.key() == QLatin1String(ProjectExplorer::Constants::RESOURCE_MIMETYPE)) {
+        if (it.key() == QLatin1String(Utils::Constants::RESOURCE_MIMETYPE)) {
             for (const FilePath &formFile : typeFiles) {
                 const FilePaths resourceFiles = formResources(formFile);
                 for (const FilePath &resourceFile : resourceFiles)
@@ -563,7 +563,7 @@ bool QmakePriFile::addFiles(const FilePaths &filePaths, FilePaths *notAdded)
         changeFiles(it.key(), uniqueFilePaths, &failedFiles, AddToProFile);
         if (notAdded)
             *notAdded += failedFiles;
-        changeFiles(QLatin1String(ProjectExplorer::Constants::RESOURCE_MIMETYPE), uniqueQrcFiles, &failedFiles, AddToProFile);
+        changeFiles(QLatin1String(Utils::Constants::RESOURCE_MIMETYPE), uniqueQrcFiles, &failedFiles, AddToProFile);
         if (notAdded)
             *notAdded += failedFiles;
     }
@@ -572,18 +572,15 @@ bool QmakePriFile::addFiles(const FilePaths &filePaths, FilePaths *notAdded)
 
 bool QmakePriFile::removeFiles(const FilePaths &filePaths, FilePaths *notRemoved)
 {
-    FilePaths failedFiles;
-    using TypeFileMap = QMap<QString, FilePaths>;
     // Split into lists by file type and bulk-add them.
-    TypeFileMap typeFileMap;
+    QMap<QString, FilePaths> typeFileMap;
     for (const FilePath &file : filePaths) {
         const MimeType mt = Utils::mimeTypeForFile(file);
         typeFileMap[mt.name()] << file;
     }
-    const QStringList types = typeFileMap.keys();
-    for (const QString &type : types) {
-        const FilePaths typeFiles = typeFileMap.value(type);
-        changeFiles(type, typeFiles, &failedFiles, RemoveFromProFile);
+    FilePaths failedFiles;
+    for (auto it = typeFileMap.cbegin(); it != typeFileMap.cend(); ++it) {
+        changeFiles(it.key(), *it, &failedFiles, RemoveFromProFile);
         if (notRemoved)
             *notRemoved = failedFiles;
     }
@@ -932,9 +929,9 @@ void QmakePriFile::save(const QStringList &lines)
     QStringList errorStrings;
     Core::IDocument *document = Core::DocumentModel::documentForFilePath(filePath());
     if (document) {
-        QString errorString;
-        if (!document->reload(&errorString, Core::IDocument::FlagReload, Core::IDocument::TypeContents))
-            errorStrings << errorString;
+        Result res = document->reload(Core::IDocument::FlagReload, Core::IDocument::TypeContents);
+        if (!res)
+            errorStrings << res.error();
     }
     if (!errorStrings.isEmpty())
         QMessageBox::warning(Core::ICore::dialogParent(), Tr::tr("File Error"),
@@ -998,33 +995,38 @@ QStringList QmakePriFile::varNames(FileType type, QtSupport::ProFileReader *read
 //!
 QString QmakePriFile::varNameForAdding(const QString &mimeType)
 {
-    if (mimeType == QLatin1String(ProjectExplorer::Constants::CPP_HEADER_MIMETYPE)
-            || mimeType == QLatin1String(ProjectExplorer::Constants::C_HEADER_MIMETYPE)) {
+    using namespace Utils::Constants;
+
+    if (mimeType == QLatin1String(CPP_HEADER_MIMETYPE)
+            || mimeType == QLatin1String(C_HEADER_MIMETYPE)) {
         return QLatin1String("HEADERS");
     }
 
-    if (mimeType == QLatin1String(ProjectExplorer::Constants::CPP_SOURCE_MIMETYPE)
-               || mimeType == QLatin1String(CppEditor::Constants::OBJECTIVE_CPP_SOURCE_MIMETYPE)
-               || mimeType == QLatin1String(ProjectExplorer::Constants::C_SOURCE_MIMETYPE)) {
+    if (mimeType == QLatin1String(CPP_SOURCE_MIMETYPE)
+               || mimeType == QLatin1String(OBJECTIVE_CPP_SOURCE_MIMETYPE)
+               || mimeType == QLatin1String(C_SOURCE_MIMETYPE)) {
         return QLatin1String("SOURCES");
     }
 
-    if (mimeType == QLatin1String(ProjectExplorer::Constants::RESOURCE_MIMETYPE))
+    if (mimeType == QLatin1String(RESOURCE_MIMETYPE))
         return QLatin1String("RESOURCES");
 
-    if (mimeType == QLatin1String(ProjectExplorer::Constants::FORM_MIMETYPE))
+    if (mimeType == QLatin1String(FORM_MIMETYPE))
         return QLatin1String("FORMS");
 
-    if (mimeType == QLatin1String(ProjectExplorer::Constants::QML_MIMETYPE)
-            || mimeType == QLatin1String(ProjectExplorer::Constants::QMLUI_MIMETYPE)) {
+    if (mimeType == QLatin1String(QML_MIMETYPE)
+            || mimeType == QLatin1String(QMLUI_MIMETYPE)) {
         return QLatin1String("DISTFILES");
     }
 
-    if (mimeType == QLatin1String(ProjectExplorer::Constants::SCXML_MIMETYPE))
+    if (mimeType == QLatin1String(SCXML_MIMETYPE))
         return QLatin1String("STATECHARTS");
 
-    if (mimeType == QLatin1String(Constants::PROFILE_MIMETYPE))
+    if (mimeType == QLatin1String(PROFILE_MIMETYPE))
         return QLatin1String("SUBDIRS");
+
+    if (mimeType == QLatin1String(Utils::Constants::LINGUIST_MIMETYPE))
+        return QLatin1String("TRANSLATIONS");
 
     return QLatin1String("DISTFILES");
 }
@@ -1050,6 +1052,7 @@ QStringList QmakePriFile::varNamesForRemoving()
     vars << QLatin1String("ICON");
     vars << QLatin1String("QMAKE_INFO_PLIST");
     vars << QLatin1String("STATECHARTS");
+    vars << QLatin1String("TRANSLATIONS");
     return vars;
 }
 
@@ -1185,7 +1188,7 @@ void QmakeProFile::setupFutureWatcher()
     QTC_ASSERT(!m_parseFutureWatcher, return);
 
     m_parseFutureWatcher = new QFutureWatcher<Internal::QmakeEvalResultPtr>;
-    QObject::connect(m_parseFutureWatcher, &QFutureWatcherBase::finished, [this]() {
+    QObject::connect(m_parseFutureWatcher, &QFutureWatcherBase::finished, [this] {
         applyEvaluate(m_parseFutureWatcher->result());
         cleanupFutureWatcher();
     });
@@ -1563,8 +1566,6 @@ QmakeEvalResultPtr QmakeProFile::evaluate(const QmakeEvalInput &input)
         result->newVarValues[Variable::AndroidApplicationArgs] = exactReader->values(QLatin1String(Android::Constants::ANDROID_APPLICATION_ARGUMENTS));
         result->newVarValues[Variable::AndroidExtraLibs] = exactReader->values(QLatin1String(Android::Constants::ANDROID_EXTRA_LIBS));
         result->newVarValues[Variable::IosDeploymentTarget] = exactReader->values("QMAKE_IOS_DEPLOYMENT_TARGET");
-        result->newVarValues[Variable::AppmanPackageDir] = exactReader->values(QLatin1String("AM_PACKAGE_DIR"));
-        result->newVarValues[Variable::AppmanManifest] = exactReader->values(QLatin1String("AM_MANIFEST"));
         result->newVarValues[Variable::IsoIcons] = exactReader->values(QLatin1String("ISO_ICONS"));
         result->newVarValues[Variable::QmakeProjectName] = exactReader->values(QLatin1String("QMAKE_PROJECT_NAME"));
         result->newVarValues[Variable::QmakeCc] = exactReader->values("QMAKE_CC");

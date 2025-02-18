@@ -1,4 +1,4 @@
-// Copyright (C) 2023 The Qt Company Ltd.
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 // **********************************************************************
@@ -8,40 +8,18 @@
 // **********************************************************************
 
 /*!
-    \previouspage creator-running-valgrind-remotely.html
     \page creator-clang-tools.html
-    \nextpage creator-heob.html
+    \previouspage creator-how-tos.html
 
-    \title Using Clang Tools
+    \ingroup creator-how-to-analyze
 
-    \QC integrates the following Clang tools for finding problems in C, C++, and
-    Objective-C source code by using static analysis:
-
-    \list
-
-        \li \l{https://clang.llvm.org/extra/clang-tidy/}{Clang-Tidy}, which
-            has diagnostics and fixes for typical programming errors,
-            such as style violations or interface misuse.
-
-        \li \l{https://github.com/KDE/clazy/blob/master/README.md}{Clazy}, which
-            helps Clang understand Qt semantics. It displays Qt related compiler
-            warnings, ranging from unnecessary memory allocation to misuse of
-            API and has refactoring actions for fixing some of the issues.
-
-    \endlist
+    \title Analyze code with Clang-Tidy and Clazy
 
     \note The Clang static analyzer checks are a part of Clang-Tidy. To use
     the checks, you must create a custom configuration for the Clang tools and
     enable them for Clang-Tidy.
 
-    \QC comes with the Clang tools, so you do not need to set them up separately.
-
-    In addition to running the tools to collect diagnostics, you can select
-    \inlineimage icons/open.png
-    to load diagnostics from \l{https://yaml.org/}{YAML} files that you exported
-    using the \c {-export fixes} option.
-
-    \section1 Running Clang-Tidy and Clazy
+    \section1 Analyze the current file
 
     To run Clang-Tidy or Clazy to analyze the currently open file:
 
@@ -53,6 +31,8 @@
             \uicontrol {Analyze Current File with Clang-Tidy} or
             \uicontrol {Analyze Current File with Clazy}.
     \endlist
+
+    \section1 Analyze an open project
 
     To run Clang-Tidy or Clazy to analyze an open project:
 
@@ -69,9 +49,12 @@
 
     \endlist
 
+    \section1 View diagnostics
+
     The \uicontrol {Clang-Tidy} or \uicontrol {Clazy} view shows the issues:
 
     \image qtcreator-clang-tidy-view.webp {Clang-Tidy view}
+    \caption Diagnostics in the Clang-Tidy view.
 
     \note If you select \uicontrol Debug in the mode selector to open the
     \uicontrol Debug mode and then select \uicontrol {Clang-Tidy} or
@@ -91,21 +74,100 @@
     \inlineimage icons/refactormarker.png
     icon, hover the mouse pointer over the line.
 
+    Select the \inlineimage icons/settings.png
+    button to customize diagnostics for the current project.
+
+    \section2 Filter dianostics
+
+    To filter diagnostics:
+
+    \list 1
+        \li Select \inlineimage icons/filtericon.png to open the
+            \uicontrol {Filter Diagnostics} dialog.
+            \image qtcreator-clang-tools-filter-diagnostics.webp {Filter Diagnostics dialog}
+        \li Select the diagnostics to view.
+        \li Select \uicontrol OK.
+    \endlist
+
+    To view all diagnostics, select \uicontrol {Select All}. To view diagnostics
+    that have fixits, select \uicontrol {Select All with Fixits}.
+
+    To hide all diagnostics, select \uicontrol {Clear Selection}.
+
+    To view diagnostics of a particular kind, right-click an entry in
+    \uicontrol Diagnostics and select \uicontrol {Filter for This Diagnostic Kind}
+    in the context menu. To hide diagnostics of that kind, select
+    \uicontrol {Filter out This Diagnostic Kind}.
+
+    \section2 Suppress diagnostics
+
+    To suppress diagnostics, select \uicontrol {Suppress This Diagnostic} or
+    \uicontrol {Suppress This Diagnostic Inline} in the context menu.
+
+    To view the suppression list for a project and to remove
+    diagnostics from it, select \uicontrol Projects >
+    \uicontrol {Project Settings} > \uicontrol {Clang Tools}.
+
+    \section1 Disable checks
+
     To disable checks of a particular type either globally or for a
     particular project, select \uicontrol {Disable This Check} or
     \uicontrol {Disable These Checks} in the context menu.
 
-    Select the \inlineimage icons/settings.png
-    button to customize Clang diagnostics for the current project.
+    \section1 Load diagnostics from YAML files
 
-    \image qtcreator-clang-tools-settings.webp {Clang Tools customized settings}
+    In addition to running the tools to collect diagnostics, you can select
+    \inlineimage icons/open.png
+    to load diagnostics from \l{https://yaml.org/}{YAML} files that you exported
+    using the \c {-export fixes} option.
+
+    \sa {Check code syntax}, {Configure Clang Diagnostics},
+    {Analyze}{How To: Analyze}, {Specify Clang tools settings}, {Analyzers},
+    {Clang Tools}
+*/
+
+/*!
+    \page creator-how-to-override-clang-tools-preferences.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-projects-configure
+
+    \title Specify Clang tools settings
+
+    To set Clang-Tidy and Clazy checks to run for the current project:
+
+    \list 1
+        \li Select \uicontrol Projects > \uicontrol {Project Settings} >
+            \uicontrol {Clang Tools}.
+            \image qtcreator-clang-tools-settings.webp {Clang Tools customized settings}
+        \li Deselect \uicontrol {Use global settings}.
+        \li Specify \uicontrol preferences for the project.
+        \li In \uicontrol {Suppressed diagnostics}, you can view the suppression
+            list for a project and to remove diagnostics from it.
+    \endlist
 
     To restore the global settings, select \uicontrol {Restore Global Settings}.
     To view and modify the global settings, select the link in
-    \uicontrol {Use global settings}. To open the Clang static analyzer,
-    select \uicontrol {Go to Analyzer}.
+    \uicontrol {Use global settings}.
 
-    \section1 Configuring Clang Tools
+    To open the \uicontrol Clang-Tidy view, select \uicontrol {Go to Clang-Tidy}.
+    To open the \uicontrol Clazy view, select \uicontrol {Go to Clazy}.
+
+    \sa {Configure Clang diagnostics}, {Analyze code with Clang-Tidy and Clazy}, {Clang Tools}
+*/
+
+/*!
+    \page creator-preferences-analyzer-clang-tools.html
+    \previouspage creator-reference.html
+
+    \ingroup creator-reference-preferences-analyzer
+
+    \title Clang Tools
+
+    \brief Set preferences for Clang-Tidy and Clazy.
+
+    Detect problems in C, C++, and Objective-C programs with Clang-Tidy
+    and Clazy.
 
     To configure Clang diagnostics globally for Clang tools:
 
@@ -118,6 +180,14 @@
 
         \li In the \uicontrol Clang-Tidy and \uicontrol Clazy-Standalone fields,
             set the paths to the executables to use.
+
+        \li The \uicontrol {Diagnostic configuration} field shows the
+            checks to perform. Click the value of the field to open the
+            \uicontrol {Diagnostic Configurations} dialog, where you can
+            select and edit the checks to perform.
+
+            To perform checks from a Clang-Tidy configuration file instead,
+            select \uicontrol {Prefer .clang-tidy file, if present}.
 
         \li To build the project before running the Clang tools, select the
             \uicontrol {Build the project before analysis} check box. The Clang
@@ -132,6 +202,31 @@
         \li In the \uicontrol {Parallel jobs} field, select the number of jobs
             to run in parallel to make the analysis faster on multi-core
             processors.
+    \endlist
+
+    \sa {Configure Clang diagnostics}, {Analyze code with Clang-Tidy and Clazy},
+    {Specify Clang tools settings}
+*/
+
+/*!
+    \page creator-how-to-configure-clang-diagnostics.html
+    \previouspage creator-how-tos.html
+
+    \ingroup creator-how-to-analyze
+
+    \title Configure Clang diagnostics
+
+    Detect problems in C, C++, and Objective-C programs with Clang-Tidy
+    and Clazy.
+
+    To select and edit the Clang checks to perform:
+
+    \list 1
+
+        \li Select \preferences > \uicontrol Analyzer >
+            \uicontrol {Clang Tools}.
+
+            \image qtcreator-preferences-analyzer-clang-tools.webp {Clang Tools preferences}
 
         \li The \uicontrol {Diagnostic configuration} field shows the
             checks to perform. Click the value of the field to open the
@@ -140,7 +235,7 @@
 
             \image qtcreator-clang-tools-diagnostics-configuration.png {Diagnostics Configuration dialog}
 
-            To perform checks from a Clang Tidy configuration file instead,
+            To perform checks from a Clang-Tidy configuration file instead,
             select \uicontrol {Prefer .clang-tidy file, if present} in the
             \uicontrol {Clang Tools} tab.
 
@@ -168,30 +263,29 @@
             \l{https://clang-analyzer.llvm.org/available_checks.html}
             {Clang Static Analyzer documentation}.
 
-        \li To edit the selected check as plain text, select
+        \li To edit the selected checks as plain text, select
             \uicontrol {Edit Checks as String}.
 
         \li In the \uicontrol {Clazy Checks} tab, select the level of Clazy
             checks to perform.
 
-            \image qtcreator-clazy.png {Clazy Checks tab}
+            \image qtcreator-clazy.webp {Clazy Checks tab}
+
+        \li To edit the selected checks as plain text, select
+            \uicontrol {Edit Checks as String}.
+
 
         \li In the \uicontrol Filters field, select topics to view
             only checks related to those areas in the \uicontrol Checks field.
             To filter the checks in the selected areas, enter a string in the
             \uicontrol {Filter by name} field.
 
-        \li To view all checks again, select \uicontrol {Reset Filter}.
+        \li To view all checks again, select \uicontrol {Reset Topic Filter}.
 
         \li To view more information about the checks online, select the
             \uicontrol {Web Page} links next to them.
 
     \endlist
-
-    To suppress diagnostics, select \uicontrol {Suppress This Diagnostic} in the
-    context menu. To view the suppression list for a project and to remove
-    diagnostics from it, select \uicontrol Projects >
-    \uicontrol {Project Settings} > \uicontrol {Clang Tools}.
 
     \section2 Selecting Clazy Check Levels
 
@@ -225,4 +319,6 @@
     To add more checks using \QC later on, copy the checks from your .clang-tidy
     file into the \uicontrol {Edit Checks as String} field, select additional
     checks, and copy-paste the contents of the field to the .clang-tidy file.
+
+    \sa {Analyze code with Clang-Tidy and Clazy}, {Specify Clang tools settings}, {Clang Tools}
 */

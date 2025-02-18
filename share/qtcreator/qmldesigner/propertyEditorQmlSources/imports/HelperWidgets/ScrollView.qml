@@ -16,6 +16,9 @@ Flickable {
     readonly property bool bothVisible: flickable.verticalScrollBarVisible
                                         && flickable.horizontalScrollBarVisible
 
+    property bool hideVerticalScrollBar: false
+    property bool hideHorizontalScrollBar: false
+
     property real temporaryHeight: 0
 
     default property alias content: areaItem.children
@@ -24,6 +27,8 @@ Flickable {
     // objectName is used by the dock widget to find this particular ScrollView
     // and set the ads focus on it.
     objectName: "__mainSrollView"
+
+    flickDeceleration: 10000
 
     HoverHandler { id: hoverHandler }
 
@@ -35,6 +40,8 @@ Flickable {
         y: flickable.height - horizontalScrollBar.height
         width: flickable.availableWidth - (verticalScrollBar.isNeeded ? verticalScrollBar.thickness : 0)
         orientation: Qt.Horizontal
+
+        visible: !flickable.hideHorizontalScrollBar
 
         show: (hoverHandler.hovered || flickable.focus || flickable.adsFocus
                || horizontalScrollBar.inUse || horizontalScrollBar.otherInUse)
@@ -50,6 +57,8 @@ Flickable {
         y: 0
         height: flickable.availableHeight - (horizontalScrollBar.isNeeded ? horizontalScrollBar.thickness : 0)
         orientation: Qt.Vertical
+
+        visible: !flickable.hideVerticalScrollBar
 
         show: (hoverHandler.hovered || flickable.focus || flickable.adsFocus
                || horizontalScrollBar.inUse || horizontalScrollBar.otherInUse)

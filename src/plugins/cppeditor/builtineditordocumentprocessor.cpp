@@ -7,7 +7,6 @@
 #include "cppchecksymbols.h"
 #include "cppcodemodelsettings.h"
 #include "cppeditordocument.h"
-#include "cppeditorplugin.h"
 #include "cppmodelmanager.h"
 #include "cpptoolsreuse.h"
 #include "cppworkingcopy.h"
@@ -127,7 +126,7 @@ CheckSymbols *createHighlighter(const CPlusPlus::Document::Ptr &doc,
     }
 
     LookupContext context(doc, snapshot);
-    return CheckSymbols::create(doc, context, macroUses);
+    return CheckSymbols::create(doc, textDocument->toPlainText(), context, macroUses);
 }
 
 QList<TextEditor::BlockRange> toTextEditorBlocks(
@@ -144,16 +143,15 @@ QList<TextEditor::BlockRange> toTextEditorBlocks(
 
 BuiltinEditorDocumentProcessor::BuiltinEditorDocumentProcessor(TextEditor::TextDocument *document)
     : BaseEditorDocumentProcessor(document->document(), document->filePath())
-    , m_parser(new BuiltinEditorDocumentParser(document->filePath(), indexerFileSizeLimitInMb()))
+    , m_parser(new BuiltinEditorDocumentParser(document->filePath(),
+                                               settings().effectiveIndexerFileSizeLimitInMb()))
     , m_codeWarningsUpdated(false)
     , m_semanticHighlighter(new SemanticHighlighter(document))
 {
     using namespace Internal;
 
-    const CppCodeModelSettings *cms = CppEditorPlugin::instance()->codeModelSettings();
-
     BaseEditorDocumentParser::Configuration config = m_parser->configuration();
-    config.usePrecompiledHeaders = cms->pchUsage() != CppCodeModelSettings::PchUse_None;
+    config.usePrecompiledHeaders = settings().pchUsage != CppCodeModelSettings::PchUse_None;
     m_parser->setConfiguration(config);
 
     m_semanticHighlighter->setHighlightingRunner(

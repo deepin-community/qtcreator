@@ -63,8 +63,6 @@ private:
     void gatherAssignedProperties(ItemValue *iv, const QualifiedId &prefix,
                                   QualifiedIdSet &properties);
     void markModuleTargetGroups(Item *group, const Item::Module &module);
-    void moveGroupsFromModuleToProduct(const Item::Module &module);
-    void moveGroupsFromModulesToProduct();
     void propagateModulesFromParent(Item *group);
     void handleGroup(Item *group);
     void adjustScopesInGroupModuleInstances(Item *groupItem, const Item::Module &module);
@@ -81,13 +79,22 @@ void setupGroups(ProductContext &product, LoaderState &loaderState)
 
 void GroupsHandler::run()
 {
-    AccumulatingTimer timer(m_loaderState.parameters().logElapsedTime()
-                            ? &m_product.timingData.groupsSetup : nullptr);
-
-    moveGroupsFromModulesToProduct();
+    AccumulatingTimer timer(
+        m_loaderState.parameters().logElapsedTime() ? &m_product.timingData.groupsSetup : nullptr);
     for (Item * const child : m_product.item->children()) {
         if (child->type() == ItemType::Group)
             handleGroup(child);
+    }
+
+    for (const Item::Module &module : m_product.item->modules()) {
+        if (!module.item->isPresentModule())
+            continue;
+        for (Item * const child : module.item->children()) {
+            if (child->type() == ItemType::Group) {
+                markModuleTargetGroups(child, module);
+                handleGroup(child);
+            }
+        }
     }
 }
 
@@ -114,37 +121,15 @@ void GroupsHandler::gatherAssignedProperties(ItemValue *iv, const QualifiedId &p
 
 void GroupsHandler::markModuleTargetGroups(Item *group, const Item::Module &module)
 {
-    QBS_CHECK(group->type() == ItemType::Group);
+    if (group->type() != ItemType::Group)
+        return;
+
     if (m_loaderState.evaluator().boolValue(group, StringConstants::filesAreTargetsProperty())) {
         group->setProperty(StringConstants::modulePropertyInternal(),
                            VariantValue::create(module.name.toString()));
     }
     for (Item * const child : group->children())
         markModuleTargetGroups(child, module);
-}
-
-void GroupsHandler::moveGroupsFromModuleToProduct(const Item::Module &module)
-{
-    if (!module.item->isPresentModule())
-        return;
-    for (auto it = module.item->children().begin(); it != module.item->children().end();) {
-        Item * const child = *it;
-        if (child->type() != ItemType::Group) {
-            ++it;
-            continue;
-        }
-        child->setScope(m_product.scope);
-        setScopeForDescendants(child, m_product.scope);
-        Item::addChild(m_product.item, child);
-        markModuleTargetGroups(child, module);
-        it = module.item->children().erase(it);
-    }
-}
-
-void GroupsHandler::moveGroupsFromModulesToProduct()
-{
-    for (const Item::Module &module : m_product.item->modules())
-        moveGroupsFromModuleToProduct(module);
 }
 
 // TODO: I don't completely understand this function, and I suspect we do both too much
@@ -157,7 +142,10 @@ void GroupsHandler::propagateModulesFromParent(Item *group)
     QHash<QualifiedId, Item *> moduleInstancesForGroup;
 
     // Step 1: "Instantiate" the product's modules for the group.
-    for (Item::Module m : group->parent()->modules()) {
+    Item * const parentGroupOrProduct = group->parent()->type() == ItemType::ModuleInstance
+                                            ? m_product.item
+                                            : group->parent();
+    for (Item::Module m : parentGroupOrProduct->modules()) {
         Item * const targetItem = retrieveModuleInstanceItem(group, m.name, m_loaderState);
         QBS_CHECK(targetItem->type() == ItemType::ModuleInstancePlaceholder);
         targetItem->setPrototype(m.item);
@@ -262,20 +250,26 @@ void GroupsHandler::adjustScopesInGroupModuleInstances(Item *groupItem,
     }
 
     for (const ValuePtr &prop : module.item->properties()) {
-        if (prop->type() != Value::JSSourceValueType) {
-            QBS_CHECK(!prop->next());
+        if (prop->type() != Value::JSSourceValueType)
             continue;
-        }
-        for (ValuePtr v = prop; v; v = v->next()) {
+        const auto adjust = [groupItem](const ValuePtr &v) {
             if (!v->scope())
-                continue;
+                return;
             for (const Item::Module &module : groupItem->modules()) {
                 if (v->scope() == module.item->prototype()) {
                     v->setScope(module.item, {});
                     break;
                 }
             }
+        };
+        adjust(prop);
+        const auto candidates = transformed<std::vector<ValuePtr>>(
+            prop->candidates(),
+            [this](const ValuePtr &v) { return v->clone(m_loaderState.itemPool()); });
+        for (const ValuePtr &c : candidates) {
+            adjust(c);
         }
+        prop->setCandidates(candidates);
     }
 }
 

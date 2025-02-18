@@ -4,7 +4,7 @@
 #include "qmlmainfileaspect.h"
 
 #include "qmlproject.h"
-#include "qmlprojectmanagerconstants.h"
+#include "qmlprojectconstants.h"
 #include "qmlprojectmanagertr.h"
 
 #include <qmljstools/qmljstoolsconstants.h>
@@ -18,6 +18,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/layoutbuilder.h>
+#include <utils/mimeconstants.h>
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
 
@@ -48,6 +49,10 @@ QmlMainFileAspect::QmlMainFileAspect(AspectContainer *container)
             this, &QmlMainFileAspect::changeCurrentFile);
     connect(EditorManager::instance(), &EditorManager::currentDocumentStateChanged,
             this, [this] { changeCurrentFile(); });
+    connect(ProjectExplorerPlugin::instance(),
+            &ProjectExplorerPlugin::fileListChanged,
+            this,
+            &QmlMainFileAspect::updateFileComboBox);
 }
 
 QmlMainFileAspect::~QmlMainFileAspect()
@@ -55,16 +60,13 @@ QmlMainFileAspect::~QmlMainFileAspect()
     delete m_fileListCombo;
 }
 
-void QmlMainFileAspect::addToLayout(Layouting::LayoutItem &parent)
+void QmlMainFileAspect::addToLayoutImpl(Layouting::Layout &parent)
 {
     QTC_ASSERT(!m_fileListCombo, delete m_fileListCombo);
     m_fileListCombo = new QComboBox;
     m_fileListCombo->setModel(&m_fileListModel);
 
     updateFileComboBox();
-
-    connect(ProjectExplorerPlugin::instance(), &ProjectExplorerPlugin::fileListChanged,
-            this, &QmlMainFileAspect::updateFileComboBox);
     connect(m_fileListCombo, &QComboBox::activated, this, &QmlMainFileAspect::setMainScript);
 
     parent.addItems({Tr::tr("Main QML file:"), m_fileListCombo.data()});
@@ -92,7 +94,7 @@ void QmlMainFileAspect::updateFileComboBox()
     const FilePath projectDir = m_target->project()->projectDirectory();
 
     if (mainScriptSource() == FileInProjectFile) {
-        const FilePath mainScriptInFilePath = projectDir.relativeChildPath(mainScript());
+        const FilePath mainScriptInFilePath = mainScript().relativePathFrom(projectDir);
         m_fileListModel.clear();
         m_fileListModel.appendRow(new QStandardItem(mainScriptInFilePath.toString()));
         if (m_fileListCombo)
@@ -216,25 +218,25 @@ bool QmlMainFileAspect::isQmlFilePresent()
 {
     bool qmlFileFound = false;
     if (mainScriptSource() == FileInEditor && !mainScript().isEmpty()) {
+        using namespace Utils::Constants;
         IDocument *document = EditorManager::currentDocument();
         const MimeType mainScriptMimeType = mimeTypeForFile(mainScript());
         if (document) {
             m_currentFileFilename = document->filePath();
-            if (mainScriptMimeType.matchesName(ProjectExplorer::Constants::QML_MIMETYPE)
-                    || mainScriptMimeType.matchesName(ProjectExplorer::Constants::QMLUI_MIMETYPE)) {
+            if (mainScriptMimeType.matchesName(QML_MIMETYPE)
+                    || mainScriptMimeType.matchesName(QMLUI_MIMETYPE)) {
                 qmlFileFound = true;
             }
         }
         if (!document
-                || mainScriptMimeType.matchesName(QmlJSTools::Constants::QMLPROJECT_MIMETYPE)) {
+                || mainScriptMimeType.matchesName(QMLPROJECT_MIMETYPE)) {
             // find a qml file with lowercase filename. This is slow, but only done
             // in initialization/other border cases.
             const FilePaths files = m_target->project()->files(Project::SourceFiles);
             for (const FilePath &filename : files) {
                 if (!filename.isEmpty() && filename.baseName().at(0).isLower()) {
                     const MimeType type = mimeTypeForFile(filename);
-                    if (type.matchesName(ProjectExplorer::Constants::QML_MIMETYPE)
-                            || type.matchesName(ProjectExplorer::Constants::QMLUI_MIMETYPE)) {
+                    if (type.matchesName(QML_MIMETYPE) || type.matchesName(QMLUI_MIMETYPE)) {
                         m_currentFileFilename = filename;
                         qmlFileFound = true;
                         break;

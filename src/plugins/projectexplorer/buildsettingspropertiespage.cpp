@@ -16,9 +16,10 @@
 #include <coreplugin/session.h>
 
 #include <utils/algorithm.h>
+#include <utils/guiutils.h>
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
-#include <utils/stringutils.h>
+#include <utils/stylehelper.h>
 
 #include <QMargins>
 #include <QCoreApplication>
@@ -54,9 +55,7 @@ BuildSettingsWidget::BuildSettingsWidget(Target *target) :
     if (!BuildConfigurationFactory::find(m_target)) {
         auto noSettingsLabel = new QLabel(this);
         noSettingsLabel->setText(Tr::tr("No build settings available"));
-        QFont f = noSettingsLabel->font();
-        f.setPointSizeF(f.pointSizeF() * 1.2);
-        noSettingsLabel->setFont(f);
+        noSettingsLabel->setFont(StyleHelper::uiFont(StyleHelper::UiElementH4));
         vbox->addWidget(noSettingsLabel);
         return;
     }
@@ -68,6 +67,7 @@ BuildSettingsWidget::BuildSettingsWidget(Target *target) :
         m_buildConfigurationComboBox = new QComboBox(this);
         m_buildConfigurationComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         m_buildConfigurationComboBox->setModel(m_target->buildConfigurationModel());
+        setWheelScrollingWithoutFocusBlocked(m_buildConfigurationComboBox);
         hbox->addWidget(m_buildConfigurationComboBox);
 
         m_addButton = new QPushButton(this);
@@ -128,10 +128,7 @@ void BuildSettingsWidget::addSubWidget(NamedWidget *widget)
 
     auto label = new QLabel(this);
     label->setText(widget->displayName());
-    QFont f = label->font();
-    f.setBold(true);
-    f.setPointSizeF(f.pointSizeF() * 1.2);
-    label->setFont(f);
+    label->setFont(StyleHelper::uiFont(StyleHelper::UiElementH4));
 
     label->setContentsMargins(0, 18, 0, 0);
 
@@ -190,7 +187,7 @@ void BuildSettingsWidget::currentIndexChanged(int index)
 
 void BuildSettingsWidget::updateActiveConfiguration()
 {
-    if (!m_buildConfiguration || m_buildConfiguration == m_target->activeBuildConfiguration())
+    if (m_buildConfiguration == m_target->activeBuildConfiguration())
         return;
 
     m_buildConfiguration = m_target->activeBuildConfiguration();
@@ -206,12 +203,15 @@ void BuildSettingsWidget::createConfiguration(const BuildInfo &info_)
     BuildInfo info = info_;
     if (info.displayName.isEmpty()) {
         bool ok = false;
-        info.displayName = QInputDialog::getText(Core::ICore::dialogParent(),
-                                                 Tr::tr("New Configuration"),
-                                                 Tr::tr("New configuration name:"),
-                                                 QLineEdit::Normal,
-                                                 QString(),
-                                                 &ok)
+        info.displayName = uniqueName(
+                               QInputDialog::getText(
+                                   Core::ICore::dialogParent(),
+                                   Tr::tr("New Configuration"),
+                                   Tr::tr("New configuration name:"),
+                                   QLineEdit::Normal,
+                                   QString(),
+                                   &ok),
+                               false)
                                .trimmed();
         if (!ok || info.displayName.isEmpty())
             return;
@@ -225,13 +225,13 @@ void BuildSettingsWidget::createConfiguration(const BuildInfo &info_)
     m_target->setActiveBuildConfiguration(bc, SetActive::Cascade);
 }
 
-QString BuildSettingsWidget::uniqueName(const QString & name)
+QString BuildSettingsWidget::uniqueName(const QString &name, bool allowCurrentName)
 {
     QString result = name.trimmed();
     if (!result.isEmpty()) {
         QStringList bcNames;
         for (BuildConfiguration *bc : m_target->buildConfigurations()) {
-            if (bc == m_buildConfiguration)
+            if (allowCurrentName && bc == m_buildConfiguration)
                 continue;
             bcNames.append(bc->displayName());
         }
@@ -252,12 +252,11 @@ void BuildSettingsWidget::renameConfiguration()
     if (!ok)
         return;
 
-    name = uniqueName(name);
+    name = uniqueName(name, true);
     if (name.isEmpty())
         return;
 
     m_buildConfiguration->setDisplayName(name);
-
 }
 
 void BuildSettingsWidget::cloneConfiguration()
@@ -268,18 +267,21 @@ void BuildSettingsWidget::cloneConfiguration()
         return;
 
     //: Title of a the cloned BuildConfiguration window, text of the window
-    QString name = uniqueName(QInputDialog::getText(this,
-                                                    Tr::tr("Clone Configuration"),
-                                                    Tr::tr("New configuration name:"),
-                                                    QLineEdit::Normal,
-                                                    m_buildConfiguration->displayName()));
+    QString name = uniqueName(
+        QInputDialog::getText(
+            this,
+            Tr::tr("Clone Configuration"),
+            Tr::tr("New configuration name:"),
+            QLineEdit::Normal,
+            m_buildConfiguration->displayName()),
+        false);
     if (name.isEmpty())
         return;
 
     // Save the current build configuration settings, so that the clone gets all the settings
     m_target->project()->saveSettings();
 
-    BuildConfiguration *bc = BuildConfigurationFactory::clone(m_target, m_buildConfiguration);
+    BuildConfiguration *bc = m_buildConfiguration->clone(m_target);
     if (!bc)
         return;
 

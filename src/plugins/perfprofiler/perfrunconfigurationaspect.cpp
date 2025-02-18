@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "perfprofilerconstants.h"
-#include "perfprofilerplugin.h"
 #include "perfprofilertr.h"
 #include "perfrunconfigurationaspect.h"
 #include "perfsettings.h"
 
 #include <debugger/analyzer/analyzerrunconfigwidget.h>
 
-namespace PerfProfiler {
+namespace PerfProfiler::Internal {
 
 PerfRunConfigurationAspect::PerfRunConfigurationAspect(ProjectExplorer::Target *target)
 {
@@ -22,4 +21,4 @@ PerfRunConfigurationAspect::PerfRunConfigurationAspect(ProjectExplorer::Target *
     setConfigWidgetCreator([this] { return new Debugger::AnalyzerRunConfigWidget(this); });
 }
 
-} // namespace PerfProfiler
+} // PerfProfiler::Internal

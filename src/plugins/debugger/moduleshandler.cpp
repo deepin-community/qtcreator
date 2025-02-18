@@ -11,7 +11,7 @@
 
 #include <utils/basetreeview.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/treemodel.h>
 
@@ -273,9 +273,16 @@ void ModulesHandler::removeModule(const FilePath &modulePath)
         m_model->destroyItem(item);
 }
 
+static FilePath pickPath(const FilePath &hostPath, const FilePath &modulePath)
+{
+    if (!hostPath.isEmpty() && hostPath.exists())
+        return hostPath;
+    return modulePath; // Checking if this exists can be slow, delay it for as long as possible
+}
+
 void ModulesHandler::updateModule(const Module &module)
 {
-    const FilePath path = module.modulePath;
+    const FilePath path = pickPath(module.hostPath, module.modulePath);
     if (path.isEmpty())
         return;
 

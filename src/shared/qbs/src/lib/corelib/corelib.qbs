@@ -25,6 +25,7 @@ QbsLibrary {
             defines.push("QBS_ENABLE_UNIT_TESTS");
         if (qbsbuildconfig.systemSettingsDir)
             defines.push('QBS_SYSTEM_SETTINGS_DIR="' + qbsbuildconfig.systemSettingsDir + '"');
+        defines.push("CPLUSPLUS_NO_PARSER");
         return defines;
     }
 
@@ -114,6 +115,8 @@ QbsLibrary {
             "buildgraphloader.cpp",
             "buildgraphloader.h",
             "buildgraphvisitor.h",
+            "cppmodulesscanner.cpp",
+            "cppmodulesscanner.h",
             "cycledetector.cpp",
             "cycledetector.h",
             "dependencyparametersscriptvalue.cpp",
@@ -514,6 +517,7 @@ QbsLibrary {
             "generateoptions.h",
             "installoptions.h",
             "joblimits.h",
+            "mutexdata.h",
             "preferences.h",
             "processresult.h",
             "profile.h",
@@ -536,6 +540,19 @@ QbsLibrary {
         files: [
             "applecodesignutils.cpp",
             "applecodesignutils.h"
+        ]
+    }
+    Group {
+        name: "Cpp Scanner"
+        prefix: "cppscanner/"
+        files: [
+            "CPlusPlusForwardDeclarations.h",
+            "Lexer.cpp",
+            "Lexer.h",
+            "Token.cpp",
+            "Token.h",
+            "cppscanner.cpp",
+            "cppscanner.h",
         ]
     }
 }

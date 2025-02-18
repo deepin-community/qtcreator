@@ -10,7 +10,7 @@
 
 #include <projectexplorer/devicesupport/idevice.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QElapsedTimer>
 
@@ -25,8 +25,6 @@ public:
 
     explicit CdbEngine();
     ~CdbEngine() override;
-
-    bool canHandleToolTip(const DebuggerToolTipContext &context) const override;
 
     void setupEngine() override;
     void runEngine();
@@ -110,6 +108,7 @@ private:
     };
     enum CommandFlags {
         NoFlags = 0,
+        Silent = DebuggerCommand::Silent,
         BuiltinCommand = DebuggerCommand::Silent << 1,
         ExtensionCommand = DebuggerCommand::Silent << 2,
         ScriptCommand = DebuggerCommand::Silent << 3
@@ -171,6 +170,9 @@ private:
     void checkQtSdkPdbFiles(const QString &module);
     BreakpointParameters parseBreakPoint(const GdbMi &gdbmi);
 
+    void debugLastCommand() final;
+    DebuggerCommand m_lastDebuggableCommand;
+
     const QString m_tokenPrefix;
     void handleSetupFailure(const QString &errorMessage);
 
@@ -179,7 +181,6 @@ private:
     //! Debugger accessible (expecting commands)
     bool m_accessible = false;
     StopMode m_stopMode = NoStopRequested;
-    ProjectExplorer::DeviceProcessSignalOperation::Ptr m_signalOperation;
     int m_nextCommandToken = 0;
     QHash<int, DebuggerCommand> m_commandForToken;
     QString m_currentBuiltinResponse;

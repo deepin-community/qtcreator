@@ -10,7 +10,6 @@
 #include "clangtoolsutils.h"
 #include "executableinfo.h"
 
-#include <cppeditor/cppcodemodelsettings.h>
 #include <cppeditor/cppeditorconstants.h>
 #include <cppeditor/cpptoolsreuse.h>
 
@@ -39,11 +38,10 @@
 #include <QSortFilterProxyModel>
 #include <QStackedWidget>
 #include <QStringListModel>
+#include <QTextEdit>
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
-#include <QUuid>
-
 
 using namespace CppEditor;
 using namespace Utils;
@@ -116,6 +114,7 @@ public:
     QListView *topicsView;
     QGroupBox *checksGroupBox;
     QCheckBox *enableLowerLevelsCheckBox;
+    QPushButton plainTextEditButton;
     QTreeView *checksView;
 
     ClazyChecksWidget()
@@ -146,6 +145,7 @@ public:
         enableLowerLevelsCheckBox->setToolTip(Tr::tr("When enabling a level explicitly, "
             "also enable lower levels (Clazy semantic)."));
 
+        plainTextEditButton.setText(Tr::tr("Edit Checks as String..."));
         checksView = new QTreeView;
 
         auto invalidExecutablePage = new QWidget;
@@ -183,6 +183,7 @@ public:
 
         Column {
             enableLowerLevelsCheckBox,
+            &plainTextEditButton,
             checksView,
         }.attachTo(checksGroupBox);
 
@@ -489,8 +490,33 @@ public:
         return indexForName(QModelIndex(), name);
     }
 
-protected:
-    bool m_enabled = true;
+    void selectChecks(const QString &checks)
+    {
+        m_root->checked = Qt::Unchecked;
+        propagateDown(index(0, 0, QModelIndex()));
+
+        QStringList checksList = checks.simplified().remove(" ")
+                                     .split(",", Qt::SkipEmptyParts);
+
+        for (QString &check : checksList) {
+            Qt::CheckState state;
+            if (check.startsWith("-")) {
+                check = check.right(check.length() - 1);
+                state = Qt::Unchecked;
+            } else {
+                state = Qt::Checked;
+            }
+            const QModelIndex index = indexForCheck(check);
+            if (!index.isValid())
+                continue;
+            auto *node = static_cast<ProjectExplorer::Tree *>(index.internalPointer());
+            node->checked = state;
+            propagateUp(index);
+            propagateDown(index);
+        }
+    }
+
+    virtual QString selectedChecks() const = 0;
 
 private:
     QModelIndex indexForName(const QModelIndex &current, const QString &name) const
@@ -518,6 +544,10 @@ private:
         }
         return {};
     }
+
+    virtual QModelIndex indexForCheck(const QString &check) const { return indexForName(check); }
+
+    bool m_enabled = true;
 };
 
 static void openUrl(QAbstractItemModel *model, const QModelIndex &index)
@@ -539,37 +569,11 @@ public:
         buildTree(nullptr, m_root, ClangTidyPrefixTree::Node::fromCheckList(supportedChecks));
     }
 
-    QString selectedChecks() const
+    QString selectedChecks() const override
     {
         QString checks;
         collectChecks(m_root, checks);
         return "-*" + checks;
-    }
-
-    void selectChecks(const QString &checks)
-    {
-        m_root->checked = Qt::Unchecked;
-        propagateDown(index(0, 0, QModelIndex()));
-
-        QStringList checksList = checks.simplified().remove(" ")
-                .split(",", Qt::SkipEmptyParts);
-
-        for (QString &check : checksList) {
-            Qt::CheckState state;
-            if (check.startsWith("-")) {
-                check = check.right(check.length() - 1);
-                state = Qt::Unchecked;
-            } else {
-                state = Qt::Checked;
-            }
-            const QModelIndex index = indexForCheck(check);
-            if (!index.isValid())
-                continue;
-            auto *node = static_cast<ProjectExplorer::Tree *>(index.internalPointer());
-            node->checked = state;
-            propagateUp(index);
-            propagateDown(index);
-        }
     }
 
     QVariant data(const QModelIndex &fullIndex, int role = Qt::DisplayRole) const final
@@ -614,7 +618,7 @@ public:
 private:
     int columnCount(const QModelIndex &) const final { return 3; }
 
-    QModelIndex indexForCheck(const QString &check) const {
+    QModelIndex indexForCheck(const QString &check) const override {
         if (check == "*")
             return index(0, 0, QModelIndex());
 
@@ -781,6 +785,8 @@ private:
         return ProjectExplorer::SelectableFilesModel::data(index, role);
     }
 
+    QString selectedChecks() const override { return enabledChecks().join(','); }
+
     static QString levelDescription(int level)
     {
         switch (level) {
@@ -800,7 +806,8 @@ private:
         }
     }
 
-    QModelIndex indexForCheck(const QString &check) const {
+    QModelIndex indexForCheck(const QString &check) const override
+    {
         if (check == "*")
             return index(0, 0, QModelIndex());
 
@@ -840,6 +847,7 @@ private:
         if (root->checked == Qt::Unchecked)
             return;
         if (root->checked == Qt::Checked && !root->isDir) {
+            // TODO: Use shortcuts: "level0", "level1", "level2"
             checks.append(root->name);
             return;
         }
@@ -998,10 +1006,10 @@ DiagnosticConfigsWidget::DiagnosticConfigsWidget(const ClangDiagnosticConfigs &c
     connect(m_clazyChecks->enableLowerLevelsCheckBox, &QCheckBox::stateChanged, this, [this] {
         const bool enable = m_clazyChecks->enableLowerLevelsCheckBox->isChecked();
         m_clazyTreeModel->setEnableLowerLevels(enable);
-        codeModelSettings()->setEnableLowerClazyLevels(enable);
+        ClangToolsSettings::instance()->enableLowerClazyLevels.setValue(enable);
     });
     const Qt::CheckState checkEnableLowerClazyLevels
-        = codeModelSettings()->enableLowerClazyLevels() ? Qt::Checked : Qt::Unchecked;
+        = ClangToolsSettings::instance()->enableLowerClazyLevels.value() ? Qt::Checked : Qt::Unchecked;
     m_clazyChecks->enableLowerLevelsCheckBox->setCheckState(checkEnableLowerClazyLevels);
 
     m_tidyChecks = new TidyChecksWidget;
@@ -1041,46 +1049,10 @@ DiagnosticConfigsWidget::DiagnosticConfigsWidget(const ClangDiagnosticConfigs &c
     });
 
     connect(m_tidyChecks->plainTextEditButton, &QPushButton::clicked, this, [this] {
-        const bool readOnly = currentConfig().isReadOnly();
-
-        QDialog dialog;
-        dialog.setWindowTitle(Tr::tr("Checks"));
-
-        const QString initialChecks = m_tidyTreeModel->selectedChecks();
-
-        auto textEdit = new QTextEdit(&dialog);
-        textEdit->setReadOnly(readOnly);
-        textEdit->setPlainText(initialChecks);
-
-        auto buttonsBox = new QDialogButtonBox(QDialogButtonBox::Ok
-                                                | (readOnly ? QDialogButtonBox::NoButton
-                                                            : QDialogButtonBox::Cancel));
-
-        using namespace Layouting;
-
-        Column {
-            textEdit,
-            buttonsBox
-        }.attachTo(&dialog);
-
-        QObject::connect(&dialog, &QDialog::accepted, this, [=, &initialChecks] {
-            const QString updatedChecks = textEdit->toPlainText();
-            if (updatedChecks == initialChecks)
-                return;
-
-            disconnectClangTidyItemChanged();
-
-            // Also throws away invalid options.
-            m_tidyTreeModel->selectChecks(updatedChecks);
-            onClangTidyTreeChanged();
-
-            connectClangTidyItemChanged();
-        });
-
-        QObject::connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-        QObject::connect(buttonsBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-        dialog.exec();
+        handleChecksAsStringsButtonClicked(m_tidyTreeModel.get());
+    });
+    connect(&m_clazyChecks->plainTextEditButton, &QPushButton::clicked, this, [this] {
+        handleChecksAsStringsButtonClicked(m_clazyTreeModel.get());
     });
 
     connectClangTidyItemChanged();
@@ -1153,6 +1125,8 @@ void DiagnosticConfigsWidget::syncClazyWidgets(const ClangDiagnosticConfig &conf
     m_clazyChecks->topicsView->clearSelection();
     m_clazyChecks->topicsView->setEnabled(enabled);
     m_clazyTreeModel->setEnabled(enabled);
+    m_clazyChecks->plainTextEditButton.setText(enabled ? Tr::tr("Edit Checks as String...")
+                                                       : Tr::tr("View Checks as String..."));
 
     connectClazyItemChanged();
 }
@@ -1194,6 +1168,50 @@ void DiagnosticConfigsWidget::disconnectClazyItemChanged()
 {
     disconnect(m_clazyTreeModel.get(), &ClazyChecksTreeModel::dataChanged,
                this, &DiagnosticConfigsWidget::onClazyTreeChanged);
+}
+
+void DiagnosticConfigsWidget::handleChecksAsStringsButtonClicked(BaseChecksTreeModel *model)
+{
+    const bool readOnly = currentConfig().isReadOnly();
+
+    QDialog dialog;
+    dialog.setWindowTitle(Tr::tr("Checks"));
+
+    const QString initialChecks = model->selectedChecks();
+
+    auto textEdit = new QTextEdit(&dialog);
+    textEdit->setReadOnly(readOnly);
+    textEdit->setPlainText(initialChecks);
+
+    auto buttonsBox = new QDialogButtonBox(QDialogButtonBox::Ok
+                                           | (readOnly ? QDialogButtonBox::NoButton
+                                                       : QDialogButtonBox::Cancel));
+
+    using namespace Layouting;
+
+    Column {
+        textEdit,
+        buttonsBox
+    }.attachTo(&dialog);
+
+    QObject::connect(&dialog, &QDialog::accepted, this, [this, model, textEdit, &initialChecks] {
+        const QString updatedChecks = textEdit->toPlainText();
+        if (updatedChecks == initialChecks)
+            return;
+
+        disconnectClangTidyItemChanged();
+
+        // Also throws away invalid options.
+        model->selectChecks(updatedChecks);
+        onClangTidyTreeChanged();
+
+        connectClangTidyItemChanged();
+    });
+
+    QObject::connect(buttonsBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttonsBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    dialog.exec();
 }
 
 void DiagnosticConfigsWidget::onClangTidyTreeChanged()
@@ -1243,7 +1261,7 @@ QString removeClangTidyCheck(const QString &checks, const QString &check)
 
 QString removeClazyCheck(const QString &checks, const QString &check)
 {
-    const ClazyStandaloneInfo clazyInfo = ClazyStandaloneInfo::getInfo(toolExecutable(ClangToolType::Clazy));
+    const ClazyStandaloneInfo clazyInfo = ClazyStandaloneInfo(toolExecutable(ClangToolType::Clazy));
     ClazyChecksTreeModel model(clazyInfo.supportedChecks);
     model.enableChecks(checks.split(',', Qt::SkipEmptyParts));
     const QModelIndex index = model.indexForName(check.mid(QString("clazy-").length()));
@@ -1276,7 +1294,7 @@ void disableChecks(const QList<Diagnostic> &diagnostics)
         QTC_ASSERT(configs.isEmpty(), return);
         config = builtinConfig();
         config.setIsReadOnly(false);
-        config.setId(Utils::Id::fromString(QUuid::createUuid().toString()));
+        config.setId(Id::generate());
         config.setDisplayName(Tr::tr("Custom Configuration"));
         configs << config;
         RunSettings runSettings = settings->runSettings();
@@ -1294,7 +1312,7 @@ void disableChecks(const QList<Diagnostic> &diagnostics)
             if (config.clazyMode() == ClangDiagnosticConfig::ClazyMode::UseDefaultChecks) {
                 config.setClazyMode(ClangDiagnosticConfig::ClazyMode::UseCustomChecks);
                 const ClazyStandaloneInfo clazyInfo
-                        = ClazyStandaloneInfo::getInfo(toolExecutable(ClangToolType::Clazy));
+                        = ClazyStandaloneInfo(toolExecutable(ClangToolType::Clazy));
                 config.setChecks(ClangToolType::Clazy, clazyInfo.defaultChecks.join(','));
             }
             config.setChecks(ClangToolType::Clazy,

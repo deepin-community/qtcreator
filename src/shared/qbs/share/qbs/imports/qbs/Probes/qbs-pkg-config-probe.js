@@ -34,28 +34,8 @@ var FileInfo = require("qbs.FileInfo");
 var PkgConfig = require("qbs.PkgConfig");
 var ProviderUtils = require("qbs.ProviderUtils");
 var Process = require("qbs.Process");
-var QmakeProbeConfigure = require("qmake-probe.js");
 
-// We should probably use BinaryProbe instead in the provider
-function getPkgConfigExecutable() {
-    function splitNonEmpty(s, c) { return s.split(c).filter(function(e) { return e; }) }
-
-    var pathValue = Environment.getEnv("PATH");
-    if (!pathValue)
-        return undefined;
-    var dirs = splitNonEmpty(pathValue, FileInfo.pathListSeparator());
-    for (var i = 0; i < dirs.length; ++i) {
-        var candidate =
-            FileInfo.joinPaths(dirs[i], "pkg-config" + FileInfo.executableSuffix());
-        var canonicalCandidate = FileInfo.canonicalPath(candidate);
-        if (!canonicalCandidate || !File.exists(canonicalCandidate))
-            continue;
-        return canonicalCandidate;
-    }
-    return undefined;
-}
-
-function configureQt(pkg) {
+function getQmakePaths(pkg) {
     var packageName = pkg.baseFileName;
     if (packageName === "QtCore"
             || packageName === "Qt5Core"
@@ -75,27 +55,26 @@ function configureQt(pkg) {
             }
         }
         var suffix = FileInfo.executableSuffix();
-        var qmakePaths = [FileInfo.joinPaths(binDir, "qmake" + suffix)];
-        return QmakeProbeConfigure.configure(qmakePaths);
+        return [FileInfo.joinPaths(binDir, "qmake" + suffix)];
     }
 }
 
 function configure(
-    executableFilePath, extraPaths, libDirs, staticMode, sysroot, mergeDependencies) {
+    executableFilePath, extraPaths, libDirs, staticMode, definePrefix, sysroot) {
 
     var result = {};
     result.packages = [];
     result.packagesByModuleName = {};
     result.brokenPackages = [];
-    result.qtInfos = {};
+    result.qtInfos = [];
 
     var options = {};
     options.libDirs = libDirs;
     options.sysroot = sysroot;
+    options.definePrefix = definePrefix;
     if (options.sysroot)
         options.allowSystemLibraryPaths = true;
     options.staticMode = staticMode;
-    options.mergeDependencies = mergeDependencies;
     options.extraPaths = extraPaths;
     if (options.sysroot && !options.libDirs) {
         options.libDirs = [
@@ -104,15 +83,19 @@ function configure(
         ];
     }
     if (!options.libDirs) {
-        // if we have pkg-config installed, let's ask it for its search paths (since
+        // if we have pkg-config/pkgconf installed, let's ask it for its search paths (since
         // built-in search paths can differ between platforms)
-        var executable = executableFilePath ? executableFilePath : getPkgConfigExecutable();
-        if (executable) {
+        if (executableFilePath) {
             var p = new Process()
-            if (p.exec(executable, ['pkg-config', '--variable=pc_path']) === 0) {
+            if (p.exec(executableFilePath, ['pkg-config', '--variable=pc_path']) === 0) {
                 var stdout = p.readStdOut().trim();
-                // TODO: pathListSeparator? depends on what pkg-config prints on Windows
-                options.libDirs = stdout ? stdout.split(':'): [];
+                options.libDirs = stdout ? stdout.split(FileInfo.pathListSeparator()): [];
+                var installDir = FileInfo.path(executableFilePath);
+                options.libDirs = options.libDirs.map(function(path){
+                    if (FileInfo.isAbsolutePath(path))
+                        return path;
+                    return FileInfo.cleanPath(FileInfo.joinPaths(installDir, path));
+                });
             }
         }
     }
@@ -125,9 +108,9 @@ function configure(
 
         if (packageName.startsWith("Qt")) {
             if (!sysroot) {
-                var infos = configureQt(pkg);
-                if (infos !== undefined)
-                    result.qtInfos = infos;
+                var qmakePaths = getQmakePaths(pkg);
+                if (qmakePaths !== undefined)
+                    result.qmakePaths = qmakePaths;
             }
         }
     }

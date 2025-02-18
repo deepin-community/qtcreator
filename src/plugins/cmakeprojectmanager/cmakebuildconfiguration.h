@@ -44,8 +44,8 @@ public:
     ConfigureEnvironmentAspect(Utils::AspectContainer *container,
                                ProjectExplorer::BuildConfiguration *buildConfig);
 
-    void fromMap(const Utils::Store &map);
-    void toMap(Utils::Store &map) const;
+    void fromMap(const Utils::Store &map) override;
+    void toMap(Utils::Store &map) const override;
 };
 
 } // namespace Internal
@@ -66,9 +66,13 @@ public:
 
     // Context menu action:
     void buildTarget(const QString &buildTarget);
+    void reBuildTarget(const QString &cleanTarget, const QString &buildTarget);
     ProjectExplorer::BuildSystem *buildSystem() const final;
 
     void addToEnvironment(Utils::Environment &env) const override;
+
+    void restrictNextBuild(const ProjectExplorer::RunConfiguration *rc) override;
+    void setRestrictedBuildTarget(const QString &buildTarget);
 
     Utils::Environment configureEnvironment() const;
     Internal::CMakeBuildSystem *cmakeBuildSystem() const;
@@ -102,6 +106,7 @@ private:
     void filterConfigArgumentsFromAdditionalCMakeArguments();
 
     Internal::CMakeBuildSystem *m_buildSystem = nullptr;
+    QStringList m_unrestrictedBuildTargets;
 
     friend class Internal::CMakeBuildSettingsWidget;
     friend class Internal::CMakeBuildSystem;
@@ -130,5 +135,7 @@ private:
 
     friend class Internal::CMakeProjectImporter;
 };
+
+namespace Internal { void setupCMakeBuildConfiguration(); }
 
 } // namespace CMakeProjectManager

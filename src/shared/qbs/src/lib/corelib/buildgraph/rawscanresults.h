@@ -63,10 +63,16 @@ class RawScanResult
 public:
     std::vector<RawScannedDependency> deps;
     FileTags additionalFileTags;
+    // TODO: does this belong here?
+    QString providesModule;
+    bool isInterfaceModule{false};
+    QStringList requiresModules;
 
-    template<PersistentPool::OpType opType> void completeSerializationOp(PersistentPool &pool)
+    template<PersistentPool::OpType opType>
+    void completeSerializationOp(PersistentPool &pool)
     {
-        pool.serializationOp<opType>(deps, additionalFileTags);
+        pool.serializationOp<opType>(
+            deps, additionalFileTags, providesModule, isInterfaceModule, requiresModules);
     }
 };
 
@@ -86,10 +92,18 @@ public:
         }
     };
 
+    using FilterFunction
+        = std::function<bool(const PropertyMapConstPtr &, const PropertyMapConstPtr)>;
     ScanData &findScanData(
-            const FileResourceBase *file,
-            const DependencyScanner *scanner,
-            const PropertyMapConstPtr &moduleProperties);
+        const FileResourceBase *file,
+        const QString &scannerId,
+        const PropertyMapConstPtr &moduleProperties,
+        const FilterFunction &filter);
+
+    ScanData &findScanData(
+        const FileResourceBase *file,
+        const DependencyScanner *scanner,
+        const PropertyMapConstPtr &moduleProperties);
 
     template<PersistentPool::OpType opType> void completeSerializationOp(PersistentPool &pool)
     {

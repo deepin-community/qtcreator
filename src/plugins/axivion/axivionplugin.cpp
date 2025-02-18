@@ -3,134 +3,276 @@
 
 #include "axivionplugin.h"
 
-#include "axivionoutputpane.h"
-#include "axivionprojectsettings.h"
-#include "axivionquery.h"
-#include "axivionresultparser.h"
+#include "axivionperspective.h"
 #include "axivionsettings.h"
 #include "axiviontr.h"
-#include "dashboard/dashboardclient.h"
 #include "dashboard/dto.h"
+#include "dashboard/error.h"
 
+#include <coreplugin/credentialquery.h>
 #include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
+#include <coreplugin/session.h>
 
-#include <extensionsystem/pluginmanager.h>
+#include <extensionsystem/iplugin.h>
 
-#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
-#include <projectexplorer/projectpanelfactory.h>
+
+#include <solutions/tasking/networkquery.h>
+#include <solutions/tasking/tasktreerunner.h>
 
 #include <texteditor/textdocument.h>
-#include <texteditor/texteditor.h>
 #include <texteditor/textmark.h>
 
 #include <utils/algorithm.h>
-#include <utils/expected.h>
+#include <utils/async.h>
+#include <utils/environment.h>
+#include <utils/fileinprojectfinder.h>
 #include <utils/networkaccessmanager.h>
 #include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
 
 #include <QAction>
-#include <QFutureWatcher>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
+#include <QNetworkCookieJar>
 #include <QNetworkReply>
-#include <QTimer>
+#include <QUrlQuery>
 
-#include <exception>
+#include <cmath>
 #include <memory>
 
-constexpr char AxivionTextMarkId[] = "AxivionTextMark";
+constexpr char s_axivionTextMarkId[] = "AxivionTextMark";
+
+using namespace Core;
+using namespace ProjectExplorer;
+using namespace Tasking;
+using namespace TextEditor;
+using namespace Utils;
 
 namespace Axivion::Internal {
 
+QIcon iconForIssue(const std::optional<Dto::IssueKind> &issueKind)
+{
+    if (!issueKind)
+        return {};
+
+    static QHash<Dto::IssueKind, QIcon> prefixToIcon;
+
+    auto it = prefixToIcon.constFind(*issueKind);
+    if (it != prefixToIcon.constEnd())
+        return *it;
+
+    const QLatin1String prefix = Dto::IssueKindMeta::enumToStr(*issueKind);
+    const Icon icon({{FilePath::fromString(":/axivion/images/button-" + prefix + ".png"),
+                      Theme::PaletteButtonText}}, Icon::Tint);
+    return prefixToIcon.insert(*issueKind, icon.icon()).value();
+}
+
+QString anyToSimpleString(const Dto::Any &any)
+{
+    if (any.isString())
+        return any.getString();
+    if (any.isBool())
+        return QString("%1").arg(any.getBool());
+    if (any.isDouble()) {
+        const double value = any.getDouble();
+        double intPart;
+        const double fragPart = std::modf(value, &intPart);
+        if (fragPart != 0)
+            return QString::number(value);
+        return QString::number(value, 'f', 0);
+    }
+    if (any.isNull())
+        return QString(); // or NULL??
+    if (any.isList()) {
+        const std::vector<Dto::Any> anyList = any.getList();
+        QStringList list;
+        for (const Dto::Any &inner : anyList)
+            list << anyToSimpleString(inner);
+        return list.join(',');
+    }
+    if (any.isMap()) { // TODO
+        const std::map<QString, Dto::Any> anyMap = any.getMap();
+        auto value = anyMap.find("displayName");
+        if (value != anyMap.end())
+            return anyToSimpleString(value->second);
+        value = anyMap.find("name");
+        if (value != anyMap.end())
+            return anyToSimpleString(value->second);
+        value = anyMap.find("tag");
+        if (value != anyMap.end())
+            return anyToSimpleString(value->second);
+    }
+    return {};
+}
+
+static QString apiTokenDescription()
+{
+    const QString ua = "Axivion" + QCoreApplication::applicationName() + "Plugin/"
+                       + QCoreApplication::applicationVersion();
+    QString user = Utils::qtcEnvironmentVariable("USERNAME");
+    if (user.isEmpty())
+        user = Utils::qtcEnvironmentVariable("USER");
+    return "Automatically created by " + ua + " on " + user + "@" + QSysInfo::machineHostName();
+}
+
+template <typename DtoType>
+struct GetDtoStorage
+{
+    QUrl url;
+    std::optional<QByteArray> credential;
+    std::optional<DtoType> dtoData;
+};
+
+template <typename DtoType>
+struct PostDtoStorage
+{
+    QUrl url;
+    std::optional<QByteArray> credential;
+    QByteArray csrfToken;
+    QByteArray writeData;
+    std::optional<DtoType> dtoData;
+};
+
+static DashboardInfo toDashboardInfo(const GetDtoStorage<Dto::DashboardInfoDto> &dashboardStorage)
+{
+    const Dto::DashboardInfoDto &infoDto = *dashboardStorage.dtoData;
+    const QVersionNumber versionNumber = infoDto.dashboardVersionNumber
+        ? QVersionNumber::fromString(*infoDto.dashboardVersionNumber) : QVersionNumber();
+
+    QStringList projects;
+    QHash<QString, QUrl> projectUrls;
+
+    if (infoDto.projects) {
+        for (const Dto::ProjectReferenceDto &project : *infoDto.projects) {
+            projects.push_back(project.name);
+            projectUrls.insert(project.name, project.url);
+        }
+    }
+    return {dashboardStorage.url, versionNumber, projects, projectUrls, infoDto.checkCredentialsUrl};
+}
+
+QUrlQuery IssueListSearch::toUrlQuery(QueryMode mode) const
+{
+    QUrlQuery query;
+    QTC_ASSERT(!kind.isEmpty(), return query);
+    query.addQueryItem("kind", kind);
+    if (!versionStart.isEmpty())
+        query.addQueryItem("start", versionStart);
+    if (!versionEnd.isEmpty())
+        query.addQueryItem("end", versionEnd);
+    if (mode == QueryMode::SimpleQuery)
+        return query;
+
+    if (!owner.isEmpty())
+        query.addQueryItem("user", owner);
+    if (!filter_path.isEmpty())
+        query.addQueryItem("filter_any path", filter_path);
+    if (!state.isEmpty())
+        query.addQueryItem("state", state);
+    if (mode == QueryMode::FilterQuery)
+        return query;
+
+    QTC_CHECK(mode == QueryMode::FullQuery);
+    query.addQueryItem("offset", QString::number(offset));
+    if (limit)
+        query.addQueryItem("limit", QString::number(limit));
+    if (computeTotalRowCount)
+        query.addQueryItem("computeTotalRowCount", "true");
+    if (!sort.isEmpty())
+        query.addQueryItem("sort", sort);
+    if (!filter.isEmpty()) {
+        for (auto f = filter.cbegin(), end = filter.cend(); f != end; ++f)
+            query.addQueryItem(f.key(), f.value());
+    }
+    return query;
+}
+
+enum class ServerAccess { Unknown, NoAuthorization, WithAuthorization };
+
 class AxivionPluginPrivate : public QObject
 {
+    Q_OBJECT
 public:
     AxivionPluginPrivate();
     void handleSslErrors(QNetworkReply *reply, const QList<QSslError> &errors);
-    void onStartupProjectChanged();
-    void fetchProjectInfo(const QString &projectName);
-    void handleProjectInfo(DashboardClient::RawProjectInfo rawInfo);
-    void handleOpenedDocs(ProjectExplorer::Project *project);
-    void onDocumentOpened(Core::IDocument *doc);
-    void onDocumentClosed(Core::IDocument * doc);
+    void onStartupProjectChanged(Project *project);
+    void fetchDashboardAndProjectInfo(const DashboardInfoHandler &handler,
+                                      const QString &projectName);
+    void handleOpenedDocs();
+    void onDocumentOpened(IDocument *doc);
+    void onDocumentClosed(IDocument * doc);
     void clearAllMarks();
-    void handleIssuesForFile(const IssuesList &issues);
-    void fetchRuleInfo(const QString &id);
+    void updateExistingMarks();
+    void handleIssuesForFile(const Dto::FileViewDto &fileView);
+    void enableInlineIssues(bool enable);
+    void fetchIssueInfo(const QString &id);
 
-    Utils::NetworkAccessManager m_networkAccessManager;
-    AxivionOutputPane m_axivionOutputPane;
-    std::shared_ptr<const DashboardClient::ProjectInfo> m_currentProjectInfo;
+    void onSessionLoaded(const QString &sessionName);
+    void onAboutToSaveSession();
+
+public:
+    // active id used for any network communication, defaults to settings' default
+    // set to projects settings' dashboard id on open project
+    Id m_dashboardServerId;
+    // TODO: Should be set to Unknown on server address change in settings.
+    ServerAccess m_serverAccess = ServerAccess::Unknown;
+    // TODO: Should be cleared on username change in settings.
+    std::optional<QByteArray> m_apiToken;
+    NetworkAccessManager m_networkAccessManager;
+    std::optional<DashboardInfo> m_dashboardInfo;
+    std::optional<Dto::ProjectInfoDto> m_currentProjectInfo;
+    std::optional<QString> m_analysisVersion;
+    Project *m_project = nullptr;
     bool m_runningQuery = false;
+    TaskTreeRunner m_taskTreeRunner;
+    std::unordered_map<IDocument *, std::unique_ptr<TaskTree>> m_docMarksTrees;
+    TaskTreeRunner m_issueInfoRunner;
+    FileInProjectFinder m_fileFinder; // FIXME maybe obsolete when path mapping is implemented
+    QMetaObject::Connection m_fileFinderConnection;
+    QHash<FilePath, QSet<TextMark *>> m_allMarks;
+    bool m_inlineIssuesEnabled = true;
 };
 
 static AxivionPluginPrivate *dd = nullptr;
 
-class AxivionTextMark : public TextEditor::TextMark
+class AxivionTextMark : public TextMark
 {
 public:
-    AxivionTextMark(const Utils::FilePath &filePath, const ShortIssue &issue);
-
-private:
-    QString m_id;
+    AxivionTextMark(const FilePath &filePath, const Dto::LineMarkerDto &issue,
+                    std::optional<Theme::Color> color)
+        : TextMark(filePath, issue.startLine, {"Axivion", s_axivionTextMarkId})
+    {
+        const QString markText = issue.description;
+        const QString id = issue.kind + QString::number(issue.id.value_or(-1));
+        setToolTip(id + '\n' + markText);
+        setIcon(iconForIssue(issue.getOptionalKindEnum()));
+        if (color)
+            setColor(*color);
+        setPriority(TextMark::NormalPriority);
+        setLineAnnotation(markText);
+        setActionsProvider([id] {
+            auto action = new QAction;
+            action->setIcon(Icons::INFO.icon());
+            action->setToolTip(Tr::tr("Show Issue Properties"));
+            QObject::connect(action, &QAction::triggered, dd, [id] { dd->fetchIssueInfo(id); });
+            return QList{action};
+        });
+    }
 };
 
-AxivionTextMark::AxivionTextMark(const Utils::FilePath &filePath, const ShortIssue &issue)
-    : TextEditor::TextMark(filePath, issue.lineNumber, {Tr::tr("Axivion"), AxivionTextMarkId})
-    , m_id(issue.id)
-{
-    const QString markText = issue.entity.isEmpty() ? issue.message
-                                                    : issue.entity + ": " + issue.message;
-    setToolTip(issue.errorNumber + " " + markText);
-    setPriority(TextEditor::TextMark::NormalPriority);
-    setLineAnnotation(markText);
-    setActionsProvider([this]{
-       auto action = new QAction;
-       action->setIcon(Utils::Icons::INFO.icon());
-       action->setToolTip(Tr::tr("Show rule details"));
-       QObject::connect(action, &QAction::triggered,
-                        dd, [this]{ dd->fetchRuleInfo(m_id); });
-       return QList{action};
-    });
-}
-
-AxivionPlugin::~AxivionPlugin()
-{
-    AxivionProjectSettings::destroyProjectSettings();
-    delete dd;
-    dd = nullptr;
-}
-
-void AxivionPlugin::initialize()
-{
-    dd = new AxivionPluginPrivate;
-
-    auto panelFactory = new ProjectExplorer::ProjectPanelFactory;
-    panelFactory->setPriority(250);
-    panelFactory->setDisplayName(Tr::tr("Axivion"));
-    panelFactory->setCreateWidgetFunction(&AxivionProjectSettings::createSettingsWidget);
-    ProjectExplorer::ProjectPanelFactory::registerFactory(panelFactory);
-    connect(ProjectExplorer::ProjectManager::instance(),
-            &ProjectExplorer::ProjectManager::startupProjectChanged,
-            dd, &AxivionPluginPrivate::onStartupProjectChanged);
-    connect(Core::EditorManager::instance(), &Core::EditorManager::documentOpened,
-            dd, &AxivionPluginPrivate::onDocumentOpened);
-    connect(Core::EditorManager::instance(), &Core::EditorManager::documentClosed,
-            dd, &AxivionPluginPrivate::onDocumentClosed);
-}
-
-void AxivionPlugin::fetchProjectInfo(const QString &projectName)
+void fetchDashboardAndProjectInfo(const DashboardInfoHandler &handler, const QString &projectName)
 {
     QTC_ASSERT(dd, return);
-    dd->fetchProjectInfo(projectName);
+    dd->fetchDashboardAndProjectInfo(handler, projectName);
 }
 
-std::shared_ptr<const DashboardClient::ProjectInfo> AxivionPlugin::projectInfo()
+std::optional<Dto::ProjectInfoDto> projectInfo()
 {
     QTC_ASSERT(dd, return {});
     return dd->m_currentProjectInfo;
@@ -138,11 +280,11 @@ std::shared_ptr<const DashboardClient::ProjectInfo> AxivionPlugin::projectInfo()
 
 // FIXME: extend to give some details?
 // FIXME: move when curl is no more in use?
-bool AxivionPlugin::handleCertificateIssue()
+bool handleCertificateIssue(const Utils::Id &serverId)
 {
     QTC_ASSERT(dd, return false);
-    const QString serverHost = QUrl(settings().server.dashboard).host();
-    if (QMessageBox::question(Core::ICore::dialogParent(), Tr::tr("Certificate Error"),
+    const QString serverHost = QUrl(settings().serverForId(serverId).dashboard).host();
+    if (QMessageBox::question(ICore::dialogParent(), Tr::tr("Certificate Error"),
                               Tr::tr("Server certificate for %1 cannot be authenticated.\n"
                                      "Do you want to disable SSL verification for this server?\n"
                                      "Note: This can expose you to man-in-the-middle attack.")
@@ -150,7 +292,7 @@ bool AxivionPlugin::handleCertificateIssue()
             != QMessageBox::Yes) {
         return false;
     }
-    settings().server.validateCert = false;
+    settings().disableCertificateValidation(serverId);
     settings().apply();
 
     return true;
@@ -162,10 +304,18 @@ AxivionPluginPrivate::AxivionPluginPrivate()
     connect(&m_networkAccessManager, &QNetworkAccessManager::sslErrors,
             this, &AxivionPluginPrivate::handleSslErrors);
 #endif // ssl
+    connect(&settings().highlightMarks, &BoolAspect::changed,
+            this, &AxivionPluginPrivate::updateExistingMarks);
+    connect(SessionManager::instance(), &SessionManager::sessionLoaded,
+            this, &AxivionPluginPrivate::onSessionLoaded);
+    connect(SessionManager::instance(), &SessionManager::aboutToSaveSession,
+            this, &AxivionPluginPrivate::onAboutToSaveSession);
+
 }
 
 void AxivionPluginPrivate::handleSslErrors(QNetworkReply *reply, const QList<QSslError> &errors)
 {
+    QTC_ASSERT(dd, return);
 #if QT_CONFIG(ssl)
     const QList<QSslError::SslError> accepted{
         QSslError::CertificateNotYetValid, QSslError::CertificateExpired,
@@ -174,7 +324,8 @@ void AxivionPluginPrivate::handleSslErrors(QNetworkReply *reply, const QList<QSs
     };
     if (Utils::allOf(errors,
                      [&accepted](const QSslError &e) { return accepted.contains(e.error()); })) {
-        if (!settings().server.validateCert || AxivionPlugin::handleCertificateIssue())
+        const bool shouldValidate = settings().serverForId(dd->m_dashboardServerId).validateCert;
+        if (!shouldValidate || handleCertificateIssue(dd->m_dashboardServerId))
             reply->ignoreSslErrors(errors);
     }
 #else // ssl
@@ -183,158 +334,805 @@ void AxivionPluginPrivate::handleSslErrors(QNetworkReply *reply, const QList<QSs
 #endif // ssl
 }
 
-void AxivionPluginPrivate::onStartupProjectChanged()
+void AxivionPluginPrivate::onStartupProjectChanged(Project *project)
 {
-    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject();
-    if (!project) {
-        clearAllMarks();
-        m_currentProjectInfo = {};
-        m_axivionOutputPane.updateDashboard();
+    if (project == m_project)
+        return;
+
+    if (m_project)
+        disconnect(m_fileFinderConnection);
+
+    m_project = project;
+
+    if (!m_project) {
+        m_fileFinder.setProjectDirectory({});
+        m_fileFinder.setProjectFiles({});
         return;
     }
 
-    const AxivionProjectSettings *projSettings = AxivionProjectSettings::projectSettings(project);
-    fetchProjectInfo(projSettings->dashboardProjectName());
-}
-
-void AxivionPluginPrivate::fetchProjectInfo(const QString &projectName)
-{
-    if (m_runningQuery) { // re-schedule
-        QTimer::singleShot(3000, this, [this, projectName] { fetchProjectInfo(projectName); });
-        return;
-    }
-    clearAllMarks();
-    if (projectName.isEmpty()) {
-        m_currentProjectInfo = {};
-        m_axivionOutputPane.updateDashboard();
-        return;
-    }
-    m_runningQuery = true;
-    DashboardClient client { this->m_networkAccessManager };
-    QFuture<DashboardClient::RawProjectInfo> response = client.fetchProjectInfo(projectName);
-    auto responseWatcher = std::make_shared<QFutureWatcher<DashboardClient::RawProjectInfo>>();
-    connect(responseWatcher.get(),
-            &QFutureWatcher<DashboardClient::RawProjectInfo>::finished,
-            this,
-            [this, responseWatcher]() {
-                handleProjectInfo(responseWatcher->result());
-            });
-    responseWatcher->setFuture(response);
-}
-
-void AxivionPluginPrivate::fetchRuleInfo(const QString &id)
-{
-    if (m_runningQuery) {
-        QTimer::singleShot(3000, this, [this, id] { fetchRuleInfo(id); });
-        return;
-    }
-
-    const QStringList args = id.split(':');
-    QTC_ASSERT(args.size() == 2, return);
-    m_runningQuery = true;
-    AxivionQuery query(AxivionQuery::RuleInfo, args);
-    AxivionQueryRunner *runner = new AxivionQueryRunner(query, this);
-    connect(runner, &AxivionQueryRunner::resultRetrieved, this, [this](const QByteArray &result){
-        m_runningQuery = false;
-        m_axivionOutputPane.updateAndShowRule(ResultParser::parseRuleInfo(result));
+    m_fileFinder.setProjectDirectory(m_project->projectDirectory());
+    m_fileFinderConnection = connect(m_project, &Project::fileListChanged, this, [this] {
+        m_fileFinder.setProjectFiles(m_project->files(Project::AllFiles));
+        handleOpenedDocs();
     });
-    connect(runner, &AxivionQueryRunner::finished, [runner]{ runner->deleteLater(); });
-    runner->start();
 }
 
-void AxivionPluginPrivate::handleOpenedDocs(ProjectExplorer::Project *project)
+static QUrl constructUrl(const QString &projectName, const QString &subPath, const QUrlQuery &query)
 {
-    if (project && ProjectExplorer::ProjectManager::startupProject() != project)
+    if (!dd->m_dashboardInfo)
+        return {};
+    const QByteArray encodedProjectName = QUrl::toPercentEncoding(projectName);
+    const QUrl path(QString{"api/projects/" + QString::fromUtf8(encodedProjectName) + '/'});
+    QUrl url = dd->m_dashboardInfo->source.resolved(path);
+    if (!subPath.isEmpty() && QTC_GUARD(!subPath.startsWith('/')))
+        url = url.resolved(subPath);
+    if (!query.isEmpty())
+        url.setQuery(query);
+    return url;
+}
+
+static constexpr int httpStatusCodeOk = 200;
+constexpr char s_htmlContentType[] = "text/html";
+constexpr char s_plaintextContentType[] = "text/plain";
+constexpr char s_jsonContentType[] = "application/json";
+
+static bool isServerAccessEstablished()
+{
+    return dd->m_serverAccess == ServerAccess::NoAuthorization
+           || (dd->m_serverAccess == ServerAccess::WithAuthorization && dd->m_apiToken);
+}
+
+static Group fetchSimpleRecipe(const QUrl &url,
+                               const QByteArray &expectedContentType,
+                               const std::function<void(const QByteArray &)> &handler)
+{
+    // TODO: Refactor so that it's a common code with fetchDataRecipe().
+    const auto onQuerySetup = [url, expectedContentType](NetworkQuery &query) {
+        if (!isServerAccessEstablished())
+            return SetupResult::StopWithError; // TODO: start authorizationRecipe()?
+
+        QNetworkRequest request(url);
+        request.setRawHeader("Accept", expectedContentType);
+        if (dd->m_serverAccess == ServerAccess::WithAuthorization && dd->m_apiToken)
+            request.setRawHeader("Authorization", "AxToken " + *dd->m_apiToken);
+        const QByteArray ua = "Axivion" + QCoreApplication::applicationName().toUtf8() +
+                              "Plugin/" + QCoreApplication::applicationVersion().toUtf8();
+        request.setRawHeader("X-Axivion-User-Agent", ua);
+        query.setRequest(request);
+        query.setNetworkAccessManager(&dd->m_networkAccessManager);
+        return SetupResult::Continue;
+    };
+    const auto onQueryDone = [url, expectedContentType, handler](const NetworkQuery &query, DoneWith doneWith) {
+        QNetworkReply *reply = query.reply();
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader)
+                                        .toString()
+                                        .split(';')
+                                        .constFirst()
+                                        .trimmed()
+                                        .toLower();
+        if (doneWith == DoneWith::Success && statusCode == httpStatusCodeOk
+            && contentType == QString::fromUtf8(expectedContentType)) {
+            handler(reply->readAll());
+            return DoneResult::Success;
+        }
+        return DoneResult::Error;
+    };
+    return {NetworkQueryTask(onQuerySetup, onQueryDone)};
+}
+
+static Group fetchHtmlRecipe(const QUrl &url, const std::function<void(const QByteArray &)> &handler)
+{
+    return fetchSimpleRecipe(url, s_htmlContentType, handler);
+}
+
+static Group fetchPlainTextRecipe(const QUrl &url, const std::function<void(const QByteArray &)> &handler)
+{
+    return fetchSimpleRecipe(url, s_plaintextContentType, handler);
+}
+
+template <typename DtoType, template <typename> typename DtoStorageType>
+static Group dtoRecipe(const Storage<DtoStorageType<DtoType>> &dtoStorage)
+{
+    const Storage<std::optional<QByteArray>> storage;
+
+    const auto onNetworkQuerySetup = [dtoStorage](NetworkQuery &query) {
+        QNetworkRequest request(dtoStorage->url);
+        request.setRawHeader("Accept", s_jsonContentType);
+        if (dtoStorage->credential) // Unauthorized access otherwise
+            request.setRawHeader("Authorization", *dtoStorage->credential);
+        const QByteArray ua = "Axivion" + QCoreApplication::applicationName().toUtf8() +
+                              "Plugin/" + QCoreApplication::applicationVersion().toUtf8();
+        request.setRawHeader("X-Axivion-User-Agent", ua);
+
+        if constexpr (std::is_same_v<DtoStorageType<DtoType>, PostDtoStorage<DtoType>>) {
+            request.setRawHeader("Content-Type", "application/json");
+            request.setRawHeader("AX-CSRF-Token", dtoStorage->csrfToken);
+            query.setWriteData(dtoStorage->writeData);
+            query.setOperation(NetworkOperation::Post);
+        }
+
+        query.setRequest(request);
+        query.setNetworkAccessManager(&dd->m_networkAccessManager);
+    };
+
+    const auto onNetworkQueryDone = [storage, dtoStorage](const NetworkQuery &query,
+                                                          DoneWith doneWith) {
+        QNetworkReply *reply = query.reply();
+        const QNetworkReply::NetworkError error = reply->error();
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader)
+                                        .toString()
+                                        .split(';')
+                                        .constFirst()
+                                        .trimmed()
+                                        .toLower();
+        if (doneWith == DoneWith::Success && statusCode == httpStatusCodeOk
+            && contentType == s_jsonContentType) {
+            *storage = reply->readAll();
+            dtoStorage->url = reply->url();
+            return DoneResult::Success;
+        }
+
+        QString errorString;
+        if (contentType == s_jsonContentType) {
+            const Utils::expected_str<Dto::ErrorDto> error
+                = Dto::ErrorDto::deserializeExpected(reply->readAll());
+
+            if (error) {
+                if constexpr (std::is_same_v<DtoType, Dto::DashboardInfoDto>) {
+                    // Suppress logging error on unauthorized dashboard fetch
+                    if (!dtoStorage->credential && error->type == "UnauthenticatedException") {
+                        dtoStorage->url = reply->url();
+                        return DoneResult::Success;
+                    }
+                }
+
+                if (statusCode == 400 && error->type == "InvalidFilterException"
+                        && !error->message.isEmpty()) {
+                    // handle error..
+                    showFilterException(error->message);
+                    return DoneResult::Error;
+                }
+                errorString = Error(DashboardError(reply->url(), statusCode,
+                    reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString(),
+                                     *error)).message();
+            } else {
+                errorString = error.error();
+            }
+        } else if (statusCode != 0) {
+            errorString = Error(HttpError(reply->url(), statusCode,
+                reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString(),
+                                 QString::fromUtf8(reply->readAll()))).message(); // encoding?
+        } else {
+            errorString = Error(NetworkError(reply->url(), error, reply->errorString())).message();
+        }
+
+        showErrorMessage(errorString);
+        return DoneResult::Error;
+    };
+
+    const auto onDeserializeSetup = [storage](Async<expected_str<DtoType>> &task) {
+        if (!*storage)
+            return SetupResult::StopWithSuccess;
+
+        const auto deserialize = [](QPromise<expected_str<DtoType>> &promise, const QByteArray &input) {
+            promise.addResult(DtoType::deserializeExpected(input));
+        };
+        task.setConcurrentCallData(deserialize, **storage);
+        return SetupResult::Continue;
+    };
+
+    const auto onDeserializeDone = [dtoStorage](const Async<expected_str<DtoType>> &task,
+                                                DoneWith doneWith) {
+        if (doneWith == DoneWith::Success && task.isResultAvailable()) {
+            const auto result = task.result();
+            if (result) {
+                dtoStorage->dtoData = *result;
+                return DoneResult::Success;
+            }
+            MessageManager::writeFlashing(QString("Axivion: %1").arg(result.error()));
+        } else {
+            MessageManager::writeFlashing(QString("Axivion: %1")
+                .arg(Tr::tr("Unknown Dto structure deserialization error.")));
+        }
+        return DoneResult::Error;
+    };
+
+    return {
+        storage,
+        NetworkQueryTask(onNetworkQuerySetup, onNetworkQueryDone),
+        AsyncTask<expected_str<DtoType>>(onDeserializeSetup, onDeserializeDone)
+    };
+}
+
+static QString credentialOperationMessage(CredentialOperation operation)
+{
+    switch (operation) {
+    case CredentialOperation::Get:
+        return Tr::tr("The ApiToken cannot be read in a secure way.");
+    case CredentialOperation::Set:
+        return Tr::tr("The ApiToken cannot be stored in a secure way.");
+    case CredentialOperation::Delete:
+        return Tr::tr("The ApiToken cannot be deleted in a secure way.");
+    }
+    return {};
+}
+
+static void handleCredentialError(const CredentialQuery &credential)
+{
+    const QString keyChainMessage = credential.errorString().isEmpty() ? QString()
+        : QString(" %1").arg(Tr::tr("Key chain message: \"%1\".").arg(credential.errorString()));
+    MessageManager::writeFlashing(QString("Axivion: %1")
+        .arg(credentialOperationMessage(credential.operation()) + keyChainMessage));
+}
+
+static Group authorizationRecipe()
+{
+    const Id serverId = dd->m_dashboardServerId;
+    const Storage<QUrl> serverUrlStorage;
+    const Storage<GetDtoStorage<Dto::DashboardInfoDto>> unauthorizedDashboardStorage;
+    const auto onUnauthorizedGroupSetup = [serverUrlStorage, unauthorizedDashboardStorage] {
+        unauthorizedDashboardStorage->url = *serverUrlStorage;
+        return isServerAccessEstablished() ? SetupResult::StopWithSuccess : SetupResult::Continue;
+    };
+    const auto onUnauthorizedDashboard = [unauthorizedDashboardStorage, serverId] {
+        if (unauthorizedDashboardStorage->dtoData) {
+            const Dto::DashboardInfoDto &dashboardInfo = *unauthorizedDashboardStorage->dtoData;
+            const QString &username = settings().serverForId(serverId).username;
+            if (username.isEmpty()
+                || (dashboardInfo.username && *dashboardInfo.username == username)) {
+                dd->m_serverAccess = ServerAccess::NoAuthorization;
+                dd->m_dashboardInfo = toDashboardInfo(*unauthorizedDashboardStorage);
+                return;
+            }
+            MessageManager::writeFlashing(QString("Axivion: %1")
+                .arg(Tr::tr("Unauthenticated access failed (wrong user), "
+                            "using authenticated access...")));
+        }
+        dd->m_serverAccess = ServerAccess::WithAuthorization;
+    };
+
+    const auto onCredentialLoopCondition = [](int) {
+        return dd->m_serverAccess == ServerAccess::WithAuthorization && !dd->m_apiToken;
+    };
+    const auto onGetCredentialSetup = [serverId](CredentialQuery &credential) {
+        credential.setOperation(CredentialOperation::Get);
+        credential.setService(s_axivionKeychainService);
+        credential.setKey(credentialKey(settings().serverForId(serverId)));
+    };
+    const auto onGetCredentialDone = [](const CredentialQuery &credential, DoneWith result) {
+        if (result == DoneWith::Success)
+            dd->m_apiToken = credential.data();
+        else
+            handleCredentialError(credential);
+        // TODO: In case of an error we are multiplying the ApiTokens on Axivion server for each
+        //       Creator run, but at least things should continue to work OK in the current session.
+        return DoneResult::Success;
+    };
+
+    const Storage<QString> passwordStorage;
+    const Storage<GetDtoStorage<Dto::DashboardInfoDto>> dashboardStorage;
+    const auto onPasswordGroupSetup
+            = [serverId, serverUrlStorage, passwordStorage, dashboardStorage] {
+        if (dd->m_apiToken)
+            return SetupResult::StopWithSuccess;
+
+        bool ok = false;
+        const AxivionServer server = settings().serverForId(serverId);
+        const QString text(Tr::tr("Enter the password for:\nDashboard: %1\nUser: %2")
+                               .arg(server.dashboard, server.username));
+        *passwordStorage = QInputDialog::getText(ICore::mainWindow(),
+            Tr::tr("Axivion Server Password"), text, QLineEdit::Password, {}, &ok);
+        if (!ok)
+            return SetupResult::StopWithError;
+
+        const QString credential = server.username + ':' + *passwordStorage;
+        dashboardStorage->credential = "Basic " + credential.toUtf8().toBase64();
+        dashboardStorage->url = *serverUrlStorage;
+        return SetupResult::Continue;
+    };
+
+    const Storage<PostDtoStorage<Dto::ApiTokenInfoDto>> apiTokenStorage;
+    const auto onApiTokenGroupSetup = [passwordStorage, dashboardStorage, apiTokenStorage] {
+        if (!dashboardStorage->dtoData)
+            return SetupResult::StopWithSuccess;
+
+        dd->m_dashboardInfo = toDashboardInfo(*dashboardStorage);
+
+        const Dto::DashboardInfoDto &dashboardDto = *dashboardStorage->dtoData;
+        if (!dashboardDto.userApiTokenUrl)
+            return SetupResult::StopWithError;
+
+        apiTokenStorage->credential = dashboardStorage->credential;
+        apiTokenStorage->url
+            = dd->m_dashboardInfo->source.resolved(*dashboardDto.userApiTokenUrl);
+        apiTokenStorage->csrfToken = dashboardDto.csrfToken.toUtf8();
+        const Dto::ApiTokenCreationRequestDto requestDto{*passwordStorage, "IdePlugin",
+                                                         apiTokenDescription(), 0};
+        apiTokenStorage->writeData = requestDto.serialize();
+        return SetupResult::Continue;
+    };
+
+    const auto onSetCredentialSetup = [apiTokenStorage, serverId](CredentialQuery &credential) {
+        if (!apiTokenStorage->dtoData || !apiTokenStorage->dtoData->token)
+            return SetupResult::StopWithSuccess;
+
+        dd->m_apiToken = apiTokenStorage->dtoData->token->toUtf8();
+        credential.setOperation(CredentialOperation::Set);
+        credential.setService(s_axivionKeychainService);
+        credential.setKey(credentialKey(settings().serverForId(serverId)));
+        credential.setData(*dd->m_apiToken);
+        return SetupResult::Continue;
+    };
+    const auto onSetCredentialDone = [](const CredentialQuery &credential) {
+        handleCredentialError(credential);
+        // TODO: In case of an error we are multiplying the ApiTokens on Axivion server for each
+        //       Creator run, but at least things should continue to work OK in the current session.
+        return DoneResult::Success;
+    };
+
+    const auto onDashboardGroupSetup = [serverUrlStorage, dashboardStorage] {
+        if (dd->m_dashboardInfo || dd->m_serverAccess != ServerAccess::WithAuthorization
+            || !dd->m_apiToken) {
+            return SetupResult::StopWithSuccess; // Unauthorized access should have collect dashboard before
+        }
+        dashboardStorage->credential = "AxToken " + *dd->m_apiToken;
+        dashboardStorage->url = *serverUrlStorage;
+        return SetupResult::Continue;
+    };
+    const auto onDeleteCredentialSetup = [dashboardStorage, serverId](CredentialQuery &credential) {
+        if (dashboardStorage->dtoData) {
+            dd->m_dashboardInfo = toDashboardInfo(*dashboardStorage);
+            return SetupResult::StopWithSuccess;
+        }
+        dd->m_apiToken = {};
+        MessageManager::writeFlashing(QString("Axivion: %1")
+            .arg(Tr::tr("The stored ApiToken is not valid anymore, removing it.")));
+        credential.setOperation(CredentialOperation::Delete);
+        credential.setService(s_axivionKeychainService);
+        credential.setKey(credentialKey(settings().serverForId(serverId)));
+        return SetupResult::Continue;
+    };
+
+    return {
+        serverUrlStorage,
+        onGroupSetup([serverUrlStorage, serverId] {
+            *serverUrlStorage = QUrl(settings().serverForId(serverId).dashboard);
+        }),
+        Group {
+            unauthorizedDashboardStorage,
+            onGroupSetup(onUnauthorizedGroupSetup),
+            dtoRecipe(unauthorizedDashboardStorage),
+            Sync(onUnauthorizedDashboard),
+            onGroupDone([serverUrlStorage, unauthorizedDashboardStorage] {
+                *serverUrlStorage = unauthorizedDashboardStorage->url;
+            }),
+        },
+        For (LoopUntil(onCredentialLoopCondition)) >> Do {
+            CredentialQueryTask(onGetCredentialSetup, onGetCredentialDone),
+            Group {
+                passwordStorage,
+                dashboardStorage,
+                onGroupSetup(onPasswordGroupSetup),
+                Group { // GET DashboardInfoDto
+                    finishAllAndSuccess,
+                    dtoRecipe(dashboardStorage)
+                },
+                Group { // POST ApiTokenCreationRequestDto, GET ApiTokenInfoDto.
+                    apiTokenStorage,
+                    onGroupSetup(onApiTokenGroupSetup),
+                    dtoRecipe(apiTokenStorage),
+                    CredentialQueryTask(onSetCredentialSetup, onSetCredentialDone, CallDoneIf::Error)
+                }
+            },
+            Group {
+                finishAllAndSuccess,
+                dashboardStorage,
+                onGroupSetup(onDashboardGroupSetup),
+                dtoRecipe(dashboardStorage),
+                CredentialQueryTask(onDeleteCredentialSetup)
+            }
+        }
+    };
+}
+
+template<typename DtoType>
+static Group fetchDataRecipe(const QUrl &url, const std::function<void(const DtoType &)> &handler)
+{
+    const Storage<GetDtoStorage<DtoType>> dtoStorage;
+
+    const auto onDtoSetup = [dtoStorage, url] {
+        if (!isServerAccessEstablished())
+            return SetupResult::StopWithError;
+
+        if (dd->m_serverAccess == ServerAccess::WithAuthorization && dd->m_apiToken)
+            dtoStorage->credential = "AxToken " + *dd->m_apiToken;
+        dtoStorage->url = url;
+        return SetupResult::Continue;
+    };
+    const auto onDtoDone = [dtoStorage, handler] {
+        if (dtoStorage->dtoData)
+            handler(*dtoStorage->dtoData);
+    };
+
+    const Group recipe {
+        authorizationRecipe(),
+        Group {
+            dtoStorage,
+            onGroupSetup(onDtoSetup),
+            dtoRecipe(dtoStorage),
+            onGroupDone(onDtoDone)
+        }
+    };
+    return recipe;
+}
+
+Group dashboardInfoRecipe(const DashboardInfoHandler &handler)
+{
+    const auto onSetup = [handler] {
+        if (dd->m_dashboardInfo) {
+            if (handler)
+                handler(*dd->m_dashboardInfo);
+            return SetupResult::StopWithSuccess;
+        }
+        dd->m_networkAccessManager.setCookieJar(new QNetworkCookieJar); // remove old cookies
+        return SetupResult::Continue;
+    };
+    const auto onDone = [handler](DoneWith result) {
+        if (result == DoneWith::Success && dd->m_dashboardInfo)
+            handler(*dd->m_dashboardInfo);
+        else
+            handler(make_unexpected(QString("Error"))); // TODO: Collect error message in the storage.
+    };
+
+    const Group root {
+        onGroupSetup(onSetup), // Stops if cache exists.
+        authorizationRecipe(),
+        handler ? onGroupDone(onDone) : nullItem
+    };
+    return root;
+}
+
+Group projectInfoRecipe(const QString &projectName)
+{
+    const auto onSetup = [projectName] {
+        dd->clearAllMarks();
+        dd->m_currentProjectInfo = {};
+        dd->m_analysisVersion = {};
+    };
+
+    const auto onTaskTreeSetup = [projectName](TaskTree &taskTree) {
+        if (!dd->m_dashboardInfo) {
+            MessageManager::writeDisrupting(QString("Axivion: %1")
+                                                .arg(Tr::tr("Fetching DashboardInfo error.")));
+            return SetupResult::StopWithError;
+        }
+
+        if (dd->m_dashboardInfo->projects.isEmpty()) {
+            updatePerspectiveToolbar();
+            updateDashboard();
+            return SetupResult::StopWithSuccess;
+        }
+
+        const auto handler = [](const Dto::ProjectInfoDto &data) {
+            dd->m_currentProjectInfo = data;
+            if (!dd->m_currentProjectInfo->versions.empty())
+                setAnalysisVersion(dd->m_currentProjectInfo->versions.back().date);
+            updatePerspectiveToolbar();
+            updateDashboard();
+        };
+
+        const QString targetProjectName = projectName.isEmpty()
+                ? dd->m_dashboardInfo->projects.first() : projectName;
+        auto it = dd->m_dashboardInfo->projectUrls.constFind(targetProjectName);
+        if (it == dd->m_dashboardInfo->projectUrls.constEnd())
+            it = dd->m_dashboardInfo->projectUrls.constBegin();
+        taskTree.setRecipe(
+            fetchDataRecipe<Dto::ProjectInfoDto>(dd->m_dashboardInfo->source.resolved(*it), handler));
+        return SetupResult::Continue;
+    };
+
+    return {
+        onGroupSetup(onSetup),
+        TaskTreeTask(onTaskTreeSetup)
+    };
+}
+
+Group issueTableRecipe(const IssueListSearch &search, const IssueTableHandler &handler)
+{
+    QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected?
+
+    const QUrlQuery query = search.toUrlQuery(QueryMode::FullQuery);
+    if (query.isEmpty())
+        return {}; // TODO: Call handler with unexpected?
+
+    const QUrl url = constructUrl(dd->m_currentProjectInfo->name, "issues", query);
+    return fetchDataRecipe<Dto::IssueTableDto>(url, handler);
+}
+
+Group lineMarkerRecipe(const FilePath &filePath, const LineMarkerHandler &handler)
+{
+    QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected?
+    QTC_ASSERT(!filePath.isEmpty(), return {}); // TODO: Call handler with unexpected?
+    QTC_ASSERT(dd->m_analysisVersion, return {}); // TODO: Call handler with unexpected?
+
+    const QString fileName = QString::fromUtf8(QUrl::toPercentEncoding(filePath.path()));
+    const QUrlQuery query({{"filename", fileName}, {"version", *dd->m_analysisVersion}});
+    const QUrl url = constructUrl(dd->m_currentProjectInfo->name, "files", query);
+    return fetchDataRecipe<Dto::FileViewDto>(url, handler);
+}
+
+Group fileSourceRecipe(const FilePath &filePath, const std::function<void(const QByteArray &)> &handler)
+{
+    QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected
+    QTC_ASSERT(!filePath.isEmpty(), return {}); // TODO: Call handler with unexpected
+    QTC_ASSERT(dd->m_analysisVersion, return {}); // TODO: Call handler with unexpected
+
+    const QString fileName = QString::fromUtf8(QUrl::toPercentEncoding(filePath.path()));
+    const QUrlQuery query({{"filename", fileName}, {"version", *dd->m_analysisVersion}});
+    const QUrl url = constructUrl(dd->m_currentProjectInfo->name, "sourcecode", query);
+    return fetchPlainTextRecipe(url, handler);
+}
+
+Group issueHtmlRecipe(const QString &issueId, const HtmlHandler &handler)
+{
+    QTC_ASSERT(dd->m_currentProjectInfo, return {}); // TODO: Call handler with unexpected?
+    QTC_ASSERT(dd->m_analysisVersion, return {}); // TODO: Call handler with unexpected?
+
+    const QUrl url = constructUrl(
+        dd->m_currentProjectInfo->name,
+        QString("issues/" + issueId + "/properties/"),
+        {{"version", *dd->m_analysisVersion}});
+    return fetchHtmlRecipe(url, handler);
+}
+
+void AxivionPluginPrivate::fetchDashboardAndProjectInfo(const DashboardInfoHandler &handler,
+                                                        const QString &projectName)
+{
+    m_taskTreeRunner.start({dashboardInfoRecipe(handler), projectInfoRecipe(projectName)});
+}
+
+Group tableInfoRecipe(const QString &prefix, const TableInfoHandler &handler)
+{
+    const QUrlQuery query({{"kind", prefix}});
+    const QUrl url = constructUrl(dd->m_currentProjectInfo->name, "issues_meta", query);
+    return fetchDataRecipe<Dto::TableInfoDto>(url, handler);
+}
+
+void AxivionPluginPrivate::fetchIssueInfo(const QString &id)
+{
+    if (!m_currentProjectInfo)
         return;
-    const QList<Core::IDocument *> openDocuments = Core::DocumentModel::openedDocuments();
-    for (Core::IDocument *doc : openDocuments)
+
+    const auto ruleHandler = [](const QByteArray &htmlText) {
+        QByteArray fixedHtml = htmlText;
+        const int idx = htmlText.indexOf("<div class=\"ax-issuedetails-table-container\">");
+        if (idx >= 0)
+            fixedHtml = "<html><body>" + htmlText.mid(idx);
+
+        updateIssueDetails(QString::fromUtf8(fixedHtml));
+    };
+
+    m_issueInfoRunner.start(issueHtmlRecipe(id, ruleHandler));
+}
+
+void AxivionPluginPrivate::handleOpenedDocs()
+{
+    const QList<IDocument *> openDocuments = DocumentModel::openedDocuments();
+    for (IDocument *doc : openDocuments)
         onDocumentOpened(doc);
-    if (project)
-        disconnect(ProjectExplorer::ProjectManager::instance(),
-                   &ProjectExplorer::ProjectManager::projectFinishedParsing,
-                   this, &AxivionPluginPrivate::handleOpenedDocs);
 }
 
 void AxivionPluginPrivate::clearAllMarks()
 {
-    const QList<Core::IDocument *> openDocuments = Core::DocumentModel::openedDocuments();
-    for (Core::IDocument *doc : openDocuments)
-        onDocumentClosed(doc);
+    for (const QSet<TextMark *> &marks : std::as_const(m_allMarks))
+       qDeleteAll(marks);
+    m_allMarks.clear();
 }
 
-void AxivionPluginPrivate::handleProjectInfo(DashboardClient::RawProjectInfo rawInfo)
+void AxivionPluginPrivate::updateExistingMarks() // update whether highlight marks or not
 {
-    m_runningQuery = false;
-    if (!rawInfo) {
-        Core::MessageManager::writeFlashing(QStringLiteral(u"Axivion: ") + rawInfo.error());
-        return;
-    }
-    m_currentProjectInfo = std::make_shared<const DashboardClient::ProjectInfo>(std::move(rawInfo.value()));
-    m_axivionOutputPane.updateDashboard();
-    // handle already opened documents
-    if (auto buildSystem = ProjectExplorer::ProjectManager::startupBuildSystem();
-            !buildSystem || !buildSystem->isParsing()) {
-        handleOpenedDocs(nullptr);
-    } else {
-        connect(ProjectExplorer::ProjectManager::instance(),
-                &ProjectExplorer::ProjectManager::projectFinishedParsing,
-                this, &AxivionPluginPrivate::handleOpenedDocs);
+    static Theme::Color color = Theme::Color(Theme::Bookmarks_TextMarkColor); // FIXME!
+    const bool colored = settings().highlightMarks();
+
+    auto changeColor = colored ? [](TextMark *mark) { mark->setColor(color); }
+                               : [](TextMark *mark) { mark->unsetColor(); };
+
+    for (const QSet<TextMark *> &marksForFile : std::as_const(m_allMarks)) {
+        for (auto mark : marksForFile)
+            changeColor(mark);
     }
 }
 
-void AxivionPluginPrivate::onDocumentOpened(Core::IDocument *doc)
+void AxivionPluginPrivate::onDocumentOpened(IDocument *doc)
 {
-    if (!m_currentProjectInfo) // we do not have a project info (yet)
+    if (!m_inlineIssuesEnabled)
+        return;
+    if (!doc || !m_currentProjectInfo || !m_project || !m_project->isKnownFile(doc->filePath()))
         return;
 
-    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject();
-    if (!doc || !project->isKnownFile(doc->filePath()))
+    const FilePath filePath = doc->filePath().relativeChildPath(m_project->projectDirectory());
+    if (filePath.isEmpty())
+        return; // Empty is fine
+    if (m_allMarks.contains(filePath))
         return;
 
-    Utils::FilePath relative = doc->filePath().relativeChildPath(project->projectDirectory());
-    // for now only style violations
-    AxivionQuery query(AxivionQuery::IssuesForFileList, {m_currentProjectInfo->data.name, "SV",
-                                                         relative.path() } );
-    AxivionQueryRunner *runner = new AxivionQueryRunner(query, this);
-    connect(runner, &AxivionQueryRunner::resultRetrieved, this, [this](const QByteArray &result){
-        handleIssuesForFile(ResultParser::parseIssuesList(result));
+    const auto handler = [this](const Dto::FileViewDto &data) {
+        if (data.lineMarkers.empty())
+            return;
+        handleIssuesForFile(data);
+    };
+    TaskTree *taskTree = new TaskTree;
+    taskTree->setRecipe(lineMarkerRecipe(filePath, handler));
+    m_docMarksTrees.insert_or_assign(doc, std::unique_ptr<TaskTree>(taskTree));
+    connect(taskTree, &TaskTree::done, this, [this, doc] {
+        const auto it = m_docMarksTrees.find(doc);
+        QTC_ASSERT(it != m_docMarksTrees.end(), return);
+        it->second.release()->deleteLater();
+        m_docMarksTrees.erase(it);
     });
-    connect(runner, &AxivionQueryRunner::finished, [runner]{ runner->deleteLater(); });
-    runner->start();
+    taskTree->start();
 }
 
-void AxivionPluginPrivate::onDocumentClosed(Core::IDocument *doc)
+void AxivionPluginPrivate::onDocumentClosed(IDocument *doc)
 {
-    const auto document = qobject_cast<TextEditor::TextDocument *>(doc);
+    const auto document = qobject_cast<TextDocument *>(doc);
     if (!document)
         return;
 
-    const TextEditor::TextMarks marks = document->marks();
-    for (auto m : marks) {
-        if (m->category().id == AxivionTextMarkId)
-            delete m;
-    }
+    const auto it = m_docMarksTrees.find(doc);
+    if (it != m_docMarksTrees.end())
+        m_docMarksTrees.erase(it);
+
+    qDeleteAll(m_allMarks.take(document->filePath()));
 }
 
-void AxivionPluginPrivate::handleIssuesForFile(const IssuesList &issues)
+void AxivionPluginPrivate::handleIssuesForFile(const Dto::FileViewDto &fileView)
 {
-    if (issues.issues.isEmpty())
+    if (fileView.lineMarkers.empty())
         return;
 
-    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::startupProject();
+    Project *project = ProjectManager::startupProject();
     if (!project)
         return;
 
-    const Utils::FilePath filePath = project->projectDirectory()
-            .pathAppended(issues.issues.first().filePath);
-
-    const Utils::Id axivionId(AxivionTextMarkId);
-    for (const ShortIssue &issue : std::as_const(issues.issues)) {
+    const FilePath filePath = project->projectDirectory().pathAppended(fileView.fileName);
+    std::optional<Theme::Color> color = std::nullopt;
+    if (settings().highlightMarks())
+        color.emplace(Theme::Color(Theme::Bookmarks_TextMarkColor)); // FIXME!
+    for (const Dto::LineMarkerDto &marker : std::as_const(fileView.lineMarkers)) {
         // FIXME the line location can be wrong (even the whole issue could be wrong)
         // depending on whether this line has been changed since the last axivion run and the
         // current state of the file - some magic has to happen here
-        new AxivionTextMark(filePath, issue);
+        m_allMarks[filePath] << new AxivionTextMark(filePath, marker, color);
     }
 }
 
+void AxivionPluginPrivate::enableInlineIssues(bool enable)
+{
+    if (m_inlineIssuesEnabled == enable)
+        return;
+    m_inlineIssuesEnabled = enable;
+
+    if (enable && m_dashboardServerId.isValid())
+        handleOpenedDocs();
+    else
+        clearAllMarks();
+}
+
+static constexpr char SV_PROJECTNAME[] = "Axivion.ProjectName";
+static constexpr char SV_DASHBOARDID[] = "Axivion.DashboardId";
+
+void AxivionPluginPrivate::onSessionLoaded(const QString &sessionName)
+{
+    // explicitly ignore default session to avoid triggering dialogs at startup
+    if (sessionName == "default")
+        return;
+
+    const QString projectName = SessionManager::sessionValue(SV_PROJECTNAME).toString();
+    const Id dashboardId = Id::fromSetting(SessionManager::sessionValue(SV_DASHBOARDID));
+    if (!dashboardId.isValid())
+        switchActiveDashboardId({});
+    else if (activeDashboardId() != dashboardId)
+        switchActiveDashboardId(dashboardId);
+    reinitDashboard(projectName);
+}
+
+void AxivionPluginPrivate::onAboutToSaveSession()
+{
+    // explicitly ignore default session
+    if (SessionManager::startupSession() == "default")
+        return;
+
+    SessionManager::setSessionValue(SV_DASHBOARDID, activeDashboardId().toSetting());
+    const QString projectName = m_currentProjectInfo ? m_currentProjectInfo->name : QString();
+    SessionManager::setSessionValue(SV_PROJECTNAME, projectName);
+}
+
+class AxivionPlugin final : public ExtensionSystem::IPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QtCreatorPlugin" FILE "Axivion.json")
+
+    ~AxivionPlugin() final
+    {
+        delete dd;
+        dd = nullptr;
+    }
+
+    void initialize() final
+    {
+        setupAxivionPerspective();
+
+        dd = new AxivionPluginPrivate;
+
+        connect(ProjectManager::instance(), &ProjectManager::startupProjectChanged,
+                dd, &AxivionPluginPrivate::onStartupProjectChanged);
+        connect(EditorManager::instance(), &EditorManager::documentOpened,
+                dd, &AxivionPluginPrivate::onDocumentOpened);
+        connect(EditorManager::instance(), &EditorManager::documentClosed,
+                dd, &AxivionPluginPrivate::onDocumentClosed);
+    }
+};
+
+void fetchIssueInfo(const QString &id)
+{
+    QTC_ASSERT(dd, return);
+    dd->fetchIssueInfo(id);
+}
+
+void switchActiveDashboardId(const Id &toDashboardId)
+{
+    QTC_ASSERT(dd, return);
+    dd->m_dashboardServerId = toDashboardId;
+    dd->m_serverAccess = ServerAccess::Unknown;
+    dd->m_apiToken.reset();
+    dd->m_dashboardInfo.reset();
+    dd->m_currentProjectInfo.reset();
+    updatePerspectiveToolbar();
+}
+
+const std::optional<DashboardInfo> currentDashboardInfo()
+{
+    QTC_ASSERT(dd, return std::nullopt);
+    return dd->m_dashboardInfo;
+}
+
+const Id activeDashboardId()
+{
+    QTC_ASSERT(dd, return {});
+    return dd->m_dashboardServerId;
+}
+
+void setAnalysisVersion(const QString &version)
+{
+    QTC_ASSERT(dd, return);
+    if (dd->m_analysisVersion.value_or("") == version)
+        return;
+    dd->m_analysisVersion = version;
+    // refetch issues for already opened docs
+    dd->clearAllMarks();
+    dd->handleOpenedDocs();
+}
+
+void enableInlineIssues(bool enable)
+{
+    QTC_ASSERT(dd, return);
+    dd->enableInlineIssues(enable);
+}
+
+Utils::FilePath findFileForIssuePath(const Utils::FilePath &issuePath)
+{
+    QTC_ASSERT(dd, return {});
+    if (!dd->m_project || !dd->m_currentProjectInfo)
+        return {};
+    const FilePaths result = dd->m_fileFinder.findFile(issuePath.toUrl());
+    if (result.size() == 1)
+        return dd->m_project->projectDirectory().resolvePath(result.first());
+    return {};
+}
+
 } // Axivion::Internal
+
+#include "axivionplugin.moc"

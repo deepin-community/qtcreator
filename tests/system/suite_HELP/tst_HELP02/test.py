@@ -4,11 +4,11 @@
 source("../../shared/qtcreator.py")
 
 if platform.system() == 'Darwin':
-    keysToType = '<Command+Alt+a>'
-    expectedKeys = 'Cmd+Opt+A'
+    keysToType = '<Command+Alt+v>'
+    expectedKeys = 'Cmd+Opt+V'
 else:
-    keysToType = '<Ctrl+Alt+a>'
-    expectedKeys = 'Ctrl+Alt+A'
+    keysToType = '<Ctrl+Alt+v>'
+    expectedKeys = 'Ctrl+Alt+V'
 
 
 # test Qt Creator version information from file and dialog
@@ -37,7 +37,7 @@ def getQtCreatorVersionFromFile():
 
 def checkQtCreatorHelpVersion(expectedVersion):
     def rightStart(x):
-        return x.startswith('Qt Creator Manual')
+        return x.startswith('Qt Creator Documentation')
 
     switchViewTo(ViewConstants.HELP)
     try:
@@ -45,16 +45,12 @@ def checkQtCreatorHelpVersion(expectedVersion):
         waitFor("any(map(rightStart, dumpItems(helpContentWidget.model())))", 10000)
         items = dumpItems(helpContentWidget.model())
         test.compare(next(iter(filter(rightStart, items))),
-                     'Qt Creator Manual %s' % expectedVersion,
+                     'Qt Creator Documentation %s' % expectedVersion,
                      'Verifying whether manual uses expected version.')
     except:
         t, v = sys.exc_info()[:2]
         test.log("Exception caught", "%s: %s" % (t.__name__, str(v)))
         test.fail("Missing Qt Creator Manual.")
-
-
-def _shortcutMatches_(shortcutEdit, expectedText):
-    return str(findObject(shortcutEdit).text) == expectedText
 
 
 def setKeyboardShortcutForAboutQtC():
@@ -78,16 +74,16 @@ def setKeyboardShortcutForAboutQtC():
                 "placeholderText='Enter key sequence as text'}" % shortcutGB)
     clickButton(record)
     nativeType(keysToType)
-    waitFor("_shortcutMatches_(shortcut, expectedKeys)", 5000)
+    waitFor(lambda: str(findObject(shortcut).text) == expectedKeys, 5000)
     clickButton(record)
 
-    gotExpectedShortcut = _shortcutMatches_(shortcut, expectedKeys)
-    if not gotExpectedShortcut and platform.system() == 'Darwin':
+    foundShortcut = str(findObject(shortcut).text)
+    if foundShortcut != expectedKeys and platform.system() == 'Darwin':
         test.warning("Squish Issue: shortcut was set to %s - entering it manually now"
                      % waitForObject(shortcut).text)
         replaceEditorContent(shortcut, expectedKeys)
     else:
-        test.verify(gotExpectedShortcut, "Expected key sequence is displayed.")
+        test.compare(foundShortcut, expectedKeys, "Expected key sequence is displayed?")
     clickButton(waitForObject(":Options.OK_QPushButton"))
 
 def main():

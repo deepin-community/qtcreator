@@ -14,6 +14,8 @@ const char MODE_DEBUG[]             = "Mode.Debug";
 // Debug mode context
 const char C_DEBUGMODE[]            = "Debugger.DebugMode";
 
+const char DEBUGGER_RUN_FACTORY[]         = "RunWorkerFactory.DebuggerRunWorkerFactory";
+
 } // namespace Constants
 
 // Keep in sync with dumper.py
@@ -97,8 +99,9 @@ enum DebuggerEngineType
     NoEngineType      = 0,
     GdbEngineType     = 0x001,
     CdbEngineType     = 0x004,
-    PdbEngineType     = 0x008,
     LldbEngineType    = 0x100,
+    GdbDapEngineType  = 0x200,
+    LldbDapEngineType = 0x400,
     UvscEngineType    = 0x1000
 };
 

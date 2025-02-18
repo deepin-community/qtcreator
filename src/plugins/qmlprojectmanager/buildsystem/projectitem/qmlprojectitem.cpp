@@ -8,6 +8,9 @@
 
 #include "converters.h"
 
+#include "../../qmlproject.h"
+#include "../../qmlprojectconstants.h"
+
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 #include <qmljs/qmljssimplereader.h>
@@ -28,6 +31,17 @@ QmlProjectItem::QmlProjectItem(const Utils::FilePath &filePath, const bool skipR
 
 bool QmlProjectItem::initProjectObject()
 {
+    if (m_projectFile.endsWith(Constants::fakeProjectName)) {
+        auto uiFile = m_projectFile.toString();
+        uiFile.remove(Constants::fakeProjectName);
+
+        auto parentDir = Utils::FilePath::fromString(uiFile).parentDir();
+        m_projectFile = parentDir.pathAppended(Constants::fakeProjectName);
+        m_project = Converters::qmlProjectTojson({});
+
+        return true;
+    }
+
     auto contents = m_projectFile.fileContents();
     if (!contents) {
         qWarning() << "Cannot open project file. Path:" << m_projectFile.fileName();
@@ -65,33 +79,53 @@ bool QmlProjectItem::initProjectObject()
 void QmlProjectItem::setupFileFilters()
 {
     auto setupFileFilterItem = [this](const QJsonObject &fileGroup) {
-        for (const QString &directory : fileGroup["directories"].toVariant().toStringList()) {
+        // first we need to add all directories as a 'resource' path for the project and set them as
+        // recursive.
+        // if there're any files with the explicit absolute paths, we need to add them afterwards.
+        for (const QString &directory : fileGroup["directory"].toVariant().toStringList()) {
             std::unique_ptr<FileFilterItem> fileFilterItem{new FileFilterItem};
-
-            QStringList filesArr;
-            for (const QJsonValue &file : fileGroup["files"].toArray()) {
-                filesArr.append(file["name"].toString());
-            }
-
             fileFilterItem->setDirectory(directory);
             fileFilterItem->setFilters(fileGroup["filters"].toVariant().toStringList());
-            fileFilterItem->setRecursive(fileGroup["recursive"].toBool(true));
-            fileFilterItem->setPathsProperty(fileGroup["directories"].toVariant().toStringList());
-            fileFilterItem->setPathsProperty(filesArr);
-            fileFilterItem->setDefaultDirectory(m_projectFile.parentDir().toString());
+            fileFilterItem->setRecursive(true);
+
+            fileFilterItem->setDefaultDirectory(m_projectFile.parentDir().toFSPathString());
 #ifndef TESTS_ENABLED_QMLPROJECTITEM
             connect(fileFilterItem.get(),
                     &FileFilterItem::filesChanged,
                     this,
-                    &QmlProjectItem::qmlFilesChanged);
+                    &QmlProjectItem::filesChanged);
 #endif
             m_content.push_back(std::move(fileFilterItem));
         };
+
+        // here we begin to add files with the explicit absolute paths
+        QJsonArray files = fileGroup["files"].toArray();
+        if (files.isEmpty())
+            return;
+
+        QStringList filesArr;
+        std::transform(files.begin(),
+                       files.end(),
+                       std::back_inserter(filesArr),
+                       [](const QJsonValue &value) { return value.toString(); });
+
+        const QString directory = fileGroup["directory"].toString() == ""
+                                      ? m_projectFile.parentDir().toString()
+                                      : fileGroup["directory"].toString();
+        Utils::FilePath groupDir = Utils::FilePath::fromString(directory);
+        std::unique_ptr<FileFilterItem> fileFilterItem{new FileFilterItem};
+        fileFilterItem->setRecursive(false);
+        fileFilterItem->setPathsProperty(filesArr);
+        fileFilterItem->setDefaultDirectory(m_projectFile.parentDir().toString());
+        fileFilterItem->setDirectory(groupDir.toString());
+#ifndef TESTS_ENABLED_QMLPROJECTITEM
+        connect(fileFilterItem.get(), &FileFilterItem::filesChanged, this, &QmlProjectItem::filesChanged);
+#endif
+        m_content.push_back(std::move(fileFilterItem));
     };
 
-    QJsonObject fileGroups = m_project["fileGroups"].toObject();
-    for (const QString &groupName : fileGroups.keys()) {
-        setupFileFilterItem(fileGroups[groupName].toObject());
+    for (const QJsonValue &fileGroup : m_project["fileGroups"].toArray()) {
+        setupFileFilterItem(fileGroup.toObject());
     }
 }
 
@@ -107,7 +141,7 @@ QString QmlProjectItem::targetDirectory() const
 
 bool QmlProjectItem::isQt4McuProject() const
 {
-    return m_project["mcuConfig"].toObject()["mcuEnabled"].toBool();
+    return m_project["mcu"].toObject()["enabled"].toBool();
 }
 
 Utils::EnvironmentItems QmlProjectItem::environment() const
@@ -178,6 +212,16 @@ void QmlProjectItem::setImportPaths(const QStringList &importPaths)
     insertAndUpdateProjectFile("importPaths", QJsonArray::fromStringList(importPaths));
 }
 
+QStringList QmlProjectItem::mockImports() const
+{
+    return m_project["mockImports"].toVariant().toStringList();
+}
+
+void QmlProjectItem::setMockImports(const QStringList &paths)
+{
+    insertAndUpdateProjectFile("mockImports", QJsonArray::fromStringList(paths));
+}
+
 void QmlProjectItem::addImportPath(const QString &importPath)
 {
     QJsonArray importPaths = m_project["importPaths"].toArray();
@@ -187,6 +231,11 @@ void QmlProjectItem::addImportPath(const QString &importPath)
 
     importPaths.append(importPath);
     insertAndUpdateProjectFile("importPaths", importPaths);
+}
+
+QStringList QmlProjectItem::qmlProjectModules() const
+{
+    return m_project["qmlprojectDependencies"].toVariant().toStringList();
 }
 
 QStringList QmlProjectItem::fileSelectors() const
@@ -397,6 +446,30 @@ void QmlProjectItem::insertAndUpdateProjectFile(const QString &key, const QJsonV
     m_project[key] = value;
     if (!m_skipRewrite)
         m_projectFile.writeFileContents(Converters::jsonToQmlProject(m_project).toUtf8());
+}
+
+bool QmlProjectItem::enableCMakeGeneration() const
+{
+    return m_project["deployment"].toObject()["enableCMakeGeneration"].toBool();
+}
+
+void QmlProjectItem::setEnableCMakeGeneration(bool enable)
+{
+    QJsonObject obj = m_project["deployment"].toObject();
+    obj["enableCMakeGeneration"] = enable;
+    insertAndUpdateProjectFile("deployment", obj);
+}
+
+bool QmlProjectItem::enablePythonGeneration() const
+{
+    return m_project["deployment"].toObject()["enablePythonGeneration"].toBool();
+}
+
+void QmlProjectItem::setEnablePythonGeneration(bool enable)
+{
+    QJsonObject obj = m_project["deployment"].toObject();
+    obj["enablePythonGeneration"] = enable;
+    insertAndUpdateProjectFile("deployment", obj);
 }
 
 } // namespace QmlProjectManager

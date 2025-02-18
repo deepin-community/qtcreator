@@ -11,17 +11,18 @@
 
 namespace CMakeProjectManager::Internal {
 
+bool defaultCMakeSourceGroupFolder(const QString &displayName);
+
 std::unique_ptr<ProjectExplorer::FolderNode> createCMakeVFolder(const Utils::FilePath &basePath,
                                                                 int priority,
-                                                                const QString &displayName,
-                                                                bool sourcesOrHeaders);
+                                                                const QString &displayName);
 
 void addCMakeVFolder(ProjectExplorer::FolderNode *base,
                      const Utils::FilePath &basePath,
                      int priority,
                      const QString &displayName,
                      std::vector<std::unique_ptr<ProjectExplorer::FileNode>> &&files,
-                     bool sourcesOrHeaders = false);
+                     bool listInProject = true);
 
 std::vector<std::unique_ptr<ProjectExplorer::FileNode>> &&removeKnownNodes(
     const QSet<Utils::FilePath> &knownFiles,
@@ -42,10 +43,6 @@ QHash<Utils::FilePath, ProjectExplorer::ProjectNode *> addCMakeLists(
 void createProjectNode(const QHash<Utils::FilePath, ProjectExplorer::ProjectNode *> &cmakeListsNodes,
                        const Utils::FilePath &dir,
                        const QString &displayName);
-CMakeTargetNode *createTargetNode(
-    const QHash<Utils::FilePath, ProjectExplorer::ProjectNode *> &cmakeListsNodes,
-    const Utils::FilePath &dir,
-    const QString &displayName);
 
 void addFileSystemNodes(ProjectExplorer::ProjectNode *root,
                         const std::shared_ptr<ProjectExplorer::FolderNode> &folderNode);

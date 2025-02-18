@@ -73,8 +73,8 @@ OutputLineParser::Result SdccParser::handleLine(const QString &line, OutputForma
         const QString descr = match.captured(MessageTextIndex);
         newTask(CompileTask(type, descr, absoluteFilePath(fileName), lineno));
         LinkSpecs linkSpecs;
-        addLinkSpecForAbsoluteFilePath(linkSpecs, m_lastTask.file, m_lastTask.line, match,
-                                       FilePathIndex);
+        addLinkSpecForAbsoluteFilePath(
+            linkSpecs, m_lastTask.file, m_lastTask.line, m_lastTask.column, match, FilePathIndex);
         return {Status::InProgress, linkSpecs};
     }
 
@@ -90,8 +90,8 @@ OutputLineParser::Result SdccParser::handleLine(const QString &line, OutputForma
         const QString descr = match.captured(MessageTextIndex);
         newTask(CompileTask(type, descr, absoluteFilePath(fileName), lineno));
         LinkSpecs linkSpecs;
-        addLinkSpecForAbsoluteFilePath(linkSpecs, m_lastTask.file, m_lastTask.line, match,
-                                       FilePathIndex);
+        addLinkSpecForAbsoluteFilePath(
+            linkSpecs, m_lastTask.file, m_lastTask.line, m_lastTask.column, match, FilePathIndex);
         return {Status::InProgress, linkSpecs};
     }
 
@@ -141,13 +141,21 @@ void SdccParser::flush()
 // Unit tests:
 
 #ifdef WITH_TESTS
-#include "baremetalplugin.h"
 #include <projectexplorer/outputparser_test.h>
 #include <QTest>
 
 namespace BareMetal::Internal {
 
-void BareMetalPlugin::testSdccOutputParsers_data()
+class SdccParserTest final : public QObject
+{
+   Q_OBJECT
+
+private slots:
+   void testSdccOutputParsers_data();
+   void testSdccOutputParsers();
+};
+
+void SdccParserTest::testSdccOutputParsers_data()
 {
     QTest::addColumn<QString>("input");
     QTest::addColumn<OutputParserTester::Channel>("inputChannel");
@@ -291,7 +299,7 @@ void BareMetalPlugin::testSdccOutputParsers_data()
             << QString();
 }
 
-void BareMetalPlugin::testSdccOutputParsers()
+void SdccParserTest::testSdccOutputParsers()
 {
     OutputParserTester testbench;
     testbench.addLineParser(new SdccParser);
@@ -307,6 +315,13 @@ void BareMetalPlugin::testSdccOutputParsers()
                           outputLines);
 }
 
+QObject *createSdccParserTest()
+{
+    return new SdccParserTest;
+}
+
 } // BareMetal::Internal
 
 #endif // WITH_TESTS
+
+#include "sdccparser.moc"

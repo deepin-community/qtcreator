@@ -6,6 +6,8 @@ Project {
         name: "lib1"
         Depends { name: "cpp" }
 
+        property bool dummy: { console.info("executable suffix: " + cpp.executableSuffix); }
+
         files: ["lib1.cpp"]
 
         install: !qbs.targetOS.includes("darwin")
@@ -69,8 +71,6 @@ Project {
             cpp.dynamicLibraryPrefix: "lib"
             cpp.dynamicLibraryImportSuffix: ".a"
         }
-        cpp.dynamicLibraryPrefix: original
-        cpp.dynamicLibraryImportSuffix: original
 
         install: true
         installImportLib: true

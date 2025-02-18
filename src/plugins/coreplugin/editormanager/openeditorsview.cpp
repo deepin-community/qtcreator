@@ -8,14 +8,16 @@
 #include "ieditor.h"
 #include "../actionmanager/command.h"
 #include "../coreplugintr.h"
+#include "../inavigationwidgetfactory.h"
 #include "../opendocumentstreeview.h"
 
 #include <utils/fsengine/fileiconprovider.h>
 #include <utils/qtcassert.h>
 
 #include <QAbstractProxyModel>
-#include <QApplication>
 #include <QMenu>
+
+using namespace Utils;
 
 namespace Core::Internal {
 
@@ -51,11 +53,11 @@ private:
 
 // OpenEditorsWidget
 
-class OpenEditorsWidget : public OpenDocumentsTreeView
+class OpenEditorsWidget final : public OpenDocumentsTreeView
 {
 public:
     OpenEditorsWidget();
-    ~OpenEditorsWidget() override;
+    ~OpenEditorsWidget() final;
 
 private:
     void handleActivated(const QModelIndex &);
@@ -63,6 +65,8 @@ private:
     void contextMenuRequested(QPoint pos);
     void activateEditor(const QModelIndex &index);
     void closeDocument(const QModelIndex &index);
+
+    bool userWantsContextMenu(const QMouseEvent *) const final;
 
     ProxyModel *m_model;
 };
@@ -136,35 +140,21 @@ void OpenEditorsWidget::closeDocument(const QModelIndex &index)
     updateCurrentItem(EditorManager::currentEditor());
 }
 
+bool OpenEditorsWidget::userWantsContextMenu(const QMouseEvent *e) const
+{
+    // block activating on entry on right click otherwise we might switch into another mode
+    // see QTCREATORBUG-30357
+    return e->button() == Qt::RightButton;
+}
+
 void OpenEditorsWidget::contextMenuRequested(QPoint pos)
 {
     QMenu contextMenu;
     QModelIndex editorIndex = indexAt(pos);
     const int row = m_model->mapToSource(editorIndex).row();
     DocumentModel::Entry *entry = DocumentModel::entryAtRow(row);
-    EditorManager::addSaveAndCloseEditorActions(&contextMenu, entry);
-    contextMenu.addSeparator();
-    EditorManager::addPinEditorActions(&contextMenu, entry);
-    contextMenu.addSeparator();
-    EditorManager::addNativeDirAndOpenWithActions(&contextMenu, entry);
+    EditorManager::addContextMenuActions(&contextMenu, entry);
     contextMenu.exec(mapToGlobal(pos));
-}
-
-///
-// OpenEditorsViewFactory
-///
-
-OpenEditorsViewFactory::OpenEditorsViewFactory()
-{
-    setId("Open Documents");
-    setDisplayName(Tr::tr("Open Documents"));
-    setActivationSequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+O") : Tr::tr("Alt+O")));
-    setPriority(200);
-}
-
-NavigationView OpenEditorsViewFactory::createWidget()
-{
-    return {new OpenEditorsWidget, {}};
 }
 
 ProxyModel::ProxyModel(QObject *parent) : QAbstractProxyModel(parent)
@@ -253,8 +243,8 @@ QVariant ProxyModel::data(const QModelIndex &index, int role) const
         const QVariant sourceDecoration = QAbstractProxyModel::data(index, role);
         if (sourceDecoration.isValid())
             return sourceDecoration;
-        const QString fileName = QAbstractProxyModel::data(index, Qt::DisplayRole).toString();
-        return Utils::FileIconProvider::icon(Utils::FilePath::fromString(fileName));
+        const QVariant filePath = QAbstractProxyModel::data(index, DocumentModel::FilePathRole);
+        return FileIconProvider::icon(FilePath::fromVariant(filePath));
     }
 
     return QAbstractProxyModel::data(index, role);
@@ -309,6 +299,30 @@ void ProxyModel::sourceRowsAboutToBeInserted(const QModelIndex &parent, int star
     int realStart = parent.isValid() || start == 0 ? start : start - 1;
     int realEnd = parent.isValid() || end == 0 ? end : end - 1;
     beginInsertRows(parent, realStart, realEnd);
+}
+
+// OpenEditorsViewFactory
+
+class OpenEditorsViewFactory final : public INavigationWidgetFactory
+{
+public:
+    OpenEditorsViewFactory()
+    {
+        setId("Open Documents");
+        setDisplayName(Tr::tr("Open Documents"));
+        setActivationSequence(QKeySequence(useMacShortcuts ? Tr::tr("Meta+O") : Tr::tr("Alt+O")));
+        setPriority(200);
+    }
+
+    NavigationView createWidget() final
+    {
+        return {new OpenEditorsWidget, {}};
+    }
+};
+
+void createOpenEditorsViewFactory()
+{
+    static OpenEditorsViewFactory theOpenEditorsViewFactory;
 }
 
 } // Core::Internal

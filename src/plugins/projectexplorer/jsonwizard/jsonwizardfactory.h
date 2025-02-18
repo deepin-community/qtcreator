@@ -17,6 +17,7 @@ namespace ProjectExplorer {
 
 class ProjectExplorerPlugin;
 class ProjectExplorerPluginPrivate;
+namespace Internal { class ProjectExplorerTest; }
 
 // Documentation inside.
 class PROJECTEXPLORER_EXPORT JsonWizardFactory : public Core::IWizardFactory
@@ -26,7 +27,6 @@ class PROJECTEXPLORER_EXPORT JsonWizardFactory : public Core::IWizardFactory
 public:
     // Add search paths for wizard.json files. All subdirs are going to be checked.
     static void addWizardPath(const Utils::FilePath &path);
-    static void clearWizardPaths();
 
     // actual interface of the wizard factory:
     class Generator {
@@ -46,6 +46,7 @@ public:
         int index = -1; // page index in the wizard
         Utils::Id typeId;
         QVariant enabled;
+        QVariant skipForSubprojects;
         QVariant data;
     };
 
@@ -57,17 +58,21 @@ public:
 
     virtual std::pair<int, QStringList> screenSizeInfoFromPage(const QString &pageType) const;
 
+    // internal
+    static void setInstalledWizardsPath(const Utils::FilePath &path);
+
 private:
     Utils::Wizard *runWizardImpl(const Utils::FilePath &path, QWidget *parent, Utils::Id platform,
                                  const QVariantMap &variables, bool showWizard = true) override;
 
     // Create all wizards. As other plugins might register factories for derived
     // classes. Called when the new file dialog is shown for the first time.
-    static void createWizardFactories();
+    static QList<IWizardFactory *> createWizardFactories();
     static JsonWizardFactory *createWizardFactory(const QVariantMap &data,
                                                   const Utils::FilePath &baseDir,
                                                   QString *errorMessage);
     static Utils::FilePaths &searchPaths();
+    static void resetSearchPaths();
 
     static void setVerbose(int level);
     static int verbose();
@@ -93,25 +98,7 @@ private:
 
     friend class ProjectExplorerPlugin;
     friend class ProjectExplorerPluginPrivate;
+    friend class Internal::ProjectExplorerTest;
 };
 
-namespace Internal {
-
-class JsonWizardFactoryJsExtension : public QObject
-{
-    Q_OBJECT
-public:
-    JsonWizardFactoryJsExtension(Utils::Id platformId,
-                                 const QSet<Utils::Id> &availableFeatures,
-                                 const QSet<Utils::Id> &pluginFeatures);
-
-    Q_INVOKABLE QVariant value(const QString &name) const;
-
-private:
-    Utils::Id m_platformId;
-    QSet<Utils::Id> m_availableFeatures;
-    QSet<Utils::Id> m_pluginFeatures;
-};
-
-} // namespace Internal
 } // namespace ProjectExplorer

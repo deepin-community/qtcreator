@@ -7,7 +7,7 @@
 
     \ingroup creator-reference-build-systems
 
-    \title Setting Up Meson
+    \title Meson
 
     \brief Use Meson to build native desktop applications.
 
@@ -21,7 +21,7 @@
 
     \QC automatically detects the Meson and Ninja executables specified in the
     \c PATH. You can add paths to other Meson or Ninja executables and use them
-    in different build and run \l{glossary-buildandrun-kit}{kits}.
+    in different build and run \l{Kits}{kits}.
 
     \note Enable the Meson plugin to use it.
 

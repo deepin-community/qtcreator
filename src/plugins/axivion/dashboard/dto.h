@@ -14,6 +14,8 @@
  * <AxivionSuiteRepo>/projects/libs/dashboard_cpp_api/generator/generate_dashboard_cpp_api.py
  */
 
+#include <utils/expected.h>
+
 #include <QAnyStringView>
 #include <QByteArray>
 #include <QHashFunctions>
@@ -48,9 +50,7 @@ namespace Axivion::Internal::Dto
     std::optional<O> optionalTransform(const std::optional<I> &input, const std::function<O(const I&)> &transformer)
     {
         if (input.has_value())
-        {
             return transformer(*input);
-        }
         return std::nullopt;
     }
 
@@ -71,6 +71,8 @@ namespace Axivion::Internal::Dto
 
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static Any deserialize(const QByteArray &json);
+
+        static Utils::expected_str<Any> deserializeExpected(const QByteArray &json);
 
         Any();
 
@@ -126,7 +128,7 @@ namespace Axivion::Internal::Dto
         // Throws std::bad_variant_access
         const bool &getBool() const;
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
 
     private:
         std::variant<
@@ -173,13 +175,15 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static AnalyzedFileDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<AnalyzedFileDto> deserializeExpected(const QByteArray &json);
+
         AnalyzedFileDto(
             QString path,
             std::optional<bool> isSystemHeader,
             std::optional<QString> languageName
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -221,6 +225,8 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         static ApiTokenType strToEnum(QAnyStringView str);
 
+        static std::optional<ApiTokenType> strToOptionalEnum(QAnyStringView str);
+
         static QLatin1String enumToStr(ApiTokenType e);
 
         ApiTokenTypeMeta() = delete;
@@ -247,12 +253,64 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ChangePasswordFormDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ChangePasswordFormDto> deserializeExpected(const QByteArray &json);
+
         ChangePasswordFormDto(
             QString currentPassword,
             QString newPassword
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
+    };
+
+    /**
+     * The type of the column values.
+     * 
+     * <p>The column type.
+     * 
+     * <p>Possible values:
+     * * `string` - a unicode string or ``null``
+     * * `number` - either ``null`` or ``&quot;Infinity&quot;`` or ``&quot;-Infinity&quot;`` or ``&quot;NaN&quot;`` (string!) or a decimal number with base 10.
+     * * `state` - The fields are strings. Possible values are defined via ``typeOptions``.
+     * * `boolean` - The fields are boolean values, either ``false`` or ``true``. Has ``typeOptions``.
+     * * `path` - **Since 6.4.1** similar to ``string`` or ``null``, however they are normalized (guaranteed single-slash separators) for easy parsing as path
+     * * `tags` - **Since 6.5.0** an array of :json:object:`IssueTag`
+     * * `comments` - **Since 6.9.0** array of :json:object:`IssueComment`
+     * * `owners` - **Since 7.0.0** array of :json:object:`UserRef`
+     */
+    enum class ColumnType
+    {
+        string,
+        number,
+        state,
+        boolean,
+        path,
+        tags,
+        comments,
+        owners
+    };
+
+    class ColumnTypeMeta final
+    {
+    public:
+        static const QLatin1String string;
+        static const QLatin1String number;
+        static const QLatin1String state;
+        static const QLatin1String boolean;
+        static const QLatin1String path;
+        static const QLatin1String tags;
+        static const QLatin1String comments;
+        static const QLatin1String owners;
+
+        // Throws std::range_error
+        static ColumnType strToEnum(QAnyStringView str);
+
+        static std::optional<ColumnType> strToOptionalEnum(QAnyStringView str);
+
+        static QLatin1String enumToStr(ColumnType e);
+
+        ColumnTypeMeta() = delete;
+        ~ColumnTypeMeta() = delete;
     };
 
     /**
@@ -286,13 +344,15 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ColumnTypeOptionDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ColumnTypeOptionDto> deserializeExpected(const QByteArray &json);
+
         ColumnTypeOptionDto(
             QString key,
             std::optional<QString> displayName,
             QString displayColor
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -310,17 +370,19 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static CommentRequestDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<CommentRequestDto> deserializeExpected(const QByteArray &json);
+
         CommentRequestDto(
             QString text
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
      * CSRF token
      * 
-     * @since 7.7.0
+     * @since 7.6.6
      */
     class CsrfTokenDto : public Serializable
     {
@@ -338,11 +400,13 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static CsrfTokenDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<CsrfTokenDto> deserializeExpected(const QByteArray &json);
+
         CsrfTokenDto(
             QString csrfToken
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -381,6 +445,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static EntityDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<EntityDto> deserializeExpected(const QByteArray &json);
+
         EntityDto(
             QString id,
             QString name,
@@ -389,7 +455,7 @@ namespace Axivion::Internal::Dto
             std::optional<qint32> line
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -498,6 +564,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ErrorDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ErrorDto> deserializeExpected(const QByteArray &json);
+
         ErrorDto(
             std::optional<QString> dashboardVersionNumber,
             QString type,
@@ -510,7 +578,7 @@ namespace Axivion::Internal::Dto
             std::optional<std::map<QString, Any>> data
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -567,6 +635,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueCommentDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueCommentDto> deserializeExpected(const QByteArray &json);
+
         IssueCommentDto(
             QString username,
             QString userDisplayName,
@@ -577,7 +647,7 @@ namespace Axivion::Internal::Dto
             std::optional<QString> commentDeletionId
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -607,6 +677,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static IssueKind strToEnum(QAnyStringView str);
+
+        static std::optional<IssueKind> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(IssueKind e);
 
@@ -643,6 +715,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static IssueKindForNamedFilterCreation strToEnum(QAnyStringView str);
+
+        static std::optional<IssueKindForNamedFilterCreation> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(IssueKindForNamedFilterCreation e);
 
@@ -713,6 +787,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueSourceLocationDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueSourceLocationDto> deserializeExpected(const QByteArray &json);
+
         IssueSourceLocationDto(
             QString fileName,
             std::optional<QString> role,
@@ -723,7 +799,7 @@ namespace Axivion::Internal::Dto
             qint32 endColumn
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -749,12 +825,14 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueTagDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueTagDto> deserializeExpected(const QByteArray &json);
+
         IssueTagDto(
             QString tag,
             QString color
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -805,6 +883,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueTagTypeDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueTagTypeDto> deserializeExpected(const QByteArray &json);
+
         IssueTagTypeDto(
             QString id,
             std::optional<QString> text,
@@ -814,7 +894,7 @@ namespace Axivion::Internal::Dto
             std::optional<bool> selected
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -846,6 +926,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static MessageSeverity strToEnum(QAnyStringView str);
+
+        static std::optional<MessageSeverity> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(MessageSeverity e);
 
@@ -891,6 +973,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static MetricDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<MetricDto> deserializeExpected(const QByteArray &json);
+
         MetricDto(
             QString name,
             QString displayName,
@@ -898,7 +982,7 @@ namespace Axivion::Internal::Dto
             Any maxValue
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -950,6 +1034,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static MetricValueTableRowDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<MetricValueTableRowDto> deserializeExpected(const QByteArray &json);
+
         MetricValueTableRowDto(
             QString metric,
             std::optional<QString> path,
@@ -960,7 +1046,7 @@ namespace Axivion::Internal::Dto
             QString entityId
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -986,6 +1072,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static NamedFilterType strToEnum(QAnyStringView str);
+
+        static std::optional<NamedFilterType> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(NamedFilterType e);
 
@@ -1016,11 +1104,13 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static NamedFilterVisibilityDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<NamedFilterVisibilityDto> deserializeExpected(const QByteArray &json);
+
         NamedFilterVisibilityDto(
             std::optional<std::vector<QString>> groups
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1043,12 +1133,14 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ProjectReferenceDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ProjectReferenceDto> deserializeExpected(const QByteArray &json);
+
         ProjectReferenceDto(
             QString name,
             QString url
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1081,13 +1173,15 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static RuleDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<RuleDto> deserializeExpected(const QByteArray &json);
+
         RuleDto(
             QString name,
             QString original_name,
             std::optional<bool> disabled
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1110,6 +1204,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static SortDirection strToEnum(QAnyStringView str);
+
+        static std::optional<SortDirection> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(SortDirection e);
 
@@ -1140,6 +1236,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static TableCellAlignment strToEnum(QAnyStringView str);
+
+        static std::optional<TableCellAlignment> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(TableCellAlignment e);
 
@@ -1172,13 +1270,15 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ToolsVersionDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ToolsVersionDto> deserializeExpected(const QByteArray &json);
+
         ToolsVersionDto(
             QString name,
             QString number,
             QString buildDate
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1206,6 +1306,8 @@ namespace Axivion::Internal::Dto
 
         // Throws std::range_error
         static UserRefType strToEnum(QAnyStringView str);
+
+        static std::optional<UserRefType> strToOptionalEnum(QAnyStringView str);
 
         static QLatin1String enumToStr(UserRefType e);
 
@@ -1238,13 +1340,15 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static VersionKindCountDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<VersionKindCountDto> deserializeExpected(const QByteArray &json);
+
         VersionKindCountDto(
             qint32 Total,
             qint32 Added,
             qint32 Removed
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1346,6 +1450,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static AnalysisVersionDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<AnalysisVersionDto> deserializeExpected(const QByteArray &json);
+
         AnalysisVersionDto(
             QString date,
             std::optional<QString> label,
@@ -1358,7 +1464,7 @@ namespace Axivion::Internal::Dto
             std::optional<double> cloneRatio
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1404,6 +1510,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ApiTokenCreationRequestDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ApiTokenCreationRequestDto> deserializeExpected(const QByteArray &json);
+
         ApiTokenCreationRequestDto(
             QString password,
             QString type,
@@ -1421,9 +1529,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         ApiTokenType getTypeEnum() const;
 
+        std::optional<ApiTokenType> getOptionalTypeEnum() const;
+
         void setTypeEnum(ApiTokenType newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1520,6 +1630,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ApiTokenInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ApiTokenInfoDto> deserializeExpected(const QByteArray &json);
+
         ApiTokenInfoDto(
             QString id,
             QString url,
@@ -1555,9 +1667,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         ApiTokenType getTypeEnum() const;
 
+        std::optional<ApiTokenType> getOptionalTypeEnum() const;
+
         void setTypeEnum(ApiTokenType newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1597,6 +1711,8 @@ namespace Axivion::Internal::Dto
         QString alignment;
 
         /**
+         * The type of the column values.
+         * 
          * <p>The column type.
          * 
          * <p>Possible values:
@@ -1641,6 +1757,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ColumnInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ColumnInfoDto> deserializeExpected(const QByteArray &json);
+
         ColumnInfoDto(
             QString key,
             std::optional<QString> header,
@@ -1660,7 +1778,7 @@ namespace Axivion::Internal::Dto
             bool canSort,
             bool canFilter,
             TableCellAlignment alignment,
-            QString type,
+            ColumnType type,
             std::optional<std::vector<ColumnTypeOptionDto>> typeOptions,
             qint32 width,
             bool showByDefault,
@@ -1670,9 +1788,18 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         TableCellAlignment getAlignmentEnum() const;
 
+        std::optional<TableCellAlignment> getOptionalAlignmentEnum() const;
+
         void setAlignmentEnum(TableCellAlignment newValue);
 
-        virtual QByteArray serialize() const override;
+        // Throws std::range_error
+        ColumnType getTypeEnum() const;
+
+        std::optional<ColumnType> getOptionalTypeEnum() const;
+
+        void setTypeEnum(ColumnType newValue);
+
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1726,7 +1853,7 @@ namespace Axivion::Internal::Dto
         /**
          * <p>The HTTP-Request Header expected present for all HTTP requests that are not GET, HEAD, OPTIONS or TRACE.
          * 
-         * <p>Deprecated since 7.7.0: the header name is always ``AX-CSRF-Token``.
+         * <p>Deprecated since 7.6.6: the header name is always ``AX-CSRF-Token``.
          * 
          * @deprecated
          */
@@ -1791,12 +1918,14 @@ namespace Axivion::Internal::Dto
         /**
          * <p>Endoint for creating new CSRF tokens.
          * 
-         * @since 7.7.0
+         * @since 7.6.6
          */
         std::optional<QString> csrfTokenUrl;
 
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static DashboardInfoDto deserialize(const QByteArray &json);
+
+        static Utils::expected_str<DashboardInfoDto> deserializeExpected(const QByteArray &json);
 
         DashboardInfoDto(
             std::optional<QString> mainUrl,
@@ -1816,7 +1945,7 @@ namespace Axivion::Internal::Dto
             std::optional<QString> csrfTokenUrl
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1834,11 +1963,13 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueCommentListDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueCommentListDto> deserializeExpected(const QByteArray &json);
+
         IssueCommentListDto(
             std::vector<IssueCommentDto> comments
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1868,6 +1999,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueKindInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueKindInfoDto> deserializeExpected(const QByteArray &json);
+
         IssueKindInfoDto(
             QString prefix,
             QString niceSingularName,
@@ -1883,9 +2016,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         IssueKind getPrefixEnum() const;
 
+        std::optional<IssueKind> getOptionalPrefixEnum() const;
+
         void setPrefixEnum(IssueKind newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1903,11 +2038,13 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueTagTypeListDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueTagTypeListDto> deserializeExpected(const QByteArray &json);
+
         IssueTagTypeListDto(
             std::vector<IssueTagTypeDto> tags
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -1993,6 +2130,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static LineMarkerDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<LineMarkerDto> deserializeExpected(const QByteArray &json);
+
         LineMarkerDto(
             QString kind,
             std::optional<qint64> id,
@@ -2020,9 +2159,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         IssueKind getKindEnum() const;
 
+        std::optional<IssueKind> getOptionalKindEnum() const;
+
         void setKindEnum(IssueKind newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2040,32 +2181,36 @@ namespace Axivion::Internal::Dto
          * 
          * <p>The log-level of the message.
          */
-        std::optional<QString> severity;
+        QString severity;
 
         /**
          * <p>the log-message. It may contain new-lines.
          */
-        std::optional<QString> message;
+        QString message;
 
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static RepositoryUpdateMessageDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<RepositoryUpdateMessageDto> deserializeExpected(const QByteArray &json);
+
         RepositoryUpdateMessageDto(
-            std::optional<QString> severity,
-            std::optional<QString> message
+            QString severity,
+            QString message
         );
 
         RepositoryUpdateMessageDto(
-            std::optional<MessageSeverity> severity,
-            std::optional<QString> message
+            MessageSeverity severity,
+            QString message
         );
 
         // Throws std::range_error
-        std::optional<MessageSeverity> getSeverityEnum() const;
+        MessageSeverity getSeverityEnum() const;
 
-        void setSeverityEnum(std::optional<MessageSeverity> newValue);
+        std::optional<MessageSeverity> getOptionalSeverityEnum() const;
 
-        virtual QByteArray serialize() const override;
+        void setSeverityEnum(MessageSeverity newValue);
+
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2083,11 +2228,13 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static RuleListDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<RuleListDto> deserializeExpected(const QByteArray &json);
+
         RuleListDto(
             std::vector<RuleDto> rules
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2112,6 +2259,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static SortInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<SortInfoDto> deserializeExpected(const QByteArray &json);
+
         SortInfoDto(
             QString key,
             QString direction
@@ -2125,9 +2274,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         SortDirection getDirectionEnum() const;
 
+        std::optional<SortDirection> getOptionalDirectionEnum() const;
+
         void setDirectionEnum(SortDirection newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2166,6 +2317,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static UserRefDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<UserRefDto> deserializeExpected(const QByteArray &json);
+
         UserRefDto(
             QString name,
             QString displayName,
@@ -2176,16 +2329,18 @@ namespace Axivion::Internal::Dto
         UserRefDto(
             QString name,
             QString displayName,
-            std::optional<UserRefType> type,
+            UserRefType type,
             std::optional<bool> isPublic
         );
 
         // Throws std::range_error
-        std::optional<UserRefType> getTypeEnum() const;
+        UserRefType getTypeEnum() const;
 
-        void setTypeEnum(std::optional<UserRefType> newValue);
+        std::optional<UserRefType> getOptionalTypeEnum() const;
 
-        virtual QByteArray serialize() const override;
+        void setTypeEnum(UserRefType newValue);
+
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2208,12 +2363,14 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static AnalyzedFileListDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<AnalyzedFileListDto> deserializeExpected(const QByteArray &json);
+
         AnalyzedFileListDto(
             AnalysisVersionDto version,
             std::vector<AnalyzedFileDto> rows
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2236,12 +2393,14 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static EntityListDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<EntityListDto> deserializeExpected(const QByteArray &json);
+
         EntityListDto(
             std::optional<AnalysisVersionDto> version,
             std::vector<EntityDto> entities
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2284,6 +2443,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static FileViewDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<FileViewDto> deserializeExpected(const QByteArray &json);
+
         FileViewDto(
             QString fileName,
             std::optional<QString> version,
@@ -2291,7 +2452,7 @@ namespace Axivion::Internal::Dto
             std::vector<LineMarkerDto> lineMarkers
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2347,6 +2508,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueDto> deserializeExpected(const QByteArray &json);
+
         IssueDto(
             QString kind,
             qint64 id,
@@ -2370,9 +2533,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         IssueKind getKindEnum() const;
 
+        std::optional<IssueKind> getOptionalKindEnum() const;
+
         void setKindEnum(IssueKind newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2459,6 +2624,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static IssueTableDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<IssueTableDto> deserializeExpected(const QByteArray &json);
+
         IssueTableDto(
             std::optional<AnalysisVersionDto> startVersion,
             AnalysisVersionDto endVersion,
@@ -2470,7 +2637,7 @@ namespace Axivion::Internal::Dto
             std::optional<qint32> totalRemovedCount
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2493,12 +2660,14 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static MetricListDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<MetricListDto> deserializeExpected(const QByteArray &json);
+
         MetricListDto(
             std::optional<AnalysisVersionDto> version,
             std::vector<MetricDto> metrics
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2544,6 +2713,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static MetricValueRangeDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<MetricValueRangeDto> deserializeExpected(const QByteArray &json);
+
         MetricValueRangeDto(
             AnalysisVersionDto startVersion,
             AnalysisVersionDto endVersion,
@@ -2552,7 +2723,7 @@ namespace Axivion::Internal::Dto
             std::vector<std::optional<double>> values
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2577,12 +2748,14 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static MetricValueTableDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<MetricValueTableDto> deserializeExpected(const QByteArray &json);
+
         MetricValueTableDto(
             std::vector<ColumnInfoDto> columns,
             std::vector<MetricValueTableRowDto> rows
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2639,6 +2812,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static NamedFilterCreateDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<NamedFilterCreateDto> deserializeExpected(const QByteArray &json);
+
         NamedFilterCreateDto(
             QString displayName,
             QString kind,
@@ -2658,9 +2833,11 @@ namespace Axivion::Internal::Dto
         // Throws std::range_error
         IssueKindForNamedFilterCreation getKindEnum() const;
 
+        std::optional<IssueKindForNamedFilterCreation> getOptionalKindEnum() const;
+
         void setKindEnum(IssueKindForNamedFilterCreation newValue);
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2759,6 +2936,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static NamedFilterInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<NamedFilterInfoDto> deserializeExpected(const QByteArray &json);
+
         NamedFilterInfoDto(
             QString key,
             QString displayName,
@@ -2778,7 +2957,7 @@ namespace Axivion::Internal::Dto
             QString displayName,
             std::optional<QString> url,
             bool isPredefined,
-            std::optional<NamedFilterType> type,
+            NamedFilterType type,
             bool canWrite,
             std::map<QString, QString> filters,
             std::optional<std::vector<SortInfoDto>> sorters,
@@ -2788,11 +2967,13 @@ namespace Axivion::Internal::Dto
         );
 
         // Throws std::range_error
-        std::optional<NamedFilterType> getTypeEnum() const;
+        NamedFilterType getTypeEnum() const;
 
-        void setTypeEnum(std::optional<NamedFilterType> newValue);
+        std::optional<NamedFilterType> getOptionalTypeEnum() const;
 
-        virtual QByteArray serialize() const override;
+        void setTypeEnum(NamedFilterType newValue);
+
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2847,6 +3028,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static NamedFilterUpdateDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<NamedFilterUpdateDto> deserializeExpected(const QByteArray &json);
+
         NamedFilterUpdateDto(
             std::optional<QString> name,
             std::optional<std::map<QString, QString>> filters,
@@ -2854,7 +3037,7 @@ namespace Axivion::Internal::Dto
             std::optional<NamedFilterVisibilityDto> visibility
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2906,6 +3089,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static ProjectInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<ProjectInfoDto> deserializeExpected(const QByteArray &json);
+
         ProjectInfoDto(
             QString name,
             std::optional<QString> issueFilterHelp,
@@ -2916,7 +3101,7 @@ namespace Axivion::Internal::Dto
             bool hasHiddenIssues
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -2947,13 +3132,15 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static RepositoryUpdateResponseDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<RepositoryUpdateResponseDto> deserializeExpected(const QByteArray &json);
+
         RepositoryUpdateResponseDto(
             std::vector<RepositoryUpdateMessageDto> messages,
             bool hasErrors,
             bool hasWarnings
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
     /**
@@ -3014,6 +3201,8 @@ namespace Axivion::Internal::Dto
         // Throws Axivion::Internal::Dto::invalid_dto_exception
         static TableInfoDto deserialize(const QByteArray &json);
 
+        static Utils::expected_str<TableInfoDto> deserializeExpected(const QByteArray &json);
+
         TableInfoDto(
             QString tableDataUri,
             std::optional<QString> issueBaseViewUri,
@@ -3023,7 +3212,7 @@ namespace Axivion::Internal::Dto
             QString axivionDefaultFilter
         );
 
-        virtual QByteArray serialize() const override;
+        QByteArray serialize() const override;
     };
 
 }

@@ -41,8 +41,11 @@ public:
     bool isTemporarilyReadOnly() const;
     void setTemporarilyReadOnly(bool on);
 
-    bool isAdditionalTabDisabled() const;
-    void setIsAdditionalTabDisabled(bool on);
+    bool isAdditionalTabVisible() const;
+    void setIsAdditionalTabVisible(bool on);
+
+    bool additionalTabExist() const;
+    void setAdditionalTabExist(bool on);
 
     void setTabSettings(const TabSettings &settings);
     TabSettings tabSettings() const;
@@ -80,6 +83,9 @@ signals:
     void currentDelegateChanged(TextEditor::ICodeStylePreferences *currentDelegate);
     void currentPreferencesChanged(TextEditor::ICodeStylePreferences *currentPreferences);
     void displayNameChanged(const QString &newName);
+    void aboutToBeRemoved(TextEditor::ICodeStylePreferences *preferences);
+    void aboutToBeCopied(TextEditor::ICodeStylePreferences *current,
+                         TextEditor::ICodeStylePreferences *target);
 
 private:
     void codeStyleRemoved(ICodeStylePreferences *preferences);

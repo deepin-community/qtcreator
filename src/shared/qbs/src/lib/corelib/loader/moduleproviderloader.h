@@ -67,13 +67,12 @@ public:
         std::optional<QStringList> searchPaths;
     };
     ModuleProviderResult executeModuleProviders(
-            ProductContext &productContext,
-            const CodeLocation &dependsItemLocation,
-            const QualifiedId &moduleName,
-            FallbackMode fallbackMode);
+        ProductContext &productContext,
+        const CodeLocation &dependsItemLocation,
+        const QualifiedId &moduleName);
 
 private:
-    enum class ModuleProviderLookup { Scoped, Named, Fallback };
+    enum class ModuleProviderLookup { Scoped, Named };
     struct Provider {
         QualifiedId name;
         ModuleProviderLookup lookup;
@@ -103,6 +102,7 @@ private:
             const QString &providerFile,
             const QVariantMap &moduleConfig,
             const QVariantMap &qbsModule);
+    void checkAllowedValues(Item *providerItem);
 
     LoaderState &m_loaderState;
 };

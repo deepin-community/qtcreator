@@ -33,10 +33,6 @@ class LANGUAGECLIENT_EXPORT LanguageClientManager : public QObject
     Q_DISABLE_COPY_MOVE(LanguageClientManager)
 
 public:
-    ~LanguageClientManager() override;
-
-    static void init();
-
     static void clientStarted(Client *client);
     static void clientFinished(Client *client);
     static Client *startClient(const BaseSettings *setting, ProjectExplorer::Project *project = nullptr);
@@ -45,21 +41,26 @@ public:
     static void restartClient(Client *client);
 
     static void shutdownClient(Client *client);
-    static void deleteClient(Client *client);
+    static void deleteClient(Client *client, bool unexpected = false);
 
     static void shutdown();
     static bool isShutdownFinished();
 
     static LanguageClientManager *instance();
 
-    static QList<Client *> clientsSupportingDocument(const TextEditor::TextDocument *doc);
+    static QList<Client *> clientsSupportingDocument(
+        const TextEditor::TextDocument *doc, bool onlyReachable = true);
 
     static void applySettings();
+    static void applySettings(BaseSettings *settings);
+    static void writeSettings();
     static QList<BaseSettings *> currentSettings();
     static void registerClientSettings(BaseSettings *settings);
     static void enableClientSettings(const QString &settingsId, bool enable = true);
     static QList<Client *> clientsForSetting(const BaseSettings *setting);
+    static QList<Client *> clientsForSettingId(const QString &settingsId);
     static const BaseSettings *settingForClient(Client *setting);
+    static QList<Client *> clientsByName(const QString &name);
     static void updateWorkspaceConfiguration(const ProjectExplorer::Project *project,
                                              const QJsonValue &json);
 
@@ -81,19 +82,25 @@ public:
 
     static void showInspector();
 
+public slots:
+    // These slots are called automatically if the a file is opened via the usual EditorManager
+    // methods. If you create an editor manually, you need to call these slots manually as well.
+    void editorOpened(Core::IEditor *editor);
+    void documentOpened(Core::IDocument *document);
+    void documentClosed(Core::IDocument *document);
+
 signals:
     void clientAdded(Client *client);
     void clientInitialized(Client *client);
-    void clientRemoved(Client *client);
+    void clientRemoved(Client *client, bool unexpected);
     void shutdownFinished();
     void openCallHierarchy();
 
 private:
-    LanguageClientManager(QObject *parent);
+    explicit LanguageClientManager(QObject *parent);
+    ~LanguageClientManager() override;
 
-    void editorOpened(Core::IEditor *editor);
-    void documentOpened(Core::IDocument *document);
-    void documentClosed(Core::IDocument *document);
+    friend void setupLanguageClientManager(QObject *guard);
 
     void updateProject(ProjectExplorer::Project *project);
     void projectAdded(ProjectExplorer::Project *project);
@@ -118,5 +125,7 @@ template<typename T> bool LanguageClientManager::hasClients()
         return qobject_cast<const T* >(c);
     });
 }
+
+void setupLanguageClientManager(QObject *guard);
 
 } // namespace LanguageClient

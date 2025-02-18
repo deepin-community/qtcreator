@@ -3,6 +3,7 @@
 
 #include "cppeditoroutline.h"
 
+#include "cppeditorconstants.h"
 #include "cppeditordocument.h"
 #include "cppeditortr.h"
 #include "cppeditorwidget.h"
@@ -12,8 +13,11 @@
 
 #include <texteditor/texteditor.h>
 #include <texteditor/textdocument.h>
-#include <coreplugin/editormanager/editormanager.h>
 
+#include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/icore.h>
+
+#include <utils/storekey.h>
 #include <utils/treeviewcombobox.h>
 
 #include <QAction>
@@ -30,20 +34,20 @@
 
 enum { UpdateOutlineIntervalInMs = 500 };
 
-namespace {
+using namespace Core;
+using namespace Utils;
 
-class OutlineProxyModel : public QSortFilterProxyModel
+namespace CppEditor::Internal {
+
+class OutlineProxyModel final : public QSortFilterProxyModel
 {
-    Q_OBJECT
-
 public:
-    OutlineProxyModel(CppEditor::Internal::OutlineModel &sourceModel, QObject *parent)
+    OutlineProxyModel(OutlineModel &sourceModel, QObject *parent)
         : QSortFilterProxyModel(parent)
         , m_sourceModel(sourceModel)
-    {
-    }
+    {}
 
-    bool filterAcceptsRow(int sourceRow,const QModelIndex &sourceParent) const override
+    bool filterAcceptsRow(int sourceRow,const QModelIndex &sourceParent) const final
     {
         // Ignore generated symbols, e.g. by macro expansion (Q_OBJECT)
         const QModelIndex sourceIndex = m_sourceModel.index(sourceRow, 0, sourceParent);
@@ -56,30 +60,39 @@ private:
     CppEditor::Internal::OutlineModel &m_sourceModel;
 };
 
-QTimer *newSingleShotTimer(QObject *parent, int msInternal, const QString &objectName)
+static Key sortEditorDocumentOutlineKey()
 {
-    auto *timer = new QTimer(parent);
-    timer->setObjectName(objectName);
-    timer->setSingleShot(true);
-    timer->setInterval(msInternal);
-    return timer;
+    return Key(Constants::CPPEDITOR_SETTINGSGROUP)
+         + '/' + Constants::CPPEDITOR_SORT_EDITOR_DOCUMENT_OUTLINE;
 }
 
-} // anonymous namespace
+const bool kSortEditorDocumentOutlineDefault = true;
 
-namespace CppEditor::Internal {
+static bool sortedEditorDocumentOutline()
+{
+    return ICore::settings()
+        ->value(sortEditorDocumentOutlineKey(), kSortEditorDocumentOutlineDefault)
+        .toBool();
+}
+
+static void setSortedEditorDocumentOutline(bool sorted)
+{
+    ICore::settings()->setValueWithDefault(sortEditorDocumentOutlineKey(),
+                                           sorted,
+                                           kSortEditorDocumentOutlineDefault);
+}
 
 CppEditorOutline::CppEditorOutline(CppEditorWidget *editorWidget)
     : QObject(editorWidget)
     , m_editorWidget(editorWidget)
-    , m_combo(new Utils::TreeViewComboBox)
+    , m_combo(new TreeViewComboBox)
 {
     m_model = &editorWidget->cppEditorDocument()->outlineModel();
     m_proxyModel = new OutlineProxyModel(*m_model, this);
     m_proxyModel->setSourceModel(m_model);
 
     // Set up proxy model
-    if (CppToolsSettings::sortedEditorDocumentOutline())
+    if (sortedEditorDocumentOutline())
         m_proxyModel->sort(0, Qt::AscendingOrder);
     else
         m_proxyModel->sort(-1, Qt::AscendingOrder); // don't sort yet, but set column for sortedOutline()
@@ -98,18 +111,20 @@ CppEditorOutline::CppEditorOutline(CppEditorWidget *editorWidget)
     m_sortAction = new QAction(Tr::tr("Sort Alphabetically"), m_combo);
     m_sortAction->setCheckable(true);
     m_sortAction->setChecked(isSorted());
-    connect(m_sortAction, &QAction::toggled,
-            CppToolsSettings::instance(),
-            &CppToolsSettings::setSortedEditorDocumentOutline);
+    connect(m_sortAction, &QAction::toggled, &setSortedEditorDocumentOutline);
     m_combo->addAction(m_sortAction);
 
     connect(m_combo, &QComboBox::activated, this, &CppEditorOutline::gotoSymbolInEditor);
     connect(m_combo, &QComboBox::currentIndexChanged, this, &CppEditorOutline::updateToolTip);
 
     connect(m_model, &OutlineModel::modelReset, this, &CppEditorOutline::updateNow);
+
     // Set up timers
-    m_updateIndexTimer = newSingleShotTimer(this, UpdateOutlineIntervalInMs,
-                                            QLatin1String("CppEditorOutline::m_updateIndexTimer"));
+    m_updateIndexTimer = new QTimer(this);
+    m_updateIndexTimer->setObjectName("CppEditorOutline::m_updateIndexTimer");
+    m_updateIndexTimer->setSingleShot(true);
+    m_updateIndexTimer->setInterval(UpdateOutlineIntervalInMs);
+
     connect(m_updateIndexTimer, &QTimer::timeout, this, &CppEditorOutline::updateIndexNow);
 }
 
@@ -121,12 +136,6 @@ bool CppEditorOutline::isSorted() const
 QWidget *CppEditorOutline::widget() const
 {
     return m_combo;
-}
-
-QSharedPointer<CPlusPlus::Document> getDocument(const Utils::FilePath &filePath)
-{
-    const CPlusPlus::Snapshot snapshot = CppModelManager::snapshot();
-    return snapshot.document(filePath);
 }
 
 void CppEditorOutline::updateNow()
@@ -170,16 +179,14 @@ void CppEditorOutline::gotoSymbolInEditor()
     const QModelIndex modelIndex = m_combo->view()->currentIndex();
     const QModelIndex sourceIndex = m_proxyModel->mapToSource(modelIndex);
 
-    const Utils::Link link = m_model->linkFromIndex(sourceIndex);
+    const Link link = m_model->linkFromIndex(sourceIndex);
     if (!link.hasValidTarget())
         return;
 
-    Core::EditorManager::cutForwardNavigationHistory();
-    Core::EditorManager::addCurrentPositionToNavigationHistory();
+    EditorManager::cutForwardNavigationHistory();
+    EditorManager::addCurrentPositionToNavigationHistory();
     m_editorWidget->gotoLine(link.targetLine, link.targetColumn, true, true);
     emit m_editorWidget->activateEditor();
 }
 
 } // namespace CppEditor::Internal
-
-#include <cppeditoroutline.moc>

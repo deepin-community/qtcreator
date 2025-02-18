@@ -9,7 +9,7 @@ def toggleIssuesFilter(filterName, checked):
         filterMenu = waitForObject("{type='QMenu' unnamed='1' visible='1'}")
         waitFor("filterMenu.visible", 1000)
 
-        filterCategory = waitForObjectItem(filterMenu, filterName)
+        filterCategory = waitForObjectItem(filterMenu, filterName, 1000)
         waitFor("filterCategory.visible", 2000)
         if filterCategory.checked == checked:
             test.log("Filter '%s' has already check state %s - not toggling."
@@ -20,18 +20,26 @@ def toggleIssuesFilter(filterName, checked):
             test.log("Filter '%s' check state changed to %s." % (filterName, checked))
     except:
         t,v = sys.exc_info()[:2]
-        test.log("Exception while toggling filter '%s'" % filterName,
-                 "%s: %s" % (t.__name__, str(v)))
+        test.warning("Exception while toggling filter '%s'" % filterName,
+                     "%s: %s" % (t.__name__, str(v)))
 
 
 def getBuildIssues(ignoreCodeModel=True):
+    # Heuristically determine whether the ClandCodeModel is loaded.
+    # The current implementation is inaccurate:
+    # The value may be "True" although the CCM was not loaded due to existing settings or
+    # insufficient memory. This would result in a slightly longer execution and false positive
+    # warnings. Since neither would cause an actual damage and a precise handling would require
+    # a bigger refactoring, this seems acceptable.
+    clangLoaded = " -noload ClangCodeModel" not in currentApplicationContext().commandLine
+
     ensureChecked(":Qt Creator_Issues_Core::Internal::OutputPaneToggleButton" , silent=True)
     model = waitForObject(":Qt Creator.Issues_QListView").model()
-    if ignoreCodeModel:
+    if ignoreCodeModel and clangLoaded:
         # filter out possible code model issues present inside the Issues pane
         toggleIssuesFilter("Clang Code Model", False)
     result = dumpBuildIssues(model)
-    if ignoreCodeModel:
+    if ignoreCodeModel and clangLoaded:
         # reset the filter
         toggleIssuesFilter("Clang Code Model", True)
     return result
@@ -40,12 +48,6 @@ def getBuildIssues(ignoreCodeModel=True):
 # lines within the Issues output
 # param expectedToFail can be used to tell this function if the build was expected to fail or not
 def checkLastBuild(expectedToFail=False):
-    try:
-        # can't use waitForObject() 'cause visible is always 0
-        findObject("{type='ProjectExplorer::Internal::BuildProgress' unnamed='1' }")
-    except LookupError:
-        test.log("checkLastBuild called without a build")
-        return
     buildIssues = getBuildIssues()
     types = [i[1] for i in buildIssues]
     errors = types.count("1")
@@ -119,7 +121,7 @@ def selectBuildConfig(wantedKit, configName, afterSwitchTo=ViewConstants.EDIT):
     switchViewTo(ViewConstants.PROJECTS)
     if any((switchToBuildOrRunSettingsFor(wantedKit, ProjectSettings.BUILD),
             selectFromCombo(":scrollArea.Edit build configuration:_QComboBox", configName))):
-        waitForProjectParsing(5000, 30000, 0)
+        progressBarWait(30000)
     if afterSwitchTo:
         if ViewConstants.FIRST_AVAILABLE <= afterSwitchTo <= ViewConstants.LAST_AVAILABLE:
             switchViewTo(afterSwitchTo)
@@ -140,41 +142,16 @@ def verifyBuildConfig(currentTarget, configName, shouldBeDebug=False, enableShad
 
     buildCfCombo = waitForObject("{leftWidget=':scrollArea.Edit build configuration:_QLabel' "
                                  "type='QComboBox' unnamed='1' visible='1'}")
-    if shouldBeDebug:
-        test.compare(buildCfCombo.currentText, 'Debug', "Verifying whether it's a debug build")
-    else:
-        test.compare(buildCfCombo.currentText, 'Release', "Verifying whether it's a release build")
-    if enableQmlDebug:
-        try:
-            libLabel = waitForObject(":scrollArea.Library not available_QLabel", 2000)
-            mouseClick(libLabel, libLabel.width - 10, libLabel.height / 2, 0, Qt.LeftButton)
-        except:
-            pass
-        # Since waitForObject waits for the object to be enabled,
-        # it will wait here until compilation of the debug libraries has finished.
-        runCMakeButton = ("{type='QPushButton' text='Run CMake' unnamed='1' "
-                          "window=':Qt Creator_Core::Internal::MainWindow'}")
-        qmlDebuggingCombo = findObject(':Qt Creator.QML debugging and profiling:_QComboBox')
-        if selectFromCombo(qmlDebuggingCombo, 'Enable'):
-            if buildSystem is None or buildSystem == "CMake": # re-run cmake to apply
-                clickButton(waitForObject(runCMakeButton))
-            elif buildSystem == "qmake": # Don't rebuild now
-                clickButton(waitForObject(":QML Debugging.No_QPushButton", 5000))
-        try:
-            problemFound = waitForObject("{window=':Qt Creator_Core::Internal::MainWindow' "
-                                         "type='QLabel' name='problemLabel' visible='1'}", 1000)
-            if problemFound:
-                test.warning('%s' % problemFound.text)
-        except:
-            pass
-    else:
-        qmlDebuggingCombo = findObject(':Qt Creator.QML debugging and profiling:_QComboBox')
-        if selectFromCombo(qmlDebuggingCombo, "Disable"):
-            test.log("Qml debugging libraries are available - unchecked qml debugging.")
-            if buildSystem is None or buildSystem == "CMake": # re-run cmake to apply
-                clickButton(waitForObject(runCMakeButton))
-            elif buildSystem == "qmake": # Don't rebuild now
-                clickButton(waitForObject(":QML Debugging.No_QPushButton", 5000))
+    buildType = "Debug" if shouldBeDebug else "Release"
+    test.compare(buildCfCombo.currentText, buildType,
+                 "Verifying whether it's a %s build" % buildType)
+    qmlDebuggingCombo = waitForObject(':Qt Creator.QML debugging and profiling:_QComboBox')
+    if (selectFromCombo(qmlDebuggingCombo, "Enable" if enableQmlDebug else "Disable")
+        and buildSystem == "qmake"):
+        # Don't rebuild now
+        clickButton(waitForObject(":QML Debugging.No_QPushButton", 5000))
+        # Wait for parsing to finish
+        progressBarWait(14000)
     clickButton(waitForObject(":scrollArea.Details_Utils::DetailsButton"))
     switchViewTo(ViewConstants.EDIT)
 

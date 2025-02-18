@@ -7,7 +7,9 @@
 
 #include "cmakeconfigitem.h"
 
-#include <projectexplorer/kitmanager.h>
+#include <utils/id.h>
+
+namespace ProjectExplorer { class KitAspect; }
 
 namespace CMakeProjectManager {
 
@@ -27,7 +29,6 @@ public:
 
 private:
     friend class CMakeToolManager;
-    static void createFactories();
 };
 
 class CMAKE_EXPORT CMakeGeneratorKitAspect
@@ -69,5 +70,7 @@ public:
 
     static ProjectExplorer::KitAspect *createKitAspect(ProjectExplorer::Kit *k);
 };
+
+namespace Internal { void setupCMakeKitAspects(); }
 
 } // CMakeProjectManager

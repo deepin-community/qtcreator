@@ -56,6 +56,11 @@ QUrl ExternalDependencies::projectUrl() const
     return {};
 }
 
+QString ExternalDependencies::projectName() const
+{
+    return QmlDesignerPlugin::instance()->documentManager().currentProjectName();
+}
+
 QString ExternalDependencies::currentProjectDirPath() const
 {
     return QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toString();
@@ -246,6 +251,18 @@ bool ExternalDependencies::isQt6Project() const
     return qmlBuildSystem && qmlBuildSystem->qt6Project();
 }
 
+bool ExternalDependencies::isQtForMcusProject() const
+{
+    // QmlBuildSystem
+    auto [project, target, qmlBuildSystem] = activeProjectEntries();
+    if (qmlBuildSystem)
+        return  qmlBuildSystem->qtForMCUs();
+
+    // CMakeBuildSystem
+    ProjectExplorer::Target *activeTarget = ProjectExplorer::ProjectManager::startupTarget();
+    return activeTarget && activeTarget->kit() && activeTarget->kit()->hasValue("McuSupport.McuTargetKitVersion");
+}
+
 QString ExternalDependencies::qtQuickVersion() const
 {
     auto [project, target, qmlBuildSystem] = activeProjectEntries();
@@ -256,6 +273,16 @@ QString ExternalDependencies::qtQuickVersion() const
 Utils::FilePath ExternalDependencies::resourcePath(const QString &relativePath) const
 {
     return Core::ICore::resourcePath(relativePath);
+}
+
+QString ExternalDependencies::userResourcePath(QStringView relativePath) const
+{
+    return Core::ICore::userResourcePath(relativePath.toString()).path();
+}
+
+QWidget *ExternalDependencies::mainWindow() const
+{
+    return Core::ICore::mainWindow();
 }
 
 } // namespace QmlDesigner

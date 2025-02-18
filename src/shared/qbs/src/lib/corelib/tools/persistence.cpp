@@ -48,7 +48,7 @@
 namespace qbs {
 namespace Internal {
 
-static const char QBS_PERSISTENCE_MAGIC[] = "QBSPERSISTENCE-132";
+static const char QBS_PERSISTENCE_MAGIC[] = "QBSPERSISTENCE-134";
 
 NoBuildGraphError::NoBuildGraphError(const QString &filePath)
     : ErrorInfo(Tr::tr("Build graph not found for configuration '%1'. Expected location was '%2'.")
@@ -140,6 +140,11 @@ void PersistentPool::finalizeWriteStream()
 
 void PersistentPool::storeVariant(const QVariant &variant)
 {
+    if (variant.isNull()) {
+        m_stream << quint32(QMetaType::User);
+        m_stream << variant;
+        return;
+    }
     const auto type = static_cast<quint32>(variant.userType());
     m_stream << type;
     switch (type) {
@@ -230,9 +235,6 @@ void PersistentPool::doStoreValue(const QProcessEnvironment &env)
     for (const QString &key : keys)
         store(env.value(key));
 }
-
-const PersistentPool::PersistentObjectId PersistentPool::ValueNotFoundId;
-const PersistentPool::PersistentObjectId PersistentPool::EmptyValueId;
 
 } // namespace Internal
 } // namespace qbs

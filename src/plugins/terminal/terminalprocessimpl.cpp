@@ -10,7 +10,6 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QLoggingCategory>
-#include <QTemporaryFile>
 #include <QTimer>
 
 Q_LOGGING_CATEGORY(terminalProcessLog, "qtc.terminal.stubprocess", QtDebugMsg)
@@ -36,7 +35,12 @@ public:
             return m_fallbackStubCreator->startStubProcess(setup);
         }
 
-        const Id id = Id::fromString(setup.m_commandLine.executable().toUserOutput());
+        const QString shellName
+            = setup.m_extraData
+                  .value(TERMINAL_SHELL_NAME, setup.m_commandLine.executable().fileName())
+                  .toString();
+
+        const Id id = Id::fromString(shellName);
 
         TerminalWidget *terminal = m_terminalPane->stoppedTerminalWithId(id);
 
@@ -46,14 +50,10 @@ public:
 
         if (!terminal) {
             terminal = new TerminalWidget(nullptr, openParameters);
-
-            terminal->setShellName(
-                setup.m_extraData
-                    .value(TERMINAL_SHELL_NAME, setup.m_commandLine.executable().fileName())
-                    .toString());
-
+            terminal->setShellName(shellName);
             m_terminalPane->addTerminal(terminal, "App");
         } else {
+            terminal->setShellName(shellName);
             terminal->restart(openParameters);
         }
 

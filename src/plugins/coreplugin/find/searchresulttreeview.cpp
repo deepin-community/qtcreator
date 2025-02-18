@@ -45,6 +45,10 @@ SearchResultTreeView::SearchResultTreeView(QWidget *parent)
     setItemDelegate(new SearchResultTreeItemDelegate(8, this));
     setIndentation(14);
     setExpandsOnDoubleClick(true);
+    setFrameStyle(QFrame::NoFrame);
+    setAttribute(Qt::WA_MacShowFocusRect, false);
+    setSearchRole(ItemDataRoles::ResultLineRole);
+
     header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     header()->setStretchLastSection(false);
     header()->hide();
@@ -56,6 +60,11 @@ SearchResultTreeView::SearchResultTreeView(QWidget *parent)
 void SearchResultTreeView::setAutoExpandResults(bool expand)
 {
     m_autoExpandResults = expand;
+}
+
+void SearchResultTreeView::setRelativePaths(bool relative)
+{
+    m_model->setRelativePaths(relative);
 }
 
 void SearchResultTreeView::setTextEditorFont(const QFont &font, const SearchResultColors &colors)

@@ -117,7 +117,7 @@ public:
                 return false;
             };
             if (isFwdDecl())
-                return Utils::creatorTheme()->color(Utils::Theme::TextColorDisabled);
+                return Utils::creatorColor(Utils::Theme::TextColorDisabled);
             return TreeItem::data(column, role);
         }
 
@@ -219,7 +219,7 @@ void OutlineModel::rebuild()
     auto root = new SymbolItem;
     if (m_cppDocument)
         buildTree(root, true);
-    setRootItem(root);
+    setRootItemInternal(root);
     endResetModel();
 }
 

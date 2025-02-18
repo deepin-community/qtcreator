@@ -19,29 +19,23 @@ namespace ClangFormat {
 class ClangFormatFile
 {
 public:
-    explicit ClangFormatFile(const TextEditor::ICodeStylePreferences *preferences);
+    explicit ClangFormatFile(
+        const TextEditor::ICodeStylePreferences *preferences, const Utils::FilePath &filePath = {});
     clang::format::FormatStyle style();
 
     Utils::FilePath filePath();
     void resetStyleToQtC(const TextEditor::ICodeStylePreferences *codeStyle);
-    void setBasedOnStyle(QString styleName);
-    void setStyle(clang::format::FormatStyle style);
-    QString setStyle(QString style);
-    void clearBasedOnStyle();
 
-    using Field = std::pair<QString, QString>;
-    QString changeFields(QList<Field> fields);
-    QString changeField(Field field);
-    CppEditor::CppCodeStyleSettings toCppCodeStyleSettings(ProjectExplorer::Project *project) const;
-    TextEditor::TabSettings toTabSettings(ProjectExplorer::Project *project) const;
-    void fromCppCodeStyleSettings(const CppEditor::CppCodeStyleSettings &settings);
-    void fromTabSettings(const TextEditor::TabSettings &settings);
     bool isReadOnly() const;
     void setIsReadOnly(bool isReadOnly);
 
+    static void removeClangFormatFileForStylePreferences(
+        const TextEditor::ICodeStylePreferences *preferences);
+    static void copyClangFormatFileBasedOnStylePreferences(
+        const TextEditor::ICodeStylePreferences *current,
+        const TextEditor::ICodeStylePreferences *target);
+
 private:
-    void saveNewFormat();
-    void saveNewFormat(QByteArray style);
     void saveStyleToFile(clang::format::FormatStyle style, Utils::FilePath filePath);
 
 private:

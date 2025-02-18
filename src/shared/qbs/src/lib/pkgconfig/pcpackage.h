@@ -40,8 +40,6 @@
 #ifndef PC_PACKAGE_H
 #define PC_PACKAGE_H
 
-#include <variant.h>
-
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -49,6 +47,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace qbs {
@@ -112,12 +111,14 @@ public:
     std::vector<RequiredVersion> requiresPublic;
     std::vector<RequiredVersion> requiresPrivate;
     std::vector<RequiredVersion> conflicts;
+    std::optional<std::string> oldPrefix;
 
     using VariablesMap = std::map<std::string, std::string, std::less<>>;
     VariablesMap variables;
 
     bool uninstalled{false};
 
+    static bool shouldRewriteSysroot(std::string_view sysroot, std::string_view value);
     PcPackage prependSysroot(std::string_view sysroot) &&;
     PcPackage removeSystemLibraryPaths(const std::unordered_set<std::string> &libraryPaths) &&;
 };
@@ -130,31 +131,31 @@ public:
     std::string errorText;
 };
 
-class PcPackageVariant: public Variant::variant<PcPackage, PcBrokenPackage>
+class PcPackageVariant : public std::variant<PcPackage, PcBrokenPackage>
 {
 public:
-    using Base = Variant::variant<PcPackage, PcBrokenPackage>;
+    using Base = std::variant<PcPackage, PcBrokenPackage>;
     using Base::Base;
 
     bool isValid() const noexcept { return index() == 0; }
     bool isBroken() const noexcept { return index() == 1; }
 
-    const PcPackage &asPackage() const { return Variant::get<PcPackage>(*this); }
-    PcPackage &asPackage() { return Variant::get<PcPackage>(*this); }
+    const PcPackage &asPackage() const { return std::get<PcPackage>(*this); }
+    PcPackage &asPackage() { return std::get<PcPackage>(*this); }
 
-    const PcBrokenPackage &asBrokenPackage() const { return Variant::get<PcBrokenPackage>(*this); }
-    PcBrokenPackage &asBrokenPackage() { return Variant::get<PcBrokenPackage>(*this); }
+    const PcBrokenPackage &asBrokenPackage() const { return std::get<PcBrokenPackage>(*this); }
+    PcBrokenPackage &asBrokenPackage() { return std::get<PcBrokenPackage>(*this); }
 
     template<typename F>
     decltype(auto) visit(F &&f) const
     {
-         return Variant::visit(std::forward<F>(f), static_cast<const Base &>(*this));
+        return std::visit(std::forward<F>(f), static_cast<const Base &>(*this));
     }
 
     template<typename F>
     decltype(auto) visit(F &&f)
     {
-        return Variant::visit(std::forward<F>(f), static_cast<Base &>(*this));
+        return std::visit(std::forward<F>(f), static_cast<Base &>(*this));
     }
 
     const std::string &getBaseFileName() const
@@ -180,6 +181,26 @@ inline bool operator!=(const PcPackage::Flag &lhs, const PcPackage::Flag &rhs)
 {
     return !(lhs == rhs);
 }
+
+namespace Internal {
+
+// fast versions (no allocations) of the QFileInfo methods
+std::string_view fileName(std::string_view filePath);
+std::string_view completeBaseName(std::string_view filePath);
+std::string_view parentPath(std::string_view path);
+
+inline bool startsWith(std::string_view haystack, std::string_view needle)
+{
+    return haystack.size() >= needle.size() && haystack.compare(0, needle.size(), needle) == 0;
+}
+
+inline bool endsWith(std::string_view haystack, std::string_view needle)
+{
+    return haystack.size() >= needle.size()
+            && haystack.compare(haystack.size() - needle.size(), needle.size(), needle) == 0;
+}
+
+} // Internal
 
 } // namespace qbs
 

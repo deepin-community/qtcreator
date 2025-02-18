@@ -7,13 +7,9 @@
 #include <utils/filepath.h>
 #include <utils/id.h>
 
-#include <QMap>
 #include <QList>
-#include <QString>
+#include <QMap>
 #include <QPointer>
-#include <QVariant>
-
-#include <QIcon>
 #include <QWidget>
 
 #include <functional>
@@ -39,19 +35,23 @@ class EditorToolBar;
 
 namespace Internal {
 
+class EditorArea;
+class SplitterOrView;
+
 class EditLocation
 {
 public:
     QByteArray save() const;
     static EditLocation load(const QByteArray &data);
+    static EditLocation forEditor(const IEditor *editor, const QByteArray &saveState = {});
+
+    QString displayName() const;
 
     QPointer<IDocument> document;
     Utils::FilePath filePath;
     Utils::Id id;
     QByteArray state;
 };
-
-class SplitterOrView;
 
 class EditorView : public QWidget
 {
@@ -60,6 +60,10 @@ class EditorView : public QWidget
 public:
     explicit EditorView(SplitterOrView *parentSplitterOrView, QWidget *parent = nullptr);
     ~EditorView() override;
+
+    bool isInSplit() const;
+    EditorView *split(Qt::Orientation orientation);
+    EditorArea *editorArea() const;
 
     SplitterOrView *parentSplitterOrView() const;
     EditorView *findNextView() const;
@@ -84,6 +88,25 @@ public:
     void setCloseSplitEnabled(bool enable);
     void setCloseSplitIcon(const QIcon &icon);
 
+    bool canGoForward() const;
+    bool canGoBack() const;
+    bool canReopen() const;
+
+    void goBackInNavigationHistory();
+    void goForwardInNavigationHistory();
+
+    void reopenLastClosedDocument();
+
+    void goToEditLocation(const EditLocation &location);
+
+    void addCurrentPositionToNavigationHistory(const QByteArray &saveState = QByteArray());
+    void addClosedEditorToCloseHistory(IEditor *editor);
+    void cutForwardNavigationHistory();
+
+    QList<EditLocation> editorHistory() const { return m_editorHistory; }
+
+    void copyNavigationHistoryFrom(EditorView* other);
+    void updateEditorHistory(IEditor *editor);
     static void updateEditorHistory(IEditor *editor, QList<EditLocation> &history);
 
 signals:
@@ -93,6 +116,7 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *e) override;
     void focusInEvent(QFocusEvent *) override;
+    bool event(QEvent *e) override;
 
 private:
     friend class SplitterOrView; // for setParentSplitterOrView
@@ -112,6 +136,10 @@ private:
     void updateToolBar(IEditor *editor);
     void checkProjectLoaded(IEditor *editor);
 
+    void updateCurrentPositionInNavigationHistory();
+    bool openEditorFromNavigationHistory(int index);
+    void goToNavigationHistory(int index);
+
     SplitterOrView *m_parentSplitterOrView;
     EditorToolBar *m_toolBar;
 
@@ -123,32 +151,15 @@ private:
     QLabel *m_statusWidgetLabel;
     QToolButton *m_statusWidgetButton;
     QList<IEditor *> m_editors;
-    QMap<QWidget *, IEditor *> m_widgetEditorMap;
+    QHash<QWidget *, IEditor *> m_widgetEditorMap;
     QLabel *m_emptyViewLabel;
 
     QList<EditLocation> m_navigationHistory;
+    QMenu *m_backMenu;
+    QMenu *m_forwardMenu;
     QList<EditLocation> m_editorHistory;
+    QList<EditLocation> m_closedEditorHistory;
     int m_currentNavigationHistoryPosition = 0;
-    void updateCurrentPositionInNavigationHistory();
-
-public:
-    inline bool canGoForward() const { return m_currentNavigationHistoryPosition < m_navigationHistory.size()-1; }
-    inline bool canGoBack() const { return m_currentNavigationHistoryPosition > 0; }
-
-public slots:
-    void goBackInNavigationHistory();
-    void goForwardInNavigationHistory();
-
-public:
-    void goToEditLocation(const EditLocation &location);
-
-    void addCurrentPositionToNavigationHistory(const QByteArray &saveState = QByteArray());
-    void cutForwardNavigationHistory();
-
-    inline QList<EditLocation> editorHistory() const { return m_editorHistory; }
-
-    void copyNavigationHistoryFrom(EditorView* other);
-    void updateEditorHistory(IEditor *editor);
 };
 
 class SplitterOrView  : public QWidget
@@ -159,18 +170,18 @@ public:
     explicit SplitterOrView(EditorView *view);
     ~SplitterOrView() override;
 
-    void split(Qt::Orientation orientation, bool activateView = true);
+    EditorView *split(Qt::Orientation orientation);
     void unsplit();
 
-    inline bool isView() const { return m_view != nullptr; }
-    inline bool isSplitter() const { return m_splitter != nullptr; }
+    bool isView() const { return m_view != nullptr; }
+    bool isSplitter() const { return m_splitter != nullptr; }
 
-    inline IEditor *editor() const { return m_view ? m_view->currentEditor() : nullptr; }
-    inline QList<IEditor *> editors() const { return m_view ? m_view->editors() : QList<IEditor*>(); }
-    inline bool hasEditor(IEditor *editor) const { return m_view && m_view->hasEditor(editor); }
-    inline bool hasEditors() const { return m_view && m_view->editorCount() != 0; }
-    inline EditorView *view() const { return m_view; }
-    inline QSplitter *splitter() const { return m_splitter; }
+    IEditor *editor() const { return m_view ? m_view->currentEditor() : nullptr; }
+    QList<IEditor *> editors() const { return m_view ? m_view->editors() : QList<IEditor*>(); }
+    bool hasEditor(IEditor *editor) const { return m_view && m_view->hasEditor(editor); }
+    bool hasEditors() const { return m_view && m_view->editorCount() != 0; }
+    EditorView *view() const { return m_view; }
+    QSplitter *splitter() const { return m_splitter; }
     QSplitter *takeSplitter();
     EditorView *takeView();
 
@@ -184,7 +195,7 @@ public:
     QSize sizeHint() const override { return minimumSizeHint(); }
     QSize minimumSizeHint() const override;
 
-    void unsplitAll();
+    void unsplitAll(EditorView *viewToKeep);
 
 signals:
     void splitStateChanged();
@@ -196,5 +207,5 @@ private:
     QSplitter *m_splitter;
 };
 
-}
-}
+} // Internal
+} // Core

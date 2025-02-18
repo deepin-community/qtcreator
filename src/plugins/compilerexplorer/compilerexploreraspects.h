@@ -68,7 +68,7 @@ public:
 
     LibrarySelectionAspect(Utils::AspectContainer *container = nullptr);
 
-    void addToLayout(Layouting::LayoutItem &parent) override;
+    void addToLayoutImpl(Layouting::Layout &parent) override;
 
     using ResultCallback = std::function<void(QList<QStandardItem *>)>;
     using FillCallback = std::function<void(ResultCallback)>;
@@ -80,6 +80,7 @@ public:
 
     QVariant variantValue() const override;
     QVariant volatileVariantValue() const override;
+    QVariant defaultVariantValue() const override;
 
     void setVariantValue(const QVariant &value, Announcement howToAnnounce = DoEmit) override;
 

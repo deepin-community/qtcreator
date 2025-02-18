@@ -30,8 +30,11 @@ Project {
     }
 
     QDS.Files {
-        filter: "*.conf"
         files: ["qtquickcontrols2.conf"]
+    }
+
+    QDS.Files {
+        filter: "*.conf"
     }
 
     QDS.Files {
@@ -86,6 +89,8 @@ Project {
 
     /* Required for deployment */
     QDS.targetDirectory: "/opt/UntitledProject13"
+
+    QDS.enableCMakeGeneration: false
 
     QDS.qdsVersion: "4.0"
 

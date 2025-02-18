@@ -29,7 +29,9 @@ static bool isCatchTestCaseMacro(const QString &macroName)
         QStringLiteral("TEMPLATE_TEST_CASE_SIG"), QStringLiteral("TEMPLATE_PRODUCT_TEST_CASE_SIG"),
         QStringLiteral("TEST_CASE_METHOD"), QStringLiteral("TEMPLATE_TEST_CASE_METHOD"),
         QStringLiteral("TEMPLATE_PRODUCT_TEST_CASE_METHOD"),
-        QStringLiteral("TEST_CASE_METHOD"), QStringLiteral("TEMPLATE_TEST_CASE_METHOD_SIG"),
+        QStringLiteral("TEST_CASE_METHOD"),
+        QStringLiteral("SCENARIO_METHOD"),
+        QStringLiteral("TEMPLATE_TEST_CASE_METHOD_SIG"),
         QStringLiteral("TEMPLATE_PRODUCT_TEST_CASE_METHOD_SIG"),
         QStringLiteral("TEMPLATE_TEST_CASE_METHOD"),
         QStringLiteral("TEMPLATE_LIST_TEST_CASE_METHOD"),
@@ -100,12 +102,12 @@ bool CatchTestParser::processDocument(QPromise<TestParseResultPtr> &promise,
     if (doc.isNull() || !includesCatchHeader(doc, m_cppSnapshot))
         return false;
 
-    const QString &filePath = doc->filePath().toString();
+    const QString &filePath = doc->filePath().toUserOutput();
     const QByteArray &fileContent = getFileContent(fileName);
 
     if (!hasCatchNames(doc)) {
         static const QRegularExpression regex("\\b(CATCH_)?"
-                                              "(SCENARIO|(TEMPLATE_(PRODUCT_)?)?TEST_CASE(_METHOD)?|"
+                                              "(SCENARIO(_METHOD)?|(TEMPLATE_(PRODUCT_)?)?TEST_CASE(_METHOD)?|"
                                               "TEMPLATE_TEST_CASE(_METHOD)?_SIG|"
                                               "TEMPLATE_PRODUCT_TEST_CASE(_METHOD)?_SIG|"
                                               "TEMPLATE_LIST_TEST_CASE_METHOD|METHOD_AS_TEST_CASE|"
@@ -121,7 +123,7 @@ bool CatchTestParser::processDocument(QPromise<TestParseResultPtr> &promise,
         return false;
     FilePath proFile;
     const CppEditor::ProjectPart::ConstPtr projectPart = projectParts.first();
-    proFile = FilePath::fromString(projectPart->projectFile);
+    proFile = projectPart->projectFile;
 
     CatchCodeParser codeParser(fileContent, projectPart->languageFeatures);
     const CatchTestCodeLocationList foundTests = codeParser.findTests();

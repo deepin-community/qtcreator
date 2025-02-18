@@ -8,7 +8,7 @@
 #include <languageserverprotocol/jsonrpcmessages.h>
 
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/temporaryfile.h>
 
 #include <QBuffer>
@@ -72,13 +72,28 @@ protected:
     Utils::CommandLine m_cmd;
     Utils::FilePath m_workingDirectory;
     Utils::Process *m_process = nullptr;
-    Utils::Environment m_env;
+    std::optional<Utils::Environment> m_env;
 
 private:
     void readError();
     void readOutput();
 
     Utils::TemporaryFile m_logFile;
+};
+
+class LANGUAGECLIENT_EXPORT LocalSocketClientInterface : public BaseClientInterface
+{
+public:
+    LocalSocketClientInterface(const QString &serverName);
+    ~LocalSocketClientInterface() override;
+
+    void startImpl() override;
+
+private:
+    void sendData(const QByteArray &data) final;
+
+    class Private;
+    Private * const d;
 };
 
 } // namespace LanguageClient

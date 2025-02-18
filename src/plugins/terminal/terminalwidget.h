@@ -13,7 +13,7 @@
 #include <coreplugin/terminal/searchableterminal.h>
 
 #include <utils/link.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/terminalhooks.h>
 
 #include <QFutureWatcher>
@@ -44,12 +44,13 @@ public:
 
     void restart(const Utils::Terminal::OpenTerminalParameters &openParameters);
 
-    static void initActions();
+    static void initActions(QObject *parent);
 
     void unlockGlobalAction(const Utils::Id &commandId);
 
 signals:
     void started(qint64 pid);
+    void finished(int exitCode);
     void cwdChanged(const Utils::FilePath &cwd);
     void commandChanged(const Utils::CommandLine &cmd);
     void titleChanged();
@@ -76,11 +77,10 @@ protected:
     void contextMenuRequested(const QPoint &pos) override;
 
     qint64 writeToPty(const QByteArray &data) override;
-    void resizePty(QSize newSize) override;
+    bool resizePty(QSize newSize) override;
     void setClipboard(const QString &text) override;
     std::optional<TerminalView::Link> toLink(const QString &text) override;
 
-    RegisteredAction registerAction(Utils::Id commandId, const Core::Context &context);
     void registerShortcut(Core::Command *command);
 
     void updateCopyState();
@@ -104,9 +104,9 @@ private:
     RegisteredAction m_paste;
     RegisteredAction m_clearSelection;
     RegisteredAction m_clearTerminal;
+    RegisteredAction m_selectAll;
     RegisteredAction m_moveCursorWordLeft;
     RegisteredAction m_moveCursorWordRight;
-    RegisteredAction m_close;
 
     Internal::ShortcutMap m_shortcutMap;
 

@@ -4,28 +4,19 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuickDesignerTheme
 import HelperWidgets
 import StudioTheme as StudioTheme
 import MaterialBrowserBackend
 
-Rectangle {
+Item {
     id: root
 
     visible: textureVisible
 
-    color: "transparent"
-    border.width: MaterialBrowserBackend.materialBrowserTexturesModel.selectedIndex === index
-                        ? !MaterialBrowserBackend.rootView.materialSectionFocused ? 3 : 1 : 0
-    border.color: MaterialBrowserBackend.materialBrowserTexturesModel.selectedIndex === index
-                        ? StudioTheme.Values.themeControlOutlineInteraction
-                        : "transparent"
-
     signal showContextMenu()
 
-    function forceFinishEditing()
-    {
-        txtId.commitRename()
+    function forceFinishEditing() {
+        txtName.commitRename()
     }
 
     MouseArea {
@@ -68,12 +59,11 @@ Rectangle {
         anchors.fill: parent
         spacing: 1
 
-        Item { width: 1; height: 5 } // spacer
         Image {
             id: img
             source: "image://materialBrowserTex/" + textureSource
             asynchronous: true
-            width: root.width - 10
+            width: root.width
             height: img.width
             anchors.horizontalCenter: parent.horizontalCenter
             smooth: true
@@ -81,19 +71,19 @@ Rectangle {
         }
 
         // Eat keys so they are not passed to parent while editing name
-        Keys.onPressed: (e) => {
-            e.accepted = true;
+        Keys.onPressed: (event) => {
+            event.accepted = true
         }
 
         MaterialBrowserItemName {
-            id: txtId
+            id: txtName
 
-            text: textureId
+            text: textureName
             width: img.width
             anchors.horizontalCenter: parent.horizontalCenter
 
-            onRenamed: (newId) => {
-                MaterialBrowserBackend.materialBrowserTexturesModel.setTextureId(index, newId);
+            onRenamed: (newName) => {
+                MaterialBrowserBackend.materialBrowserTexturesModel.setTextureName(index, newName);
                 mouseArea.forceActiveFocus()
             }
 
@@ -102,5 +92,17 @@ Rectangle {
                 MaterialBrowserBackend.rootView.focusMaterialSection(false)
             }
         }
+    }
+
+    Rectangle {
+        id: marker
+        anchors.fill: parent
+
+        color: "transparent"
+        border.width: MaterialBrowserBackend.materialBrowserTexturesModel.selectedIndex === index
+                            ? !MaterialBrowserBackend.rootView.materialSectionFocused ? 3 : 1 : 0
+        border.color: MaterialBrowserBackend.materialBrowserTexturesModel.selectedIndex === index
+                            ? StudioTheme.Values.themeControlOutlineInteraction
+                            : "transparent"
     }
 }

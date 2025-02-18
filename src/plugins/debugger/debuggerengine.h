@@ -93,7 +93,6 @@ class WatchTreeView;
 class DebuggerToolTipContext;
 class DebuggerToolTipManager;
 class MemoryViewSetupData;
-class TerminalRunner;
 
 class DebuggerRunParameters
 {
@@ -149,6 +148,7 @@ public:
     QString version;
 
     bool isQmlDebugging = false;
+    bool isPythonDebugging = false;
     bool breakOnMain = false;
     bool multiProcess = false; // Whether to set detach-on-fork off.
     bool useTerminal = false;
@@ -159,13 +159,16 @@ public:
     QString startMessage; // First status message shown.
     Utils::FilePath debugInfoLocation; // Gdb "set-debug-file-directory".
     QStringList debugSourceLocation; // Gdb "directory"
-    QString qtPackageSourceLocation;
     Utils::FilePath qtSourceLocation;
     bool isSnapshot = false; // Set if created internally.
     ProjectExplorer::Abi toolChainAbi;
 
     Utils::FilePath projectSourceDirectory;
     Utils::FilePaths projectSourceFiles;
+
+    // Terminal
+    qint64 applicationPid = 0;
+    qint64 applicationMainThreadId = 0;
 
     // Used by Script debugging
     Utils::FilePath interpreter;
@@ -188,7 +191,8 @@ public:
 
     QStringList validationErrors;
 
-    int fallbackQtVersion = 0x50200;
+    int qtVersion = 0;
+    QString qtNamespace;
 
     // Common debugger constants.
     Utils::FilePath peripheralDescriptionFile;
@@ -214,6 +218,7 @@ public:
     }
 
     QString partialVariable;
+    bool qmlFocusOnFrame = true; // QTCREATORBUG-29874
 };
 
 class Location
@@ -268,7 +273,7 @@ public:
     QString runId() const;
 
     const DebuggerRunParameters &runParameters() const;
-    void setCompanionEngine(DebuggerEngine *engine);
+    void addCompanionEngine(DebuggerEngine *engine);
     void setSecondaryEngine();
 
     void start();
@@ -462,8 +467,8 @@ public:
 
     void openMemoryEditor();
 
-    static void showModuleSymbols(const Utils::FilePath &moduleName, const QVector<Symbol> &symbols);
-    static void showModuleSections(const Utils::FilePath &moduleName, const QVector<Section> &sections);
+    static void showModuleSymbols(const Utils::FilePath &moduleName, const QList<Symbol> &symbols);
+    static void showModuleSections(const Utils::FilePath &moduleName, const QList<Section> &sections);
 
     void handleExecDetach();
     void handleExecContinue();
@@ -534,7 +539,11 @@ protected:
 
     virtual void doUpdateLocals(const UpdateParameters &params);
 
-    TerminalRunner *terminal() const;
+    bool usesTerminal() const;
+    qint64 applicationPid() const;
+    qint64 applicationMainThreadId() const;
+    void interruptTerminal() const;
+    void kickoffTerminalProcess() const;
 
     static QString msgStopped(const QString &reason = QString());
     static QString msgStoppedBySignal(const QString &meaning, const QString &name);
@@ -552,7 +561,7 @@ protected:
     void startDying() const;
 
     ProjectExplorer::IDeviceConstPtr device() const;
-    DebuggerEngine *companionEngine() const;
+    QList<DebuggerEngine *> companionEngines() const;
 
 private:
     friend class DebuggerPluginPrivate;

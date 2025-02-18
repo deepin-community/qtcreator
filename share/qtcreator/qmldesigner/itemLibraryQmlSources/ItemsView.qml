@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 import QtQuick
 import QtQuick.Layouts
-import QtQuickDesignerTheme 1.0
-import HelperWidgets 2.0 as HelperWidgets
-import StudioControls 1.0 as StudioControls
-import StudioTheme 1.0 as StudioTheme
+import HelperWidgets as HelperWidgets
+import StudioControls as StudioControls
+import StudioTheme as StudioTheme
 import ItemLibraryBackend
+import QtQuickDesignerTheme
 /* The view displaying the item grid.
 The following Qml context properties have to be set:
 - ItemLibraryModel  itemLibraryModel
@@ -237,9 +237,7 @@ Item {
                 Repeater {
                     model: ItemLibraryBackend.itemLibraryModel  // to be set in Qml context
                     delegate: HelperWidgets.Section {
-                        width: itemsView.width -
-                               (verticalScrollView.verticalScrollBarVisible
-                                ? verticalScrollView.verticalThickness : 0)
+                        width: itemsView.width
                         caption: importName
                         visible: importVisible
                         sectionHeight: 30
@@ -270,9 +268,7 @@ Item {
                             Repeater {
                                 model: categoryModel
                                 delegate: HelperWidgets.Section {
-                                    width: itemsView.width -
-                                           (verticalScrollView.verticalScrollBarVisible
-                                           ? verticalScrollView.verticalThickness : 0)
+                                    width: itemsView.width
                                     sectionBackgroundColor: "transparent"
                                     showTopSeparator: index > 0
                                     hideHeader: categoryModel.rowCount() <= 1
@@ -351,9 +347,7 @@ Item {
                     Repeater {
                         model: ItemLibraryBackend.itemLibraryModel  // to be set in Qml context
                         delegate: HelperWidgets.Section {
-                            width: 265 -
-                                   (horizontalScrollView.verticalScrollBarVisible
-                                   ? horizontalScrollView.verticalThickness : 0)
+                            width: 265
                             caption: importName
                             visible: importVisible
                             sectionHeight: 30
@@ -384,9 +378,7 @@ Item {
                                 Repeater {
                                     model: categoryModel
                                     delegate: Rectangle {
-                                        width: 265 -
-                                               (horizontalScrollView.verticalScrollBarVisible
-                                               ? horizontalScrollView.verticalThickness : 0)
+                                        width: 265
                                         height: 25
                                         visible: categoryVisible
                                         border.width: StudioTheme.Values.border

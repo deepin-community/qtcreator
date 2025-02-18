@@ -69,6 +69,9 @@
         "EnterComponentIcon": {
             "iconName": "editComponent_small"
         },
+        "JumpToCodeIcon": {
+            "iconName": "jumpToCode_small"
+        },
         "EventListIcon": {
             "iconName": "events_small"
         },
@@ -215,8 +218,14 @@
                 "iconName": "perspectiveCam_small"
             }
         },
+        "CameraSpeedConfigIcon": {
+            "iconName": "cameraSpeed_medium"
+        },
         "EditColorIcon": {
             "iconName": "colorSelection_medium"
+        },
+        "BakeLightIcon": {
+            "iconName": "bakeLights_medium"
         },
         "EditLightIcon": {
             "Off": {
@@ -263,6 +272,9 @@
         },
         "SnappingConfIcon": {
             "iconName": "snapping_conf_medium"
+        },
+        "SplitViewIcon": {
+            "iconName": "splitScreen_medium"
         },
         "ToggleGroupIcon": {
             "Off": {

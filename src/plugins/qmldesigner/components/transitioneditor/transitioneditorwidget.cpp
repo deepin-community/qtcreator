@@ -45,20 +45,9 @@
 
 #include <cmath>
 
+using namespace Core;
+
 namespace QmlDesigner {
-
-TransitionContext::TransitionContext(QWidget *widget)
-    : IContext(widget)
-{
-    setWidget(widget);
-    setContext(Core::Context(TransitionEditorConstants::C_QMLTRANSITIONS));
-}
-
-void TransitionContext::contextHelp(const Core::IContext::HelpCallback &callback) const
-{
-    if (auto *widget = qobject_cast<TransitionEditorWidget *>(m_widget))
-        widget->contextHelp(callback);
-}
 
 class Eventfilter : public QObject
 {
@@ -198,7 +187,7 @@ TransitionEditorWidget::TransitionEditorWidget(TransitionEditorView *view)
 
     connectToolbar();
 
-    auto setScrollOffset = [this]() { graphicsScene()->setScrollOffset(m_scrollbar->value()); };
+    auto setScrollOffset = [this] { graphicsScene()->setScrollOffset(m_scrollbar->value()); };
     connect(m_scrollbar, &QSlider::valueChanged, this, setScrollOffset);
 
     connect(graphicsScene(),
@@ -206,7 +195,7 @@ TransitionEditorWidget::TransitionEditorWidget(TransitionEditorView *view)
             this,
             [this](const QString &message) { m_statusBar->setText(message); });
 
-    connect(m_addButton, &QPushButton::clicked, this, [this]() {
+    connect(m_addButton, &QPushButton::clicked, this, [this] {
         m_transitionEditorView->addNewTransition();
     });
 
@@ -223,6 +212,9 @@ TransitionEditorWidget::TransitionEditorWidget(TransitionEditorView *view)
         m_toolbar->setScaleFactor(scaleFactor);
     });
     m_graphicsView->viewport()->installEventFilter(filter);
+
+    IContext::attach(this, Context(TransitionEditorConstants::C_QMLTRANSITIONS),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void TransitionEditorWidget::setTransitionActive(bool b)
@@ -396,7 +388,7 @@ void TransitionEditorWidget::setupScrollbar(int min, int max, int current)
 
 void TransitionEditorWidget::showEvent([[maybe_unused]] QShowEvent *event)
 {
-    m_transitionEditorView->setEnabled(true);
+    QmlDesignerPlugin::viewManager().showView(*m_transitionEditorView);
 
     if (m_transitionEditorView->model())
         init(m_toolbar->scaleFactor());
@@ -411,7 +403,7 @@ void TransitionEditorWidget::showEvent([[maybe_unused]] QShowEvent *event)
 
 void TransitionEditorWidget::hideEvent(QHideEvent *event)
 {
-    m_transitionEditorView->setEnabled(false);
+    QmlDesignerPlugin::viewManager().hideView(*m_transitionEditorView);
     QWidget::hideEvent(event);
 }
 

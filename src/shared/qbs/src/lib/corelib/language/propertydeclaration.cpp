@@ -308,6 +308,33 @@ QVariant PropertyDeclaration::convertToPropertyType(const QVariant &v, Type t,
     return c;
 }
 
+QVariant PropertyDeclaration::typedNullValue() const
+{
+    switch (type()) {
+    case PropertyDeclaration::Boolean:
+        return typedNullVariant<bool>();
+    case PropertyDeclaration::Integer:
+        return typedNullVariant<int>();
+    case PropertyDeclaration::VariantList:
+        return typedNullVariant<QVariantList>();
+    case PropertyDeclaration::String:
+    case PropertyDeclaration::Path:
+        return typedNullVariant<QString>();
+    case PropertyDeclaration::StringList:
+    case PropertyDeclaration::PathList:
+        return typedNullVariant<QStringList>();
+    default:
+        return {};
+    }
+}
+
+bool PropertyDeclaration::shouldCheckAllowedValues() const
+{
+    return isValid()
+           && (d->type == PropertyDeclaration::String || d->type == PropertyDeclaration::StringList)
+           && !d->allowedValues.empty();
+}
+
 void PropertyDeclaration::checkAllowedValues(
     const QVariant &value,
     const CodeLocation &loc,
@@ -315,15 +342,13 @@ void PropertyDeclaration::checkAllowedValues(
     LoaderState &loaderState) const
 {
     const auto type = d->type;
-    if (type != PropertyDeclaration::String && type != PropertyDeclaration::StringList)
+    if (!shouldCheckAllowedValues())
         return;
 
     if (value.isNull())
         return;
 
     const auto &allowedValues = d->allowedValues;
-    if (allowedValues.isEmpty())
-        return;
 
     const auto checkValue = [&loc, &allowedValues, &key, &loaderState](const QString &value)
     {
@@ -346,7 +371,7 @@ void PropertyDeclaration::checkAllowedValues(
 }
 
 namespace {
-class PropertyDeclarationCheck : public ValueHandler
+class PropertyDeclarationCheck : public ValueHandler<void>
 {
 public:
     PropertyDeclarationCheck(LoaderState &loaderState) : m_loaderState(loaderState) {}
@@ -357,7 +382,7 @@ public:
     }
 
 private:
-    void handle(JSSourceValue *value) override
+    void doHandle(JSSourceValue *value) override
     {
         if (!value->createdByPropertiesBlock()) {
             const ErrorInfo error(Tr::tr("Property '%1' is not declared.")
@@ -365,7 +390,7 @@ private:
             handlePropertyError(error, m_loaderState.parameters(), m_loaderState.logger());
         }
     }
-    void handle(ItemValue *value) override
+    void doHandle(ItemValue *value) override
     {
         if (checkItemValue(value))
             handleItem(value->item());
@@ -467,7 +492,9 @@ private:
             }
         }
     }
-    void handle(VariantValue *) override { /* only created internally - no need to check */ }
+    void doHandle(VariantValue *) override
+    { /* only created internally - no need to check */
+    }
 
     Item *parentItem() const { return m_parentItems.back(); }
 

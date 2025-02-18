@@ -4,13 +4,15 @@
 #include "cmakeinstallstep.h"
 
 #include "cmakeabstractprocessstep.h"
+#include "cmakeautogenparser.h"
 #include "cmakebuildsystem.h"
 #include "cmakekitaspect.h"
-#include "cmakeparser.h"
+#include "cmakeoutputparser.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
 #include "cmaketool.h"
 
+#include <projectexplorer/buildstep.h>
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/processparameters.h>
 #include <projectexplorer/project.h>
@@ -27,7 +29,7 @@ namespace CMakeProjectManager::Internal {
 
 // CMakeInstallStep
 
-class CMakeInstallStep : public CMakeAbstractProcessStep
+class CMakeInstallStep final : public CMakeAbstractProcessStep
 {
 public:
     CMakeInstallStep(BuildStepList *bsl, Id id)
@@ -51,9 +53,9 @@ private:
 
 void CMakeInstallStep::setupOutputFormatter(OutputFormatter *formatter)
 {
-    CMakeParser *cmakeParser = new CMakeParser;
-    cmakeParser->setSourceDirectory(project()->projectDirectory());
-    formatter->addLineParsers({cmakeParser});
+    CMakeOutputParser *cmakeOutputParser = new CMakeOutputParser;
+    cmakeOutputParser->setSourceDirectory(project()->projectDirectory());
+    formatter->addLineParsers({new CMakeAutogenParser, cmakeOutputParser});
     formatter->addSearchDir(processParameters()->effectiveWorkingDirectory());
     CMakeAbstractProcessStep::setupOutputFormatter(formatter);
 }
@@ -98,7 +100,7 @@ QWidget *CMakeInstallStep::createConfigWidget()
 
     updateDetails();
 
-    connect(&cmakeArguments, &StringAspect::changed, this, updateDetails);
+    cmakeArguments.addOnChanged(this, updateDetails);
 
     connect(ProjectExplorerPlugin::instance(),
             &ProjectExplorerPlugin::settingsChanged,
@@ -112,14 +114,22 @@ QWidget *CMakeInstallStep::createConfigWidget()
 
 // CMakeInstallStepFactory
 
-CMakeInstallStepFactory::CMakeInstallStepFactory()
+class CMakeInstallStepFactory : public ProjectExplorer::BuildStepFactory
 {
-    registerStep<CMakeInstallStep>(Constants::CMAKE_INSTALL_STEP_ID);
-    setDisplayName(
-        Tr::tr("CMake Install", "Display name for CMakeProjectManager::CMakeInstallStep id."));
-    setSupportedProjectType(Constants::CMAKE_PROJECT_ID);
-    setSupportedStepLists({ProjectExplorer::Constants::BUILDSTEPS_DEPLOY});
+public:
+    CMakeInstallStepFactory()
+    {
+        registerStep<CMakeInstallStep>(Constants::CMAKE_INSTALL_STEP_ID);
+        setDisplayName(
+            Tr::tr("CMake Install", "Display name for CMakeProjectManager::CMakeInstallStep id."));
+        setSupportedProjectType(Constants::CMAKE_PROJECT_ID);
+        setSupportedStepLists({ProjectExplorer::Constants::BUILDSTEPS_DEPLOY});
+    }
+};
+
+void setupCMakeInstallStep()
+{
+    static CMakeInstallStepFactory theCMakeInstallStepFactory;
 }
 
 } // CMakeProjectManager::Internal
-

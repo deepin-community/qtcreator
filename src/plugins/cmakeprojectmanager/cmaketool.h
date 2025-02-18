@@ -74,12 +74,10 @@ public:
 
     static Utils::Id createId();
 
-    bool isValid(bool ignoreCache = false) const;
+    bool isValid() const;
 
     Utils::Id id() const { return m_id; }
     Utils::Store toMap () const;
-
-    void setAutorun(bool autoRun) { m_isAutoRun = autoRun; }
 
     void setFilePath(const Utils::FilePath &executable);
     Utils::FilePath filePath() const;
@@ -91,7 +89,7 @@ public:
     bool autoCreateBuildDirectory() const;
     QList<Generator> supportedGenerators() const;
     CMakeKeywords keywords();
-    bool hasFileApi(bool ignoreCache = false) const;
+    bool hasFileApi() const;
     Version version() const;
     QString versionDisplay() const;
 
@@ -113,14 +111,14 @@ public:
     static void openCMakeHelpUrl(const CMakeTool *tool, const QString &linkUrl);
 
 private:
-    void readInformation(bool ignoreCache = false) const;
+    void readInformation() const;
 
     void runCMake(Utils::Process &proc, const QStringList &args, int timeoutS = 1) const;
     void parseFunctionDetailsOutput(const QString &output);
     QStringList parseVariableOutput(const QString &output);
     QStringList parseSyntaxHighlightingXml();
 
-    void fetchFromCapabilities(bool ignoreCache = false) const;
+    void fetchFromCapabilities() const;
     void parseFromCapabilities(const QString &input) const;
 
     // Note: New items here need also be handled in CMakeToolItemModel::apply()
@@ -130,7 +128,6 @@ private:
     Utils::FilePath m_executable;
     Utils::FilePath m_qchFilePath;
 
-    bool m_isAutoRun = true;
     bool m_isAutoDetected = false;
     QString m_detectionSource;
     bool m_autoCreateBuildDirectory = false;

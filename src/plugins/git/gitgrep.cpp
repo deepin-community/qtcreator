@@ -17,7 +17,7 @@
 #include <utils/environment.h>
 #include <utils/fancylineedit.h>
 #include <utils/filesearch.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QCheckBox>
@@ -38,7 +38,6 @@ class GitGrepParameters
 public:
     QString ref;
     bool recurseSubmodules = false;
-    QString id() const { return recurseSubmodules ? ref + ".Rec" : ref; }
 };
 
 static QStringView nextLine(QStringView *remainingInput)
@@ -134,8 +133,8 @@ static void runGitGrep(QPromise<SearchResultItems> &promise, const FileFindParam
                        const GitGrepParameters &gitParameters)
 {
     const auto setupProcess = [&parameters, gitParameters](Process &process) {
-        const FilePath vcsBinary = gitClient().vcsBinary();
-        const Environment environment = gitClient().processEnvironment();
+        const FilePath vcsBinary = gitClient().vcsBinary(parameters.searchDir);
+        const Environment environment = gitClient().processEnvironment(vcsBinary);
 
         QStringList arguments = {
             "-c", "color.grep.match=bold red",
@@ -202,8 +201,8 @@ GitGrep::GitGrep()
     layout->addWidget(m_treeLineEdit);
     // asynchronously check git version, add "recurse submodules" option if available
     Utils::onResultReady(gitClient().gitVersion(), this,
-                         [this, pLayout = QPointer<QHBoxLayout>(layout)](unsigned version) {
-        if (version >= 0x021300 && pLayout) {
+                         [this, pLayout = QPointer<QHBoxLayout>(layout)](const QVersionNumber &version) {
+        if (version >= QVersionNumber{2, 13} && pLayout) {
             m_recurseSubmodules = new QCheckBox(Tr::tr("Recurse submodules"));
             pLayout->addWidget(m_recurseSubmodules);
         }
@@ -245,14 +244,15 @@ GitGrepParameters GitGrep::gitParameters() const
     return {m_treeLineEdit->text(), m_recurseSubmodules && m_recurseSubmodules->isChecked()};
 }
 
-void GitGrep::readSettings(QtcSettings *settings)
+void GitGrep::readSettings(const Store &s)
 {
-    m_treeLineEdit->setText(settings->value(GitGrepRef).toString());
+    m_treeLineEdit->setText(s.value(GitGrepRef).toString());
 }
 
-void GitGrep::writeSettings(QtcSettings *settings) const
+void GitGrep::writeSettings(Store &s) const
 {
-    settings->setValue(GitGrepRef, m_treeLineEdit->text());
+    if (!m_treeLineEdit->text().isEmpty())
+        s.insert(GitGrepRef, m_treeLineEdit->text());
 }
 
 SearchExecutor GitGrep::searchExecutor() const

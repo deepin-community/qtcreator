@@ -60,9 +60,9 @@
 
     \section1 Find and filter output
 
-    To search from output, press \key {Ctrl+F} when the view is active. Enter
+    To search in output, press \key {Ctrl+F} when the view is active. Enter
     search criteria in the \uicontrol Find field. For more information, see
-    \l{Finding and Replacing}.
+    \l{Search in current file}.
 
     To filter output, enter a string in the \uicontrol Filter field.
 
@@ -74,8 +74,16 @@
 
     Some output views do not support finding and filtering.
 
+    \section1 Save output as a file
+
+    To save output as a text file, select \uicontrol {Save Contents} in the
+    context menu.
+
+    To copy output to a temporary file, select
+    \uicontrol {Copy Contents to Scratch Buffer}.
+
     \if defined(qtcreator)
-    \sa {Output Views}
+    \sa {Output Views}, {Write down notes}
     \else
     \section1 Output views
 

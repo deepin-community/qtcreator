@@ -13,6 +13,9 @@
 
 #include <coreplugin/editormanager/editormanager.h>
 
+#include <extensionsystem/pluginmanager.h>
+#include <extensionsystem/pluginspec.h>
+
 #include <cplusplus/CppDocument.h>
 
 #include <projectexplorer/buildsystem.h>
@@ -20,10 +23,11 @@
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
 
-#include <texteditor/texteditor.h>
 #include <texteditor/codeassist/iassistproposal.h>
 #include <texteditor/codeassist/iassistproposalmodel.h>
 #include <texteditor/storagesettings.h>
+#include <texteditor/syntaxhighlighter.h>
+#include <texteditor/texteditor.h>
 
 #include <utils/environment.h>
 #include <utils/fileutils.h>
@@ -37,6 +41,14 @@ using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace CppEditor::Internal::Tests {
+
+bool isClangFormatPresent()
+{
+    using namespace ExtensionSystem;
+    return Utils::contains(PluginManager::plugins(), [](const PluginSpec *plugin) {
+        return plugin->name() == "ClangFormat" && plugin->isEffectivelyEnabled();
+    });
+};
 
 CppTestDocument::CppTestDocument(const QByteArray &fileName, const QByteArray &source,
                                          char cursorMarker)
@@ -221,6 +233,17 @@ bool TestCase::openCppEditor(const FilePath &filePath, TextEditor::BaseTextEdito
             s.m_addFinalNewLine = false;
             e->textDocument()->setStorageSettings(s);
         }
+
+        if (!QTest::qWaitFor(
+                [e] {
+                    return e->editorWidget()
+                        ->textDocument()
+                        ->syntaxHighlighter()
+                        ->syntaxHighlighterUpToDate();
+                },
+                5000))
+            return false;
+
         if (editorWidget) {
             if (CppEditorWidget *w = dynamic_cast<CppEditorWidget *>(e->editorWidget())) {
                 *editorWidget = w;
@@ -272,10 +295,18 @@ bool TestCase::waitForProcessedEditorDocument(const FilePath &filePath, int time
     return waitForProcessedEditorDocument_internal(editorDocument, timeOutInMs);
 }
 
-CPlusPlus::Document::Ptr TestCase::waitForRehighlightedSemanticDocument(CppEditorWidget *editorWidget)
+CPlusPlus::Document::Ptr TestCase::waitForRehighlightedSemanticDocument(
+    CppEditorWidget *editorWidget, int timeoutInMs)
 {
-    while (!editorWidget->isSemanticInfoValid())
+    QElapsedTimer timer;
+    timer.start();
+
+    while (!editorWidget->isSemanticInfoValid()) {
+        if (timer.elapsed() >= timeoutInMs)
+            return {};
         QCoreApplication::processEvents();
+        QThread::msleep(20);
+    }
     return editorWidget->semanticInfo().doc;
 }
 
@@ -391,8 +422,7 @@ ProjectOpenerAndCloser::~ProjectOpenerAndCloser()
 ProjectInfo::ConstPtr ProjectOpenerAndCloser::open(const FilePath &projectFile,
         bool configureAsExampleProject, Kit *kit)
 {
-    ProjectExplorerPlugin::OpenProjectResult result =
-            ProjectExplorerPlugin::openProject(projectFile);
+    OpenProjectResult result = ProjectExplorerPlugin::openProject(projectFile);
     if (!result) {
         qWarning() << result.errorMessage() << result.alreadyOpen();
         return {};
@@ -488,4 +518,19 @@ int clangdIndexingTimeout()
     return intervalAsInt;
 }
 
+SourceFilesRefreshGuard::SourceFilesRefreshGuard()
+{
+    connect(CppModelManager::instance(), &CppModelManager::sourceFilesRefreshed, this, [this] {
+        m_refreshed = true;
+    });
+}
+
+bool SourceFilesRefreshGuard::wait()
+{
+    for (int i = 0; i < 10 && !m_refreshed; ++i) {
+        CppEditor::Tests::waitForSignalOrTimeout(
+            CppModelManager::instance(), &CppModelManager::sourceFilesRefreshed, 1000);
+    }
+    return m_refreshed;
+}
 } // namespace CppEditor::Tests

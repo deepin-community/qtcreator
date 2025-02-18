@@ -4,18 +4,16 @@
 #include "abstractprocessstep.h"
 
 #include "processparameters.h"
-#include "projectexplorer.h"
 #include "projectexplorersettings.h"
 #include "projectexplorertr.h"
+#include "runconfigurationaspects.h"
+#include "runcontrol.h"
 
 #include <utils/outputformatter.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QTextDecoder>
-
-#include <algorithm>
-#include <memory>
 
 using namespace Tasking;
 using namespace Utils;
@@ -79,8 +77,6 @@ public:
     std::function<void(Environment &)> m_environmentModifier;
     bool m_ignoreReturnValue = false;
     bool m_lowPriority = false;
-    std::unique_ptr<QTextDecoder> stdOutDecoder;
-    std::unique_ptr<QTextDecoder> stdErrDecoder;
     OutputFormatter *outputFormatter = nullptr;
 };
 
@@ -146,9 +142,6 @@ bool AbstractProcessStep::init()
     if (!setupProcessParameters(processParameters()))
         return false;
 
-    d->stdOutDecoder = std::make_unique<QTextDecoder>(buildEnvironment().hasKey("VSLANG")
-        ? QTextCodec::codecForName("UTF-8") : QTextCodec::codecForLocale());
-    d->stdErrDecoder = std::make_unique<QTextDecoder>(QTextCodec::codecForLocale());
     return true;
 }
 
@@ -164,8 +157,8 @@ GroupItem AbstractProcessStep::defaultProcessTask()
     const auto onSetup = [this](Process &process) {
         return setupProcess(process) ? SetupResult::Continue : SetupResult::StopWithError;
     };
-    const auto onEnd = [this](const Process &process) { handleProcessDone(process); };
-    return ProcessTask(onSetup, onEnd, onEnd);
+    const auto onDone = [this](const Process &process) { handleProcessDone(process); };
+    return ProcessTask(onSetup, onDone);
 }
 
 bool AbstractProcessStep::setupProcess(Process &process)
@@ -190,20 +183,29 @@ bool AbstractProcessStep::setupProcess(Process &process)
     // For example Clang uses PWD for paths in debug info, see QTCREATORBUG-23788
     Environment envWithPwd = d->m_param.environment();
     envWithPwd.set("PWD", workingDir.path());
+    process.setProcessMode(d->m_param.processMode());
+    if (const auto runAsRoot = aspect<RunAsRootAspect>(); runAsRoot && runAsRoot->value()) {
+        RunControl::provideAskPassEntry(envWithPwd);
+        process.setRunAsRoot(true);
+    }
     process.setEnvironment(envWithPwd);
     process.setCommand({d->m_param.effectiveCommand(), d->m_param.effectiveArguments(),
                         CommandLine::Raw});
-    if (d->m_lowPriority && ProjectExplorerPlugin::projectExplorerSettings().lowBuildPriority)
+    if (d->m_lowPriority && projectExplorerSettings().lowBuildPriority)
         process.setLowPriority();
 
-    connect(&process, &Process::readyReadStandardOutput, this, [this, &process] {
-        emit addOutput(d->stdOutDecoder->toUnicode(process.readAllRawStandardOutput()),
-                       OutputFormat::Stdout, DontAppendNewline);
+    process.setStdOutCodec(buildEnvironment().hasKey("VSLANG")
+                               ? QTextCodec::codecForName("UTF-8") : QTextCodec::codecForLocale());
+    process.setStdErrCodec(QTextCodec::codecForLocale());
+
+    process.setStdOutCallback([this](const QString &s){
+        emit addOutput(s, OutputFormat::Stdout, DontAppendNewline);
     });
-    connect(&process, &Process::readyReadStandardError, this, [this, &process] {
-        emit addOutput(d->stdErrDecoder->toUnicode(process.readAllRawStandardError()),
-                       OutputFormat::Stderr, DontAppendNewline);
+
+    process.setStdErrCallback([this](const QString &s){
+        emit addOutput(s, OutputFormat::Stderr, DontAppendNewline);
     });
+
     connect(&process, &Process::started, this, [this] {
         ProcessParameters *params = d->m_displayedParams;
         emit addOutput(Tr::tr("Starting: \"%1\" %2")
@@ -283,7 +285,7 @@ void AbstractProcessStep::setDisplayedParameters(ProcessParameters *params)
 
 GroupItem AbstractProcessStep::runRecipe()
 {
-    return Group { ignoreReturnValue() ? finishAllAndDone : stopOnError, defaultProcessTask() };
+    return Group { ignoreReturnValue() ? finishAllAndSuccess : stopOnError, defaultProcessTask() };
 }
 
 } // namespace ProjectExplorer

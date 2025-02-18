@@ -8,15 +8,14 @@
 #include <utils/id.h>
 #include <utils/filepath.h>
 
-#include <QDateTime>
 #include <QFlags>
-#include <QHash>
 #include <QObject>
-#include <QString>
 
 QT_FORWARD_DECLARE_CLASS(QMenu);
 
 namespace Core {
+
+namespace Internal { class IVersionControlPrivate; }
 
 class CORE_EXPORT IVersionControl : public QObject
 {
@@ -43,27 +42,15 @@ public:
         OpenMandatory  /*!< Files must always be opened by the VCS */
     };
 
-    class CORE_EXPORT TopicCache
-    {
-    public:
-        virtual ~TopicCache();
-        QString topic(const Utils::FilePath &topLevel);
-
-    protected:
-        virtual Utils::FilePath trackFile(const Utils::FilePath &repository) = 0;
-        virtual QString refreshTopic(const Utils::FilePath &repository) = 0;
-
-    private:
-        class TopicData
-        {
-        public:
-            QDateTime timeStamp;
-            QString topic;
-        };
-
-        QHash<Utils::FilePath, TopicData> m_cache;
-
+    enum class FileState : quint8 {
+        NoModification = 0x00,
+        ModifiedState,
+        AddedState,
+        DeletedState,
+        RenamedState,
+        UnmanagedState
     };
+    Q_ENUM(FileState)
 
     IVersionControl();
     ~IVersionControl() override;
@@ -115,6 +102,22 @@ public:
      * Returns true is the VCS is configured to run.
      */
     virtual bool isConfigured() const = 0;
+
+    /*!
+     * Returns true if the file has modification compared to version control
+     */
+    virtual Core::IVersionControl::FileState modificationState(const Utils::FilePath &path) const;
+
+    /*!
+     * Starts monitoring modified files inside path
+     */
+    virtual void monitorDirectory(const Utils::FilePath &path);
+
+    /*!
+     * Stops monitoring modified files inside path
+     */
+    virtual void stopMonitoringDirectory(const Utils::FilePath &path);
+
     /*!
      * Called to query whether a VCS supports the respective operations.
      *
@@ -179,6 +182,12 @@ public:
     virtual void vcsAnnotate(const Utils::FilePath &file, int line) = 0;
 
     /*!
+     * Shows the log for the \a relativeDirectory within \a toplevel.
+     */
+    virtual void vcsLog(const Utils::FilePath &topLevel,
+                        const Utils::FilePath &relativeDirectory) = 0;
+
+    /*!
      * Display text for Open operation
      */
     virtual QString vcsOpenText() const;
@@ -218,69 +227,29 @@ public:
     };
     virtual RepoUrl getRepoUrl(const QString &location) const;
 
-    void setTopicCache(TopicCache *topicCache);
+    // Topic cache
+    using FileTracker = std::function<Utils::FilePath(const Utils::FilePath &)>;
+    Utils::FilePath trackFile(const Utils::FilePath &repository);
+    void setTopicFileTracker(const FileTracker &fileTracker);
+
+    using TopicRefresher = std::function<QString(const Utils::FilePath &)>;
+    QString refreshTopic(const Utils::FilePath &repository);
+    void setTopicRefresher(const TopicRefresher &topicRefresher);
+
+    static QColor vcStateToColor(const IVersionControl::FileState &state);
+    static QString modificationToText(const IVersionControl::FileState &state);
 
 signals:
     void repositoryChanged(const Utils::FilePath &repository);
     void filesChanged(const QStringList &files);
+    void updateFileStatus(const Utils::FilePath &repository, const QStringList &files);
+    void clearFileStatus(const Utils::FilePath &repository);
     void configurationChanged();
 
 private:
-    TopicCache *m_topicCache = nullptr;
+    Internal::IVersionControlPrivate *d;
 };
 
 } // namespace Core
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(Core::IVersionControl::SettingsFlags)
-
-#if defined(WITH_TESTS)
-
-#include <QSet>
-
-namespace Core {
-
-class CORE_EXPORT TestVersionControl : public IVersionControl
-{
-    Q_OBJECT
-public:
-    TestVersionControl(Utils::Id id, const QString &name) :
-        m_id(id), m_displayName(name)
-    { }
-    ~TestVersionControl() override;
-
-    bool isVcsFileOrDirectory(const Utils::FilePath &filePath) const final
-    { Q_UNUSED(filePath) return false; }
-
-    void setManagedDirectories(const QHash<Utils::FilePath, Utils::FilePath> &dirs);
-    void setManagedFiles(const QSet<Utils::FilePath> &files);
-
-    int dirCount() const { return m_dirCount; }
-    int fileCount() const { return m_fileCount; }
-
-    // IVersionControl interface
-    QString displayName() const override { return m_displayName; }
-    Utils::Id id() const override { return m_id; }
-    bool managesDirectory(const Utils::FilePath &filePath, Utils::FilePath *topLevel) const override;
-    bool managesFile(const Utils::FilePath &workingDirectory, const QString &fileName) const override;
-    bool isConfigured() const override { return true; }
-    bool supportsOperation(Operation) const override { return false; }
-    bool vcsOpen(const Utils::FilePath &) override { return false; }
-    bool vcsAdd(const Utils::FilePath &) override { return false; }
-    bool vcsDelete(const Utils::FilePath &) override { return false; }
-    bool vcsMove(const Utils::FilePath &, const Utils::FilePath &) override { return false; }
-    bool vcsCreateRepository(const Utils::FilePath &) override { return false; }
-    void vcsAnnotate(const Utils::FilePath &, int) override {}
-    void vcsDescribe(const Utils::FilePath &, const QString &) override {}
-
-private:
-    Utils::Id m_id;
-    QString m_displayName;
-    QHash<Utils::FilePath, Utils::FilePath> m_managedDirs;
-    QSet<Utils::FilePath> m_managedFiles;
-    mutable int m_dirCount = 0;
-    mutable int m_fileCount = 0;
-};
-
-} // namespace Core
-
-#endif

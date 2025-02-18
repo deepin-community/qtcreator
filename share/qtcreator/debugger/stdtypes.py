@@ -60,12 +60,16 @@ def qdump__std__deque(d, value):
 def qdumpHelper__std__deque__libstdcxx(d, value):
     innerType = value.type[0]
     innerSize = innerType.size()
-    bufsize = 1
-    if innerSize < 512:
-        bufsize = 512 // innerSize
+    bufsize = 512 // innerSize if innerSize < 512 else 1
 
-    (mapptr, mapsize, startCur, startFirst, startLast, startNode,
-     finishCur, finishFirst, finishLast, finishNode) = value.split("pppppppppp")
+    start = value['_M_start']
+    startCur = start['_M_cur'].pointer()
+    startLast = start['_M_last'].pointer()
+    startNode = start['_M_node'].pointer()
+    finish = value['_M_finish']
+    finishCur = finish['_M_cur'].pointer()
+    finishFirst = finish['_M_first'].pointer()
+    finishNode = finish['_M_node'].pointer()
 
     size = bufsize * ((finishNode - startNode) // d.ptrSize() - 1)
     size += (finishCur - finishFirst) // innerSize
@@ -82,12 +86,12 @@ def qdumpHelper__std__deque__libstdcxx(d, value):
                 d.putSubItem(i, d.createValue(pcur, innerType))
                 pcur += innerSize
                 if pcur == plast:
-                    newnode = pnode + d.ptrSize()
-                    pfirst = d.extractPointer(newnode)
-                    plast = pfirst + bufsize * d.ptrSize()
+                    pnode += d.ptrSize()
+                    if pnode > finishNode:
+                        break
+                    pfirst = d.extractPointer(pnode)
+                    plast = pfirst + bufsize * innerSize
                     pcur = pfirst
-                    pnode = newnode
-
 
 def qdumpHelper__std__deque__libcxx(d, value):
     mptr, mfirst, mbegin, mend, start, size = value.split("pppptt")
@@ -180,9 +184,16 @@ def qdump__std__list(d, value):
         qdump__std__list__QNX(d, value)
         return
 
-    if value.type.size() == 3 * d.ptrSize():
+    # QTCREATORBUG-20476: GCC with _GLIBCXX_DEBUG prepends the head node
+    # with some debug information
+    if value.hasMember('_M_impl'):
+        sentinel = value['_M_impl']['_M_node']
+    else:
+        sentinel = value
+
+    if sentinel.type.size() == 3 * d.ptrSize():
         # C++11 only.
-        (dummy1, dummy2, size) = value.split("ppp")
+        (dummy1, dummy2, size) = sentinel.split("ppp")
         d.putItemCount(size)
     else:
         # Need to count manually.
@@ -195,7 +206,7 @@ def qdump__std__list(d, value):
         d.putItemCount(size, 1000)
 
     if d.isExpanded():
-        p = d.extractPointer(value)
+        p = d.extractPointer(sentinel)
         innerType = value.type[0]
         with Children(d, size, maxNumChild=1000, childType=innerType):
             for i in d.childRange():
@@ -234,6 +245,43 @@ def qdump__std____cxx11__list(d, value):
     qdump__std__list(d, value)
 
 
+def qdump__std__forward_list(d, value):
+    # QTCREATORBUG-20476: GCC with _GLIBCXX_DEBUG prepends the head node
+    # with some debug information
+    if value.hasMember('_M_impl'):
+        head = value['_M_impl']['_M_head']
+    # MSVC stores the head in a compressed pair with the allocator
+    # (which is normally an empty class)
+    elif value.hasMember('_Mypair'):
+        head = value['_Mypair']['_Myval2']['_Myhead']
+    else:
+        head = value
+
+    # Need to count manually.
+    p = d.extractPointer(head)
+    size = 0
+    while p and size < 1001:
+        size += 1
+        p = d.extractPointer(p)
+    d.putItemCount(size, 1000)
+
+    if d.isExpanded():
+        p = d.extractPointer(head)
+        innerType = value.type[0]
+        with Children(d, size, maxNumChild=1000, childType=innerType):
+            for i in d.childRange():
+                d.putSubItem(i, d.createValue(p + d.ptrSize(), innerType))
+                p = d.extractPointer(p)
+
+
+def qdump__std____debug__forward_list(d, value):
+    qdump__std__forward_list(d, value)
+
+
+def qdump__std____cxx11__forward_list(d, value):
+    qdump__std__forward_list(d, value)
+
+
 def qform__std__map():
     return [DisplayFormat.CompactMap]
 
@@ -244,7 +292,7 @@ def qdump__std__map(d, value):
         return
 
     # stuff is actually (color, pad) with 'I@', but we can save cycles/
-    (compare, stuff, parent, left, right) = value.split('ppppp')
+    parent = value["_M_t"]["_M_impl"]["_M_header"]
     size = value["_M_t"]["_M_impl"]["_M_node_count"].integer()
     d.check(0 <= size and size <= 100 * 1000 * 1000)
     d.putItemCount(size)
@@ -323,6 +371,14 @@ def qdump__std__multiset(d, value):
     qdump__std__set(d, value)
 
 
+def qdump__std____debug__multiset(d, value):
+    qdump__std__multiset(d, value)
+
+
+def qdump__std____cxx1998__multiset(d, value):
+    qdump__std__multiset(d, value)
+
+
 def qdump__std____cxx1998__map(d, value):
     qdump__std__map(d, value)
 
@@ -333,6 +389,14 @@ def qform__std__multimap():
 
 def qdump__std__multimap(d, value):
     return qdump__std__map(d, value)
+
+
+def qdump__std____debug__multimap(d, value):
+    qdump__std__multimap(d, value)
+
+
+def qdump__std____cxx1998__multimap(d, value):
+    qdump__std__multimap(d, value)
 
 
 def qdumpHelper__std__tree__iterator(d, value, isSet=False):
@@ -617,6 +681,35 @@ def qdumpHelper__std__string__MSVC(d, value, charType, format):
     d.putCharArrayHelper(data, size, charType, format)
 
 
+def qdump__std__basic_string_view(d, value):
+    innerType = value.type[0]
+    qdumpHelper_std__string_view(d, value, innerType, d.currentItemFormat())
+
+
+def qdump__std__string_view(d, value):
+    qdumpHelper_std__string_view(d, value, d.createType("char"), d.currentItemFormat())
+
+
+def qdump__std__u16string_view(d, value):
+    qdumpHelper_std__string_view(d, value, d.createType("char16_t"), d.currentItemFormat())
+
+
+def qdumpHelper_std__string_view(d, value, charType, format):
+    if d.isMsvcTarget():
+        qdumpHelper__std__string__view_MSVC(d, value, charType, format)
+        return
+
+    data = value["_M_str"].pointer()
+    size = int(value["_M_len"])
+    d.putCharArrayHelper(data, size, charType, format)
+
+
+def qdumpHelper__std__string__view_MSVC(d, value, charType, format):
+    data = value["_Mydata"].pointer()
+    size = int(value["_Mysize"])
+    d.putCharArrayHelper(data, size, charType, format)
+
+
 def qdump__std____weak_ptr(d, value):
     return qdump__std__shared_ptr(d, value)
 
@@ -666,6 +759,36 @@ def qdump__std__pair(d, value):
     key = key.value if key.encoding is None else "..."
     value = value.value if value.encoding is None else "..."
     d.putValue('(%s, %s)' % (key, value))
+
+
+def qdumpHelper_get_tuple_elements(d, tuple, value_typename, value_member):
+    """
+    Helper method that returns the elements of a tuple.
+    """
+    elems = []
+    other_members = []
+    for member in tuple.members(True):
+        if not member.type.templateArguments():
+            continue
+        if member.type.name.startswith(value_typename):
+            elems.append(member[value_member])
+        else:
+            other_members.append(member)
+    for member in other_members:
+        sub_elems = qdumpHelper_get_tuple_elements(d, member, value_typename, value_member)
+        elems = elems + sub_elems
+    return elems
+
+
+def qdump__std__tuple(d, value):
+    if d.isMsvcTarget():
+        elems = qdumpHelper_get_tuple_elements(d, value, "std::_Tuple_val", "_Val")
+    else:
+        elems = qdumpHelper_get_tuple_elements(d, value, "std::_Head_base", "_M_head_impl")
+    d.putItemCount(len(elems))
+    with Children(d):
+        for elem in elems:
+            d.putSubItem(0, elem)
 
 
 def qform__std__unordered_map():
@@ -850,7 +973,7 @@ def qedit__std__vector(d, value, data):
     values = data.split(',')
     n = len(values)
     innerType = value.type[0].name
-    cmd = "set $d = (%s*)calloc(sizeof(%s)*%s,1)" % (innerType, innerType, n)
+    cmd = "set $d = (%s*)calloc(%s,sizeof(%s))" % (innerType, n, innerType)
     gdb.execute(cmd)
     cmd = "set {void*[3]}%s = {$d, $d+%s, $d+%s}" % (value.address(), n, n)
     gdb.execute(cmd)

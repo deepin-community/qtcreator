@@ -4,8 +4,9 @@
 #include "documentmanager.h"
 #include "qmldesignerplugin.h"
 
+#include <auxiliarydataproperties.h>
 #include <bindingproperty.h>
-#include <model/modelutils.h>
+#include <modelutils.h>
 #include <modelnode.h>
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
@@ -40,12 +41,13 @@ namespace QmlDesigner {
 
 Q_LOGGING_CATEGORY(documentManagerLog, "qtc.qtquickdesigner.documentmanager", QtWarningMsg)
 
-inline static QmlDesigner::DesignDocument *designDocument()
+namespace {
+QmlDesigner::DesignDocument *designDocument()
 {
     return QmlDesigner::QmlDesignerPlugin::instance()->documentManager().currentDesignDocument();
 }
 
-inline static QHash<PropertyName, QVariant> getProperties(const ModelNode &node)
+QHash<PropertyName, QVariant> getProperties(const ModelNode &node)
 {
     QHash<PropertyName, QVariant> propertyHash;
     if (QmlObjectNode::isValidQmlObjectNode(node)) {
@@ -54,7 +56,8 @@ inline static QHash<PropertyName, QVariant> getProperties(const ModelNode &node)
             if (abstractProperty.isVariantProperty()
                     || (abstractProperty.isBindingProperty()
                         && !abstractProperty.name().contains("anchors.")))
-                propertyHash.insert(abstractProperty.name(), QmlObjectNode(node).instanceValue(abstractProperty.name()));
+                propertyHash.insert(abstractProperty.name().toByteArray(),
+                                    QmlObjectNode(node).instanceValue(abstractProperty.name()));
         }
 
         if (QmlItemNode::isValidQmlItemNode(node)) {
@@ -72,26 +75,28 @@ inline static QHash<PropertyName, QVariant> getProperties(const ModelNode &node)
     return propertyHash;
 }
 
-inline static void applyProperties(ModelNode &node, const QHash<PropertyName, QVariant> &propertyHash)
+void applyProperties(ModelNode &node, const QHash<PropertyName, QVariant> &propertyHash)
 {
     const auto auxiliaryData = node.auxiliaryData(AuxiliaryDataType::NodeInstancePropertyOverwrite);
-
     for (const auto &element : auxiliaryData)
         node.removeAuxiliaryData(AuxiliaryDataType::NodeInstancePropertyOverwrite, element.first);
 
-    for (auto propertyIterator = propertyHash.cbegin(), end = propertyHash.cend();
-              propertyIterator != end;
-              ++propertyIterator) {
-        const PropertyName propertyName = propertyIterator.key();
-        if (propertyName == "width" || propertyName == "height") {
-            node.setAuxiliaryData(AuxiliaryDataType::NodeInstancePropertyOverwrite,
-                                  propertyIterator.key(),
-                                  propertyIterator.value());
+    auto needsOverwrite = [&node](const auto& check, const auto& name, const auto& instanceValue) {
+        if (check == name) {
+            VariantProperty property = node.variantProperty(name);
+            if (property.isValid() && property.value() != instanceValue)
+                return true;
         }
+        return false;
+    };
+
+    for (const auto& [name, value] : propertyHash.asKeyValueRange()) {
+        if (needsOverwrite("width", name, value) || needsOverwrite("height", name, value))
+            node.setAuxiliaryData(AuxiliaryDataType::NodeInstancePropertyOverwrite, name, value);
     }
 }
 
-static void openFileComponentForFile(const QString &fileName)
+void openFileComponentForFile(const QString &fileName)
 {
     QmlDesignerPlugin::instance()->viewManager().nextFileIsCalledInternally();
     Core::EditorManager::openEditor(FilePath::fromString(fileName),
@@ -99,17 +104,17 @@ static void openFileComponentForFile(const QString &fileName)
                                     Core::EditorManager::DoNotMakeVisible);
 }
 
-static void openFileComponent(const ModelNode &modelNode)
+void openFileComponent(const ModelNode &modelNode)
 {
     openFileComponentForFile(ModelUtils::componentFilePath(modelNode));
 }
 
-static void openFileComponentForDelegate(const ModelNode &modelNode)
+void openFileComponentForDelegate(const ModelNode &modelNode)
 {
     openFileComponent(modelNode.nodeProperty("delegate").modelNode());
 }
 
-static void openComponentSourcePropertyOfLoader(const ModelNode &modelNode)
+void openComponentSourcePropertyOfLoader(const ModelNode &modelNode)
 {
     QmlDesignerPlugin::instance()->viewManager().nextFileIsCalledInternally();
 
@@ -128,12 +133,12 @@ static void openComponentSourcePropertyOfLoader(const ModelNode &modelNode)
     }
 
     Core::EditorManager::openEditor(FilePath::fromString(
-                                        componentModelNode.metaInfo().componentFileName()),
+                                        ModelUtils::componentFilePath(componentModelNode)),
                                     Utils::Id(),
                                     Core::EditorManager::DoNotMakeVisible);
 }
 
-static void openSourcePropertyOfLoader(const ModelNode &modelNode)
+void openSourcePropertyOfLoader(const ModelNode &modelNode)
 {
     QmlDesignerPlugin::instance()->viewManager().nextFileIsCalledInternally();
 
@@ -146,14 +151,13 @@ static void openSourcePropertyOfLoader(const ModelNode &modelNode)
                                     Core::EditorManager::DoNotMakeVisible);
 }
 
-
-static void handleComponent(const ModelNode &modelNode)
+void handleComponent(const ModelNode &modelNode)
 {
     if (modelNode.nodeSourceType() == ModelNode::NodeWithComponentSource)
         designDocument()->changeToSubComponent(modelNode);
 }
 
-static void handleDelegate(const ModelNode &modelNode)
+void handleDelegate(const ModelNode &modelNode)
 {
     if (modelNode.metaInfo().isView()
             && modelNode.hasNodeProperty("delegate")
@@ -161,7 +165,7 @@ static void handleDelegate(const ModelNode &modelNode)
         designDocument()->changeToSubComponent(modelNode.nodeProperty("delegate").modelNode());
 }
 
-static void handleTabComponent(const ModelNode &modelNode)
+void handleTabComponent(const ModelNode &modelNode)
 {
     if (modelNode.hasNodeProperty("component")
             && modelNode.nodeProperty("component").modelNode().nodeSourceType() == ModelNode::NodeWithComponentSource) {
@@ -169,7 +173,7 @@ static void handleTabComponent(const ModelNode &modelNode)
     }
 }
 
-inline static void openInlineComponent(const ModelNode &modelNode)
+void openInlineComponent(const ModelNode &modelNode)
 {
     if (!modelNode.metaInfo().isValid())
         return;
@@ -179,7 +183,7 @@ inline static void openInlineComponent(const ModelNode &modelNode)
     handleTabComponent(modelNode);
 }
 
-static bool isFileComponent(const ModelNode &node)
+bool isFileComponent(const ModelNode &node)
 {
     if (node.isValid()
             && node.metaInfo().isValid()
@@ -189,7 +193,7 @@ static bool isFileComponent(const ModelNode &node)
     return false;
 }
 
-static bool hasDelegateWithFileComponent(const ModelNode &node)
+bool hasDelegateWithFileComponent(const ModelNode &node)
 {
     if (node.isValid()
             && node.metaInfo().isValid()
@@ -201,7 +205,7 @@ static bool hasDelegateWithFileComponent(const ModelNode &node)
     return false;
 }
 
-static bool isLoaderWithSourceComponent(const ModelNode &modelNode)
+bool isLoaderWithSourceComponent(const ModelNode &modelNode)
 {
     if (modelNode.isValid() && modelNode.metaInfo().isQtQuickLoader()) {
         if (modelNode.hasNodeProperty("sourceComponent"))
@@ -213,7 +217,7 @@ static bool isLoaderWithSourceComponent(const ModelNode &modelNode)
     return false;
 }
 
-static bool hasSourceWithFileComponent(const ModelNode &modelNode)
+bool hasSourceWithFileComponent(const ModelNode &modelNode)
 {
     if (modelNode.isValid() && modelNode.metaInfo().isQtQuickLoader()
         && modelNode.hasVariantProperty("source"))
@@ -222,13 +226,17 @@ static bool hasSourceWithFileComponent(const ModelNode &modelNode)
     return false;
 }
 
+} // namespace
+
 void DocumentManager::setCurrentDesignDocument(Core::IEditor *editor)
 {
     if (editor) {
         auto found = m_designDocuments.find(editor);
         if (found == m_designDocuments.end()) {
             auto &inserted = m_designDocuments[editor] = std::make_unique<DesignDocument>(
-                m_projectManager.projectStorageDependencies(), m_externalDependencies);
+                editor->document()->filePath().toString(),
+                m_projectManager.projectStorageDependencies(),
+                m_externalDependencies);
             m_currentDesignDocument = inserted.get();
             m_currentDesignDocument->setEditor(editor);
         } else {
@@ -264,6 +272,11 @@ void DocumentManager::resetPossibleImports()
     }
 }
 
+const GeneratedComponentUtils &DocumentManager::generatedComponentUtils() const
+{
+   return m_generatedComponentUtils;
+}
+
 bool DocumentManager::goIntoComponent(const ModelNode &modelNode)
 {
     QImage image = QmlDesignerPlugin::instance()->viewManager().takeFormEditorScreenshot();
@@ -286,7 +299,7 @@ bool DocumentManager::goIntoComponent(const ModelNode &modelNode)
         ModelNode rootModelNode = designDocument()->rewriterView()->rootModelNode();
         applyProperties(rootModelNode, oldProperties);
 
-        rootModelNode.setAuxiliaryData(AuxiliaryDataType::Temporary, "contextImage", image);
+        rootModelNode.setAuxiliaryData(contextImageProperty, image);
 
         return true;
     }
@@ -354,6 +367,19 @@ Utils::FilePath DocumentManager::currentProjectDirPath()
     }
 
     return {};
+}
+
+QString DocumentManager::currentProjectName()
+{
+    QTC_ASSERT(QmlDesignerPlugin::instance(), return {});
+
+    if (!QmlDesignerPlugin::instance()->currentDesignDocument())
+        return {};
+
+    Utils::FilePath qmlFileName = QmlDesignerPlugin::instance()->currentDesignDocument()->fileName();
+    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::projectForFile(qmlFileName);
+
+    return project ? project->displayName() : "";
 }
 
 QStringList DocumentManager::isoIconsQmakeVariableValue(const QString &proPath)
@@ -519,6 +545,13 @@ Utils::FilePath DocumentManager::currentResourcePath()
         return currentFilePath().absolutePath();
 
     FilePath contentFilePath = resourcePath.pathAppended("content");
+    if (contentFilePath.exists())
+        return contentFilePath;
+
+    const auto project = ProjectManager::startupProject();
+    const QString baseName = project->rootProjectDirectory().baseName() + "Content";
+
+    contentFilePath = resourcePath.pathAppended(baseName);
     if (contentFilePath.exists())
         return contentFilePath;
 

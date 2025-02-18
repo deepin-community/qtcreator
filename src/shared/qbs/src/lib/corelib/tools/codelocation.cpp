@@ -53,64 +53,12 @@
 
 namespace qbs {
 
-class CodeLocation::CodeLocationPrivate : public QSharedData
-{
-public:
-    void load(Internal::PersistentPool &pool)
-    {
-        pool.load(filePath);
-        pool.load(line);
-        pool.load(column);
-    }
-
-    void store(Internal::PersistentPool &pool) const
-    {
-        pool.store(filePath);
-        pool.store(line);
-        pool.store(column);
-    }
-
-    QString filePath;
-    int line = 0;
-    int column = 0;
-};
-
-CodeLocation::CodeLocation() = default;
-
 CodeLocation::CodeLocation(const QString &aFilePath, int aLine, int aColumn, bool checkPath)
-    : d(new CodeLocationPrivate)
 {
     QBS_ASSERT(!checkPath || Internal::FileInfo::isAbsolute(aFilePath), qDebug() << aFilePath);
-    d->filePath = aFilePath;
-    d->line = aLine;
-    d->column = aColumn;
-}
-
-CodeLocation::CodeLocation(const CodeLocation &other) = default;
-CodeLocation::CodeLocation(CodeLocation &&other) noexcept = default;
-CodeLocation &CodeLocation::operator=(const CodeLocation &other) = default;
-CodeLocation &CodeLocation::operator=(CodeLocation &&other) noexcept = default;
-
-CodeLocation::~CodeLocation() = default;
-
-QString CodeLocation::filePath() const
-{
-    return d ? d->filePath : QString();
-}
-
-int CodeLocation::line() const
-{
-    return d ? d->line : -1;
-}
-
-int CodeLocation::column() const
-{
-    return d ? d->column : -1;
-}
-
-bool CodeLocation::isValid() const
-{
-    return !filePath().isEmpty();
+    m_filePath = aFilePath;
+    m_line = aLine;
+    m_column = aColumn;
 }
 
 QString CodeLocation::toString() const
@@ -145,15 +93,18 @@ void CodeLocation::load(Internal::PersistentPool &pool)
     const bool isValid = pool.load<bool>();
     if (!isValid)
         return;
-    d = new CodeLocationPrivate;
-    pool.load(*d);
+    pool.load(m_filePath);
+    pool.load(m_line);
+    pool.load(m_column);
 }
 
 void CodeLocation::store(Internal::PersistentPool &pool) const
 {
-    if (d) {
+    if (isValid()) {
         pool.store(true);
-        pool.store(*d);
+        pool.store(m_filePath);
+        pool.store(m_line);
+        pool.store(m_column);
     } else {
         pool.store(false);
     }
@@ -161,10 +112,8 @@ void CodeLocation::store(Internal::PersistentPool &pool) const
 
 bool operator==(const CodeLocation &cl1, const CodeLocation &cl2)
 {
-    if (cl1.d == cl2.d)
-        return true;
     return cl1.filePath() == cl2.filePath() && cl1.line() == cl2.line()
-            && cl1.column() == cl2.column();
+           && cl1.column() == cl2.column();
 }
 
 bool operator!=(const CodeLocation &cl1, const CodeLocation &cl2)
@@ -181,5 +130,45 @@ bool operator<(const CodeLocation &cl1, const CodeLocation &cl2)
 {
     return cl1.toString() < cl2.toString();
 }
+
+void CodePosition::load(Internal::PersistentPool &pool) { pool.load(m_line, m_column); }
+void CodePosition::store(Internal::PersistentPool &pool) const { pool.store(m_line, m_column); }
+
+bool operator==(const CodePosition &pos1, const CodePosition &pos2)
+{
+    return pos1.line() == pos2.line() && pos1.column() == pos2.column();
+}
+bool operator!=(const CodePosition &pos1, const CodePosition &pos2) { return !(pos1 == pos2); }
+
+bool operator<(const CodePosition &pos1, const CodePosition &pos2)
+{
+    const int lineDiff = pos1.line() - pos2.line();
+    if (lineDiff < 0)
+        return true;
+    if (lineDiff > 0)
+        return false;
+    return pos1.column() < pos2.column();
+}
+bool operator>(const CodePosition &pos1, const CodePosition &pos2) { return pos2 < pos1; }
+bool operator<=(const CodePosition &pos1, const CodePosition &pos2) { return !(pos1 > pos2); }
+bool operator>=(const CodePosition &pos1, const CodePosition &pos2) { return !(pos1 < pos2); }
+
+CodeRange::CodeRange(const CodePosition &start, const CodePosition &end)
+    : m_start(start), m_end(end) {}
+
+void CodeRange::load(Internal::PersistentPool &pool) { pool.load(m_start, m_end); }
+void CodeRange::store(Internal::PersistentPool &pool) const { pool.store(m_start, m_end); }
+
+bool CodeRange::contains(const CodePosition &pos) const
+{
+    return start() <= pos && end() > pos;
+}
+
+bool operator==(const CodeRange &r1, const CodeRange &r2)
+{
+    return r1.start() == r2.start() && r1.end() == r2.end();
+}
+bool operator!=(const CodeRange &r1, const CodeRange &r2) { return !(r1 == r2); }
+bool operator<(const CodeRange &r1, const CodeRange &r2) { return r1.start() < r2.start(); }
 
 } // namespace qbs

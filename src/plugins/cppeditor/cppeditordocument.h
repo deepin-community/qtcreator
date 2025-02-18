@@ -38,6 +38,9 @@ public:
     void setPreferredParseContext(const QString &parseContextId);
     void setExtraPreprocessorDirectives(const QByteArray &directives);
 
+    // the blocks list must be sorted
+    void setIfdefedOutBlocks(const QList<TextEditor::BlockRange> &blocks);
+
     void scheduleProcessDocument();
 
     ParseContextModel &parseContextModel();
@@ -48,6 +51,10 @@ public:
     TextEditor::TabSettings tabSettings() const override;
 
     bool usesClangd() const;
+
+#ifdef WITH_TESTS
+    QList<TextEditor::BlockRange> ifdefedOutBlocks() const { return m_ifdefedOutBlocks; }
+#endif
 
 signals:
     void codeWarningsUpdated(unsigned contentsRevision,
@@ -62,14 +69,15 @@ signals:
 
     void preprocessorSettingsChanged(bool customSettings);
 
+#ifdef WITH_TESTS
+    void ifdefedOutBlocksApplied();
+#endif
+
 protected:
     void applyFontSettings() override;
-    bool saveImpl(QString *errorString,
-                  const Utils::FilePath &filePath = Utils::FilePath(),
-                  bool autoSave = false) override;
+    Utils::Result saveImpl(const Utils::FilePath &filePath, bool autoSave) override;
 
 private:
-
     void invalidateFormatterCache();
     void onFilePathChanged(const Utils::FilePath &oldPath, const Utils::FilePath &newPath);
     void onMimeTypeChanged();
@@ -93,6 +101,7 @@ private:
     void releaseResources();
 
     void showHideInfoBarAboutMultipleParseContexts(bool show);
+    void applyIfdefedOutBlocks();
 
     void initializeTimer();
 
@@ -116,6 +125,7 @@ private:
 
     ParseContextModel m_parseContextModel;
     OutlineModel m_overviewModel;
+    QList<TextEditor::BlockRange> m_ifdefedOutBlocks;
 };
 
 } // namespace Internal

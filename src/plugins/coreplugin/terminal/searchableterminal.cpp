@@ -13,11 +13,12 @@ Q_LOGGING_CATEGORY(terminalSearchLog, "qtc.terminal.search", QtWarningMsg)
 
 using namespace Utils;
 
+using namespace std::chrono;
 using namespace std::chrono_literals;
 
 namespace Core {
 
-constexpr std::chrono::milliseconds debounceInterval = 100ms;
+constexpr milliseconds debounceInterval = 100ms;
 
 TerminalSearch::TerminalSearch(TerminalSolution::TerminalSurface *surface)
     : m_surface(surface)
@@ -46,6 +47,18 @@ void TerminalSearch::setSearchString(const QString &searchString, FindFlags find
     }
 }
 
+void TerminalSearch::clearAndSearchAgain()
+{
+    if (!m_hits.isEmpty()) {
+        m_hits.clear();
+        m_currentHit = -1;
+        emit hitsChanged();
+        emit currentHitChanged();
+    }
+
+    m_debounceTimer.start();
+}
+
 void TerminalSearch::nextHit()
 {
     if (m_hits.isEmpty())
@@ -66,13 +79,6 @@ void TerminalSearch::previousHit()
 
 void TerminalSearch::updateHits()
 {
-    if (!m_hits.isEmpty()) {
-        m_hits.clear();
-        m_currentHit = -1;
-        emit hitsChanged();
-        emit currentHitChanged();
-    }
-
     m_debounceTimer.start();
 }
 
@@ -281,6 +287,10 @@ SearchableTerminal::SearchableTerminal(QWidget *parent)
     m_aggregate->add(this);
 
     surfaceChanged();
+
+    connect(this, &TerminalSolution::TerminalView::cleared, this, [this] {
+        m_search->clearAndSearchAgain();
+    });
 }
 
 SearchableTerminal::~SearchableTerminal() = default;

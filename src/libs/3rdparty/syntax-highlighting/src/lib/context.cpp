@@ -9,7 +9,6 @@
 #include "definition_p.h"
 #include "format.h"
 #include "ksyntaxhighlighting_logging.h"
-#include "repository.h"
 #include "rule_p.h"
 #include "xml_p.h"
 
@@ -38,7 +37,15 @@ void Context::resolveContexts(DefinitionData &def, const HighlightingContextData
     m_lineEndContext.resolve(def, data.lineEndContext);
     m_lineEmptyContext.resolve(def, data.lineEmptyContext);
     m_fallthroughContext.resolve(def, data.fallthroughContext);
-    m_fallthrough = !m_fallthroughContext.isStay();
+    m_stopEmptyLineContextSwitchLoop = data.stopEmptyLineContextSwitchLoop;
+
+    /**
+     * line end context switches only when lineEmptyContext is #stay. This avoids
+     * skipping empty lines after a line continuation character (see bug 405903)
+     */
+    if (m_lineEmptyContext.isStay()) {
+        m_lineEmptyContext = m_lineEndContext;
+    }
 
     m_rules.reserve(data.rules.size());
     for (const auto &ruleData : data.rules) {
@@ -65,44 +72,38 @@ void Context::resolveIncludes(DefinitionData &def)
     for (auto it = m_rules.begin(); it != m_rules.end();) {
         const IncludeRules *includeRules = it->get()->castToIncludeRules();
         if (!includeRules) {
+            m_hasDynamicRule = m_hasDynamicRule || it->get()->isDynamic();
             ++it;
             continue;
         }
 
+        const QStringView includeContext = includeRules->contextName();
+        const qsizetype idx = includeContext.indexOf(QLatin1String("##"));
+
         Context *context = nullptr;
         DefinitionData *defData = &def;
 
-        const auto &contextName = includeRules->contextName();
-        const int idx = contextName.indexOf(QLatin1String("##"));
-
-        if (idx == -1) { // local include
-            context = def.contextByName(contextName);
+        if (idx <= -1) { // local include
+            context = def.contextByName(includeContext);
         } else {
-            auto definitionName = contextName.mid(idx + 2);
-            auto includedDef = def.repo->definitionForName(definitionName);
-            if (!includedDef.isValid()) {
+            const auto definitionName = includeContext.sliced(idx + 2);
+            const auto contextName = includeContext.sliced(0, idx);
+            auto resolvedContext = def.resolveIncludedContext(definitionName, contextName);
+            defData = resolvedContext.def;
+            context = resolvedContext.context;
+            if (!defData) {
                 qCWarning(Log) << "Unable to resolve external include rule for definition" << definitionName << "in" << def.name;
-                ++it;
-                continue;
-            }
-            defData = DefinitionData::get(includedDef);
-            def.addImmediateIncludedDefinition(includedDef);
-            defData->load();
-            if (idx == 0) {
-                context = defData->initialContext();
-            } else {
-                context = defData->contextByName(QStringView(contextName).left(idx));
             }
         }
 
         if (!context) {
-            qCWarning(Log) << "Unable to resolve include rule for definition" << contextName << "in" << def.name;
+            qCWarning(Log) << "Unable to resolve include rule for definition" << includeContext << "in" << def.name;
             ++it;
             continue;
         }
 
         if (context == this) {
-            qCWarning(Log) << "Unable to resolve self include rule for definition" << contextName << "in" << def.name;
+            qCWarning(Log) << "Unable to resolve self include rule for definition" << includeContext << "in" << def.name;
             ++it;
             continue;
         }
@@ -110,6 +111,8 @@ void Context::resolveIncludes(DefinitionData &def)
         if (context->m_resolveState != Resolved) {
             context->resolveIncludes(*defData);
         }
+
+        m_hasDynamicRule = m_hasDynamicRule || context->m_hasDynamicRule;
 
         /**
          * handle included attribute

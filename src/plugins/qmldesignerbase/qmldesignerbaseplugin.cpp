@@ -6,15 +6,19 @@
 #include "studio/studiosettingspage.h"
 
 #include "studio/studiostyle.h"
-#include "utils/designersettings.h"
+
+#include <designersettings.h>
+#include <studioquickutils.h>
+#include <studiovalidator.h>
+#include <windowmanager.h>
 
 #include <coreplugin/icore.h>
+#include <utils/appinfo.h>
 #include <utils/uniqueobjectptr.h>
 
 #include <QApplication>
 
 namespace QmlDesigner {
-
 
 class QmlDesignerBasePlugin::Data
 {
@@ -29,13 +33,16 @@ public:
 };
 
 namespace {
+
+const char experimentalFeatures[] = "QML/Designer/UseExperimentalFeatures";
+
 QmlDesignerBasePlugin *global;
 }
 
 QmlDesignerBasePlugin::QmlDesignerBasePlugin()
 {
     global = this;
-};
+}
 
 QmlDesignerBasePlugin::~QmlDesignerBasePlugin() = default;
 
@@ -57,8 +64,39 @@ StudioConfigSettingsPage *QmlDesignerBasePlugin::studioConfigSettingsPage()
     return global->d->studioConfigSettingsPage.get();
 }
 
-bool QmlDesignerBasePlugin::initialize(const QStringList &, QString *)
+bool QmlDesignerBasePlugin::experimentalFeaturesEnabled()
 {
+    return Core::ICore::settings()->value(experimentalFeaturesSettingsKey(), false).toBool();
+}
+
+QByteArray QmlDesignerBasePlugin::experimentalFeaturesSettingsKey()
+{
+    QString version = Utils::appInfo().displayVersion;
+    version.remove('.');
+
+    return QByteArray(experimentalFeatures) + version.toLatin1();
+}
+
+void QmlDesignerBasePlugin::enbableLiteMode()
+{
+    global->m_enableLiteMode = true;
+}
+
+bool QmlDesignerBasePlugin::isLiteModeEnabled()
+{
+    return global->m_enableLiteMode;
+}
+
+bool QmlDesignerBasePlugin::initialize(const QStringList &arguments, QString *)
+{
+    if (arguments.contains("-qml-lite-designer"))
+        enbableLiteMode();
+
+    WindowManager::registerDeclarativeType();
+    StudioQuickUtils::registerDeclarativeType();
+    StudioIntValidator::registerDeclarativeType();
+    StudioDoubleValidator::registerDeclarativeType();
+
     d = std::make_unique<Data>();
     if (Core::ICore::settings()->value("QML/Designer/StandAloneMode", false).toBool())
         d->studioConfigSettingsPage = std::make_unique<StudioConfigSettingsPage>();

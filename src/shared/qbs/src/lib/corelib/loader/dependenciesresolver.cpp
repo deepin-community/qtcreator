@@ -60,7 +60,6 @@
 
 #include <optional>
 #include <queue>
-#include <unordered_map>
 
 namespace qbs::Internal {
 namespace {
@@ -89,7 +88,6 @@ public:
     VersionRange versionRange;
     QVariantMap parameters;
     bool limitToSubProject = false;
-    FallbackMode fallbackMode = FallbackMode::Enabled;
     bool requiredLocally = true;
     bool requiredGlobally = true;
 };
@@ -123,7 +121,6 @@ public:
     VersionRange versionRange;
     QVariantMap parameters;
     bool limitToSubProject = false;
-    FallbackMode fallbackMode = FallbackMode::Enabled;
     bool requiredLocally = true;
     bool requiredGlobally = true;
     bool checkProduct = true;
@@ -197,6 +194,7 @@ private:
 
 static bool haveSameSubProject(const ProductContext &p1, const ProductContext &p2);
 static QVariantMap safeToVariant(JSContext *ctx, const JSValue &v);
+static void collectDependsItems(Item *parent, std::queue<Item *> &dependsItems);
 
 } // namespace
 
@@ -345,10 +343,7 @@ HandleDependency DependenciesResolver::handleResolvedDependencies()
 
             // Now continue with the dependencies of the just-loaded module.
             std::queue<Item *> moduleDependsItems;
-            for (Item * const child : res.moduleItem->children()) {
-                if (child->type() == ItemType::Depends)
-                    moduleDependsItems.push(child);
-            }
+            collectDependsItems(res.moduleItem, moduleDependsItems);
             state.pendingResolvedDependencies.pop();
             stateStack().push_front(
                 {res.moduleItem, dependency, moduleDependsItems, {}, {},
@@ -360,18 +355,12 @@ HandleDependency DependenciesResolver::handleResolvedDependencies()
             if (dependency.name.toString() == StringConstants::qbsModule())
                 throw e;
 
-            // This can happen when a property is set unconditionally on a non-required,
-            // non-present dependency. We allow this for user convenience.
-            if (!dependency.requiredLocally) {
-                state.pendingResolvedDependencies.pop();
-                continue;
-            }
-
             // See QBS-1338 for why we do not abort handling the product.
             state.pendingResolvedDependencies.pop();
             Item::Modules &modules = m_product.item->modules();
 
             // Unwind.
+            bool unwound = false;
             while (stateStack().size() > 1) {
                 const auto loadingItemModule = std::find_if(
                     modules.begin(), modules.end(), [&](const Item::Module &m) {
@@ -383,10 +372,13 @@ HandleDependency DependenciesResolver::handleResolvedDependencies()
                 }
                 modules.erase(loadingItemModule, modules.end());
                 stateStack().pop_front();
+                unwound = true;
             }
 
             m_product.handleError(e);
-            return HandleDependency::Ignore;
+            if (unwound)
+                return HandleDependency::Ignore;
+            continue;
         }
     }
     return HandleDependency::Ignore;
@@ -410,8 +402,8 @@ LoadModuleResult DependenciesResolver::loadModule(
     ProductContext *productDep = nullptr;
     Item *moduleItem = nullptr;
 
-    const auto addLoadingItem = [&](Item::Module &module, Item &loadingItem) {
-        module.loadingItems.emplace_back(&loadingItem,
+    const auto addLoadContext = [&](Item::Module &module) {
+        module.loadContexts.emplace_back(dependency.item,
                                          std::make_pair(dependency.parameters,
                                                         INT_MAX - dependsChainLength()));
     };
@@ -427,18 +419,19 @@ LoadModuleResult DependenciesResolver::loadModule(
 
         QBS_CHECK(existingModule->item);
         moduleItem = existingModule->item;
-        const auto matcher = [loadingItem](const Item::Module::LoadingItemInfo &info) {
-            return info.first == loadingItem;
+        const auto matcher = [loadingItem](const Item::Module::LoadContext &context) {
+            return context.loadingItem() == loadingItem;
         };
-        const auto it = std::find_if(existingModule->loadingItems.begin(),
-                                     existingModule->loadingItems.end(), matcher);
-        if (it == existingModule->loadingItems.end())
-            addLoadingItem(*existingModule, *loadingItem);
+        const auto it = std::find_if(existingModule->loadContexts.begin(),
+                                     existingModule->loadContexts.end(), matcher);
+        if (it == existingModule->loadContexts.end())
+            addLoadContext(*existingModule);
         else
-            it->second.first = mergeDependencyParameters(it->second.first, dependency.parameters);
+            it->parameters.first = mergeDependencyParameters(it->parameters.first,
+                                                             dependency.parameters);
     } else if (dependency.product) {
         productDep = dependency.product; // We have already done the look-up.
-    } else if (!(productDep = findMatchingProduct(dependency))) {
+    } else if (productDep = findMatchingProduct(dependency); !productDep) {
         moduleItem = findMatchingModule(dependency);
     }
 
@@ -512,7 +505,7 @@ LoadModuleResult DependenciesResolver::loadModule(
     if (m_product.item) {
         Item::Module module = createModule(dependency, moduleItem, productDep);
         module.required = dependency.requiredGlobally;
-        addLoadingItem(module, *loadingItem);
+        addLoadContext(module);
         module.maxDependsChainLength = dependsChainLength();
         m_product.item->addModule(module);
         addLocalModule();
@@ -598,8 +591,8 @@ Item *DependenciesResolver::findMatchingModule(
         return nullptr;
     }
 
-    if (Item *moduleItem = searchAndLoadModuleFile(m_loaderState, m_product, dependency.location(),
-                                                   dependency.name, dependency.fallbackMode)) {
+    if (Item *moduleItem = searchAndLoadModuleFile(
+            m_loaderState, m_product, dependency.location(), dependency.name)) {
         QBS_CHECK(moduleItem->type() == ItemType::Module);
         Item * const proto = moduleItem;
         ModuleItemLocker locker(*moduleItem);
@@ -757,7 +750,7 @@ void DependenciesResolver::adjustDependsItemForMultiplexing(Item *dependsItem)
         for (auto lhsProperty = lhs.constBegin(); lhsProperty != lhs.constEnd(); lhsProperty++) {
             const auto rhsProperty = rhs.find(lhsProperty.key());
             const bool isCommonProperty = rhsProperty != rhs.constEnd();
-            if (isCommonProperty && lhsProperty.value() != rhsProperty.value())
+            if (isCommonProperty && !qVariantsEqual(lhsProperty.value(), rhsProperty.value()))
                 return false;
         }
         return true;
@@ -819,9 +812,14 @@ void DependenciesResolver::adjustDependsItemForMultiplexing(Item *dependsItem)
 std::optional<EvaluatedDependsItem> DependenciesResolver::evaluateDependsItem(Item *item)
 {
     Evaluator &evaluator = m_loaderState.evaluator();
-    if (!m_product.project->topLevelProject->checkItemCondition(item, evaluator)) {
-        qCDebug(lcModuleLoader) << "Depends item disabled, ignoring.";
-        return {};
+    for (Item *current = item;
+         current->type() == ItemType::Depends || current->type() == ItemType::Group;
+         current = current->parent()) {
+        if (!m_loaderState.topLevelProject().checkItemCondition(
+                current, m_loaderState.evaluator())) {
+            qCDebug(lcModuleLoader) << "Depends item disabled, ignoring.";
+            return {};
+        }
     }
 
     const QString name = evaluator.stringValue(item, StringConstants::nameProperty());
@@ -855,11 +853,6 @@ std::optional<EvaluatedDependsItem> DependenciesResolver::evaluateDependsItem(It
                         item->location());
     }
 
-    const FallbackMode fallbackMode
-            = m_loaderState.parameters().fallbackProviderEnabled()
-                  && evaluator.boolValue(item, StringConstants::enableFallbackProperty())
-              ? FallbackMode::Enabled : FallbackMode::Disabled;
-
     bool profilesPropertyWasSet = false;
     std::optional<QStringList> profiles;
     bool required = true;
@@ -886,9 +879,16 @@ std::optional<EvaluatedDependsItem> DependenciesResolver::evaluateDependsItem(It
     if (!productTypeTags.empty())
         m_product.bulkDependencies.emplace_back(productTypeTags, item->location());
     return EvaluatedDependsItem{
-        item, QualifiedId::fromString(name), submodules, productTypeTags,
-        multiplexIds, profiles, {minVersion, maxVersion}, parameters, limitToSubProject,
-        fallbackMode, required};
+        item,
+        QualifiedId::fromString(name),
+        submodules,
+        productTypeTags,
+        multiplexIds,
+        profiles,
+        {minVersion, maxVersion},
+        parameters,
+        limitToSubProject,
+        required};
 }
 
 // Potentially multiplexes a dependency along Depends.productTypes, Depends.subModules and
@@ -1000,21 +1000,30 @@ void DependenciesResolver::checkForModuleNamePrefixCollision(
         return;
 
     for (const Item::Module &m : m_product.item->modules()) {
-        if (m.name.length() == dependency.name.length()
-            || m.name.front() != dependency.name.front()) {
+        if (m.name.length() == dependency.name.length())
             continue;
-        }
+
         QualifiedId shortName;
         QualifiedId longName;
-        if (m.name < dependency.name) {
+        if (m.name.length() < dependency.name.length()) {
             shortName = m.name;
             longName = dependency.name;
         } else {
             shortName = dependency.name;
             longName = m.name;
         }
-        throw ErrorInfo(Tr::tr("The name of module '%1' is equal to the first component of the "
-                               "name of module '%2', which is not allowed")
+        const auto isPrefix = [&] {
+            for (int i = 0; i < shortName.length(); ++i) {
+                if (shortName.at(i) != longName.at(i))
+                    return false;
+            }
+            return true;
+        };
+        if (!isPrefix())
+            continue;
+
+        throw ErrorInfo(Tr::tr("The name of module '%1' is a prefix of the name of module '%2', "
+                               "which is not allowed")
                             .arg(shortName.toString(), longName.toString()), dependency.location());
     }
 }
@@ -1033,28 +1042,33 @@ Item::Module DependenciesResolver::createModule(
 
 FullyResolvedDependsItem::FullyResolvedDependsItem(
     ProductContext *product, const EvaluatedDependsItem &dependency)
-    : product(product), item(dependency.item), name(product->name),
-    versionRange(dependency.versionRange), parameters(dependency.parameters),
-    fallbackMode(FallbackMode::Disabled), checkProduct(false) {}
+    : product(product)
+    , item(dependency.item)
+    , name(product->name)
+    , versionRange(dependency.versionRange)
+    , parameters(dependency.parameters)
+    , checkProduct(false)
+{}
 
 FullyResolvedDependsItem FullyResolvedDependsItem::makeBaseDependency()
 {
     FullyResolvedDependsItem item;
-    item.fallbackMode = FallbackMode::Disabled;
     item.name = StringConstants::qbsModule();
     return item;
 }
 
 FullyResolvedDependsItem::FullyResolvedDependsItem(
     const EvaluatedDependsItem &dependency, QualifiedId name, QString profile, QString multiplexId)
-    : item(dependency.item), name(std::move(name)),
-      profile(std::move(profile)), multiplexId(std::move(multiplexId)),
-      versionRange(dependency.versionRange),
-      parameters(dependency.parameters),
-      limitToSubProject(dependency.limitToSubProject),
-      fallbackMode(dependency.fallbackMode),
-      requiredLocally(dependency.requiredLocally),
-      requiredGlobally(dependency.requiredGlobally) {}
+    : item(dependency.item)
+    , name(std::move(name))
+    , profile(std::move(profile))
+    , multiplexId(std::move(multiplexId))
+    , versionRange(dependency.versionRange)
+    , parameters(dependency.parameters)
+    , limitToSubProject(dependency.limitToSubProject)
+    , requiredLocally(dependency.requiredLocally)
+    , requiredGlobally(dependency.requiredGlobally)
+{}
 
 QString FullyResolvedDependsItem::id() const
 {
@@ -1103,6 +1117,16 @@ QVariantMap safeToVariant(JSContext *ctx, const JSValue &v)
     return result;
 }
 
+void collectDependsItems(Item *parent, std::queue<Item *> &dependsItems)
+{
+    for (Item * const child : parent->children()) {
+        if (child->type() == ItemType::Depends)
+            dependsItems.push(child);
+        else if (child->type() == ItemType::Group)
+            collectDependsItems(child, dependsItems);
+    }
+}
+
 DependenciesContextImpl::DependenciesContextImpl(ProductContext &product, LoaderState &loaderState)
     : m_product(product)
 {
@@ -1110,10 +1134,7 @@ DependenciesContextImpl::DependenciesContextImpl(ProductContext &product, Loader
 
     // Initialize the state with the direct Depends items of the product item.
     DependenciesResolvingState newState{product.item,};
-    for (Item * const child : product.item->children()) {
-        if (child->type() == ItemType::Depends)
-            newState.pendingDependsItems.push(child);
-    }
+    collectDependsItems(product.item, newState.pendingDependsItems);
     stateStack.push_front(std::move(newState));
     stateStack.front().pendingResolvedDependencies.push(
         FullyResolvedDependsItem::makeBaseDependency());
@@ -1122,8 +1143,8 @@ DependenciesContextImpl::DependenciesContextImpl(ProductContext &product, Loader
 std::pair<ProductDependency, ProductContext *> DependenciesContextImpl::pendingDependency() const
 {
     QBS_CHECK(!stateStack.empty());
-    if (stateStack.front().currentDependsItem
-        && !stateStack.front().currentDependsItem->productTypes.empty()) {
+    if (const auto &currentDependsItem = stateStack.front().currentDependsItem;
+        currentDependsItem && !currentDependsItem->productTypes.empty()) {
         qCDebug(lcLoaderScheduling) << "product" << m_product.displayName()
                                     << "to be delayed because of bulk dependency";
         return {ProductDependency::Bulk, nullptr};

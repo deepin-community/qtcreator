@@ -29,6 +29,8 @@ namespace Internal { class VcsCommandPrivate; }
 
 class VcsCommand;
 
+using ExitCodeInterpreter = std::function<Utils::ProcessResult(int /*exitCode*/)>;
+
 class VCSBASE_EXPORT CommandResult
 {
 public:
@@ -63,6 +65,7 @@ class VCSBASE_EXPORT VcsCommand final : public QObject
     Q_OBJECT
 
 public:
+    // TODO: For master, make c'tor private and make it a friend to VcsBaseClientImpl.
     VcsCommand(const Utils::FilePath &workingDirectory, const Utils::Environment &environment);
     ~VcsCommand() override;
 
@@ -70,7 +73,7 @@ public:
 
     void addJob(const Utils::CommandLine &command, int timeoutS,
                 const Utils::FilePath &workingDirectory = {},
-                const Utils::ExitCodeInterpreter &interpreter = {});
+                const ExitCodeInterpreter &interpreter = {});
     void start();
 
     void addFlags(RunFlags f);
@@ -80,9 +83,11 @@ public:
     void setProgressParser(const Core::ProgressParser &parser);
 
     static CommandResult runBlocking(const Utils::FilePath &workingDirectory,
-                                     const Utils::Environment &environmentconst,
-                                     const Utils::CommandLine &command, RunFlags flags,
-                                     int timeoutS, QTextCodec *codec);
+                                     const Utils::Environment &environment,
+                                     const Utils::CommandLine &command,
+                                     RunFlags flags,
+                                     int timeoutS,
+                                     QTextCodec *codec);
     void cancel();
 
     QString cleanedStdOut() const;

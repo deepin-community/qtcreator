@@ -44,6 +44,7 @@
 #include "productbuilddata.h"
 #include "projectbuilddata.h"
 #include "rawscanresults.h"
+#include <cppscanner/cppscanner.h>
 #include <language/scriptengine.h>
 #include <logging/categories.h>
 #include <logging/translator.h>
@@ -72,31 +73,6 @@ struct CommonFileTags
 
 Q_GLOBAL_STATIC(CommonFileTags, commonFileTags)
 
-class QtScanner : public DependencyScanner
-{
-public:
-    QtScanner(const DependencyScanner &actualScanner)
-        : m_id(QStringLiteral("qt") + actualScanner.id()) {}
-
-private:
-    QStringList collectSearchPaths(Artifact *) override { return {}; }
-    QStringList collectDependencies(Artifact *, FileResourceBase *, const char *) override
-    {
-        return {};
-    }
-    bool recursive() const override { return false; }
-    const void *key() const override { return nullptr; }
-    QString createId() const override { return m_id; }
-    bool areModulePropertiesCompatible(const PropertyMapConstPtr &,
-                                       const PropertyMapConstPtr &) const override
-    {
-        return true;
-    }
-    bool cacheIsPerFile() const override { return false; }
-
-    const QString m_id;
-};
-
 static QString qtMocScannerJsName() { return QStringLiteral("QtMocScanner"); }
 
 QtMocScanner::QtMocScanner(const ResolvedProductPtr &product, ScriptEngine *engine, JSValue targetScriptValue)
@@ -109,7 +85,7 @@ QtMocScanner::QtMocScanner(const ResolvedProductPtr &product, ScriptEngine *engi
     attachPointerTo(scannerObj, this);
     setJsProperty(engine->context(), targetScriptValue, qtMocScannerJsName(), scannerObj);
     JSValue applyFunction = JS_NewCFunction(engine->context(), &js_apply, "QtMocScanner", 1);
-    setJsProperty(engine->context(), scannerObj, QStringLiteral("apply"), applyFunction);
+    setJsProperty(engine->context(), scannerObj, std::string_view("apply"), applyFunction);
 }
 
 QtMocScanner::~QtMocScanner()
@@ -118,14 +94,14 @@ QtMocScanner::~QtMocScanner()
     JS_FreeValue(m_engine->context(), m_targetScriptValue);
 }
 
-static RawScanResult runScanner(ScannerPlugin *scanner, const Artifact *artifact)
+static RawScanResult runScannerForArtifact(const Artifact *artifact)
 {
     const QString &filepath = artifact->filePath();
-    QtScanner depScanner((PluginDependencyScanner(scanner)));
     RawScanResults &rawScanResults
             = artifact->product->topLevelProject()->buildData->rawScanResults;
-    RawScanResults::ScanData &scanData = rawScanResults.findScanData(artifact, &depScanner,
-                                                                     artifact->properties);
+    auto predicate = [](const PropertyMapConstPtr &, const PropertyMapConstPtr &) { return true; };
+    RawScanResults::ScanData &scanData = rawScanResults.findScanData(
+        artifact, qtMocScannerJsName(), artifact->properties, predicate);
     if (scanData.lastScanTime < artifact->timestamp()) {
         FileTags tags = artifact->fileTags();
         if (tags.contains(commonFileTags->cppCombine)) {
@@ -137,27 +113,23 @@ static RawScanResult runScanner(ScannerPlugin *scanner, const Artifact *artifact
             tags.insert(commonFileTags->objcpp);
         }
         const QByteArray tagsForScanner = tags.toStringList().join(QLatin1Char(',')).toLatin1();
-        void *opaq = scanner->open(filepath.utf16(), tagsForScanner.constData(),
-                                   ScanForDependenciesFlag | ScanForFileTagsFlag);
-        if (!opaq || !scanner->additionalFileTags)
+        CppScannerContext context;
+        const bool ok = scanCppFile(
+            context, filepath, {tagsForScanner.data(), size_t(tagsForScanner.size())}, true, true);
+        if (!ok)
             return scanData.rawScanResult;
 
         scanData.rawScanResult.additionalFileTags.clear();
         scanData.rawScanResult.deps.clear();
-        int length = 0;
-        const char **szFileTagsFromScanner = scanner->additionalFileTags(opaq, &length);
-        if (szFileTagsFromScanner) {
-            for (int i = length; --i >= 0;)
-                scanData.rawScanResult.additionalFileTags += szFileTagsFromScanner[i];
-        }
+
+        for (const auto tag : additionalFileTags(context))
+            scanData.rawScanResult.additionalFileTags += FileTag(tag.data());
 
         QString baseDirOfInFilePath = artifact->dirPath();
-        for (;;) {
-            int flags = 0;
-            const char *szOutFilePath = scanner->next(opaq, &length, &flags);
-            if (szOutFilePath == nullptr)
-                break;
-            QString includedFilePath = QString::fromLocal8Bit(szOutFilePath, length);
+        for (const auto &scanResult : context.includedFiles) {
+            int flags = scanResult.flags;
+            QString includedFilePath = QString::fromLocal8Bit(
+                scanResult.fileName.data(), scanResult.fileName.size());
             if (includedFilePath.isEmpty())
                 continue;
             bool isLocalInclude = (flags & SC_LOCAL_INCLUDE_FLAG);
@@ -169,7 +141,6 @@ static RawScanResult runScanner(ScannerPlugin *scanner, const Artifact *artifact
             scanData.rawScanResult.deps.emplace_back(includedFilePath);
         }
 
-        scanner->close(opaq);
         scanData.lastScanTime = FileTime::currentTime();
     }
     return scanData.rawScanResult;
@@ -184,7 +155,7 @@ void QtMocScanner::findIncludedMocCppFiles()
 
     static const FileTags mocCppTags = {m_tags.cpp, m_tags.objcpp};
     for (Artifact *artifact : m_product->lookupArtifactsByFileTags(mocCppTags)) {
-        const RawScanResult scanResult = runScanner(m_cppScanner, artifact);
+        const RawScanResult scanResult = runScannerForArtifact(artifact);
         for (const RawScannedDependency &dependency : scanResult.deps) {
             QString includedFileName = dependency.fileName();
             if (includedFileName.startsWith(QLatin1String("moc_"))
@@ -207,23 +178,8 @@ JSValue QtMocScanner::js_apply(JSContext *ctx, JSValue this_val, int argc, JSVal
     return scanner->apply(engine, attachedPointer<Artifact>(argv[0], engine->dataWithPtrClass()));
 }
 
-static JSValue scannerCountError(ScriptEngine *engine, size_t scannerCount,
-                                 const QString &fileTag)
-{
-    return throwError(engine->context(),
-                      Tr::tr("There are %1 scanners for the file tag %2. "
-                             "Expected is exactly one.").arg(scannerCount).arg(fileTag));
-}
-
 JSValue QtMocScanner::apply(ScriptEngine *engine, const Artifact *artifact)
 {
-    if (!m_cppScanner) {
-        auto scanners = ScannerPluginManager::scannersForFileTag(m_tags.cpp);
-        if (scanners.size() != 1)
-            return scannerCountError(engine, scanners.size(), m_tags.cpp.toString());
-        m_cppScanner = scanners.front();
-    }
-
     qCDebug(lcMocScan).noquote() << "scanning" << artifact->toString();
 
     bool hasQObjectMacro = false;
@@ -231,7 +187,7 @@ JSValue QtMocScanner::apply(ScriptEngine *engine, const Artifact *artifact)
     bool hasPluginMetaDataMacro = false;
     const bool isHeaderFile = artifact->fileTags().contains(m_tags.hpp);
 
-    RawScanResult scanResult = runScanner(m_cppScanner, artifact);
+    RawScanResult scanResult = runScannerForArtifact(artifact);
     if (scanResult.additionalFileTags.empty() && artifact->fileTags().contains("mocable")) {
         if (isHeaderFile) {
             scanResult.additionalFileTags.insert(m_tags.moc_hpp);
@@ -269,10 +225,13 @@ JSValue QtMocScanner::apply(ScriptEngine *engine, const Artifact *artifact)
 
     JSValue obj = engine->newObject();
     JSContext * const ctx = m_engine->context();
-    setJsProperty(ctx, obj, QStringLiteral("hasQObjectMacro"), JS_NewBool(ctx, hasQObjectMacro));
-    setJsProperty(ctx, obj, QStringLiteral("mustCompile"), JS_NewBool(ctx, mustCompile));
-    setJsProperty(ctx, obj, QStringLiteral("hasPluginMetaDataMacro"),
-                  JS_NewBool(ctx, hasPluginMetaDataMacro));
+    setJsProperty(ctx, obj, std::string_view("hasQObjectMacro"), JS_NewBool(ctx, hasQObjectMacro));
+    setJsProperty(ctx, obj, std::string_view("mustCompile"), JS_NewBool(ctx, mustCompile));
+    setJsProperty(
+        ctx,
+        obj,
+        std::string_view("hasPluginMetaDataMacro"),
+        JS_NewBool(ctx, hasPluginMetaDataMacro));
     engine->setUsesIo();
     return obj;
 }

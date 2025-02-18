@@ -1,9 +1,8 @@
-import qbs.FileInfo
+import "../../TheScanner.qbs" as TheScanner
 
 Module {
-    Scanner {
-        inputs: "i"
-        searchPaths: [FileInfo.path(input.filePath)]
-        scan: ["file.inc"]
+    Group {
+        condition: product.enableGroup
+        TheScanner { condition: product.moduleScanner }
     }
 }

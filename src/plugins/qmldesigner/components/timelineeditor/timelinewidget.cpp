@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "timelinewidget.h"
-#include "bindingproperty.h"
 #include "curvesegment.h"
-#include "easingcurve.h"
 #include "easingcurvedialog.h"
 #include "timelineconstants.h"
 #include "timelinegraphicsscene.h"
@@ -45,6 +43,8 @@
 
 #include <cmath>
 
+using namespace Core;
+
 namespace QmlDesigner {
 
 class Eventfilter : public QObject
@@ -66,9 +66,7 @@ public:
 
 static qreal next(const QVector<qreal> &vector, qreal current)
 {
-    auto iter = std::find_if(vector.cbegin(), vector.cend(), [&](qreal val) {
-        return val > current;
-    });
+    auto iter = std::ranges::find_if(vector, [&](qreal val) { return val > current; });
     if (iter != vector.end())
         return *iter;
     return current;
@@ -76,9 +74,8 @@ static qreal next(const QVector<qreal> &vector, qreal current)
 
 static qreal previous(const QVector<qreal> &vector, qreal current)
 {
-    auto iter = std::find_if(vector.rbegin(), vector.rend(), [&](qreal val) {
-        return val < current;
-    });
+    auto iter = std::find_if(vector.rbegin(), vector.rend(),
+                             [&](qreal val) { return val < current; });
     if (iter != vector.rend())
         return *iter;
     return current;
@@ -221,10 +218,10 @@ TimelineWidget::TimelineWidget(TimelineView *view)
 
     {
         QPalette timelinePalette;
-        timelinePalette.setColor(QPalette::Text, Utils::creatorTheme()->color(
+        timelinePalette.setColor(QPalette::Text, Utils::creatorColor(
                                      Utils::Theme::DStextColor));
         timelinePalette.setColor(QPalette::WindowText, timelinePalette.color(QPalette::Text));
-        timelinePalette.setColor(QPalette::Window, Utils::creatorTheme()->color(
+        timelinePalette.setColor(QPalette::Window, Utils::creatorColor(
                                      Utils::Theme::QmlDesigner_BackgroundColorDarkAlternate));
 
         onboardingTopLabel->setPalette(timelinePalette);
@@ -238,7 +235,7 @@ TimelineWidget::TimelineWidget(TimelineView *view)
 
     connectToolbar();
 
-    auto setScrollOffset = [this]() { graphicsScene()->setScrollOffset(m_scrollbar->value()); };
+    auto setScrollOffset = [this] { graphicsScene()->setScrollOffset(m_scrollbar->value()); };
     connect(m_scrollbar, &QSlider::valueChanged, this, setScrollOffset);
 
     connect(graphicsScene(),
@@ -246,7 +243,7 @@ TimelineWidget::TimelineWidget(TimelineView *view)
             this,
             [this](const QString &message) { m_statusBar->setText(message); });
 
-    connect(m_addButton, &QPushButton::clicked, this, [this]() {
+    connect(m_addButton, &QPushButton::clicked, this, [this] {
         m_timelineView->addNewTimelineDialog();
     });
 
@@ -268,9 +265,7 @@ TimelineWidget::TimelineWidget(TimelineView *view)
     auto playAnimation = [this](QVariant frame) { graphicsScene()->setCurrentFrame(qRound(frame.toDouble())); };
     connect(m_playbackAnimation, &QVariantAnimation::valueChanged, playAnimation);
 
-    auto updatePlaybackLoopValues = [this]() {
-        updatePlaybackValues();
-    };
+    auto updatePlaybackLoopValues = [this] { updatePlaybackValues(); };
     connect(graphicsScene()->layoutRuler(), &TimelineRulerSectionItem::playbackLoopValuesChanged, updatePlaybackLoopValues);
 
     auto setPlaybackState = [this](QAbstractAnimation::State newState,
@@ -279,10 +274,13 @@ TimelineWidget::TimelineWidget(TimelineView *view)
     };
     connect(m_playbackAnimation, &QVariantAnimation::stateChanged, setPlaybackState);
 
-    auto onFinish = [this]() { graphicsScene()->setCurrentFrame(m_playbackAnimation->startValue().toInt()); };
+    auto onFinish = [this] { graphicsScene()->setCurrentFrame(m_playbackAnimation->startValue().toInt()); };
     connect(m_playbackAnimation, &QVariantAnimation::finished, onFinish);
 
     TimeLineNS::TimelineScrollAreaSupport::support(m_graphicsView, m_scrollbar);
+
+    IContext::attach(this, Context(TimelineConstants::C_QMLTIMELINE),
+                    [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void TimelineWidget::connectToolbar()
@@ -297,22 +295,22 @@ void TimelineWidget::connectToolbar()
     auto setZoomFactor = [this](int val) { m_graphicsScene->setZoom(val); };
     connect(m_toolbar, &TimelineToolBar::scaleFactorChanged, setZoomFactor);
 
-    auto setToFirstFrame = [this]() {
+    auto setToFirstFrame = [this] {
         graphicsScene()->setCurrentFrame(graphicsScene()->startFrame());
     };
     connect(m_toolbar, &TimelineToolBar::toFirstFrameTriggered, setToFirstFrame);
 
-    auto setToLastFrame = [this]() {
+    auto setToLastFrame = [this] {
         graphicsScene()->setCurrentFrame(graphicsScene()->endFrame());
     };
     connect(m_toolbar, &TimelineToolBar::toLastFrameTriggered, setToLastFrame);
 
-    auto setToPreviousFrame = [this]() {
+    auto setToPreviousFrame = [this] {
         graphicsScene()->setCurrentFrame(adjacentFrame(&previous));
     };
     connect(m_toolbar, &TimelineToolBar::previousFrameTriggered, setToPreviousFrame);
 
-    auto setToNextFrame = [this]() { graphicsScene()->setCurrentFrame(adjacentFrame(&next)); };
+    auto setToNextFrame = [this] { graphicsScene()->setCurrentFrame(adjacentFrame(&next)); };
     connect(m_toolbar, &TimelineToolBar::nextFrameTriggered, setToNextFrame);
 
     auto setCurrentFrame = [this](int frame) { graphicsScene()->setCurrentFrame(frame); };
@@ -463,7 +461,7 @@ void TimelineWidget::contextHelp(const Core::IContext::HelpCallback &callback) c
 
 void TimelineWidget::init(int zoom)
 {
-    QmlTimeline currentTimeline = m_timelineView->timelineForState(m_timelineView->currentState());
+    QmlTimeline currentTimeline = m_timelineView->timelineForState(m_timelineView->currentStateNode());
     if (currentTimeline.isValid()) {
         setTimelineId(currentTimeline.modelNode().id());
         m_statusBar->setText(
@@ -503,7 +501,7 @@ TimelineToolBar *TimelineWidget::toolBar() const
 void TimelineWidget::invalidateTimelineDuration(const QmlTimeline &timeline)
 {
     if (timelineView() && timelineView()->model()) {
-        QmlTimeline currentTimeline = timelineView()->currentTimeline();
+        QmlTimeline currentTimeline = timelineView()->currentTimelineNode();
         if (currentTimeline.isValid() && currentTimeline == timeline) {
             m_toolbar->setStartFrame(timeline.startKeyframe());
             m_toolbar->setEndFrame(timeline.endKeyframe());
@@ -527,7 +525,7 @@ void TimelineWidget::invalidateTimelineDuration(const QmlTimeline &timeline)
 void TimelineWidget::invalidateTimelinePosition(const QmlTimeline &timeline)
 {
     if (timelineView() && timelineView()->model()) {
-        QmlTimeline currentTimeline = timelineView()->currentTimeline();
+        QmlTimeline currentTimeline = timelineView()->currentTimelineNode();
         if (currentTimeline.isValid() && currentTimeline == timeline) {
             qreal frame = getcurrentFrame(timeline);
             m_toolbar->setCurrentFrame(frame);
@@ -553,7 +551,7 @@ void TimelineWidget::setupScrollbar(int min, int max, int current)
 
 void TimelineWidget::setTimelineId(const QString &id)
 {
-    auto currentState = m_timelineView->currentState();
+    QmlModelState currentState = m_timelineView->currentStateNode();
     auto timelineOfState = m_timelineView->timelineForState(currentState.modelNode());
 
     bool active = false;
@@ -608,7 +606,7 @@ void TimelineWidget::showEvent([[maybe_unused]] QShowEvent *event)
 {
     int zoom = m_toolbar->scaleFactor();
 
-    m_timelineView->setEnabled(true);
+    QmlDesignerPlugin::viewManager().showView(*m_timelineView);
 
     graphicsScene()->setWidth(m_graphicsView->viewport()->width());
     graphicsScene()->invalidateScene();
@@ -631,7 +629,7 @@ void TimelineWidget::resizeEvent(QResizeEvent *event)
 
 void TimelineWidget::hideEvent(QHideEvent *event)
 {
-    m_timelineView->setEnabled(false);
+    QmlDesignerPlugin::viewManager().hideView(*m_timelineView);
     QWidget::hideEvent(event);
 }
 

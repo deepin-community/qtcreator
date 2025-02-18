@@ -14,20 +14,28 @@ HelperWidgets.ScrollView {
     interactive: !ctxMenu.opened && !ContentLibraryBackend.rootView.isDragging
                  && !HelperWidgets.Controller.contextMenuOpened
 
-    readonly property int cellWidth: 100
-    readonly property int cellHeight: 120
+    property real cellWidth: 100
+    property real cellHeight: 120
+    property int numColumns: 4
+
+    property int count: 0
+    function assignMaxCount() {
+        let c = 0
+        for (let i = 0; i < categoryRepeater.count; ++i)
+            c = Math.max(c, categoryRepeater.itemAt(i)?.count ?? 0)
+
+        root.count = c
+    }
 
     required property var searchBox
 
     signal unimport(var bundleItem);
 
-    function closeContextMenu()
-    {
+    function closeContextMenu() {
         ctxMenu.close()
     }
 
-    function expandVisibleSections()
-    {
+    function expandVisibleSections() {
         for (let i = 0; i < categoryRepeater.count; ++i) {
             let cat = categoryRepeater.itemAt(i)
             if (cat.visible && !cat.expanded)
@@ -48,10 +56,15 @@ HelperWidgets.ScrollView {
             model: ContentLibraryBackend.effectsModel
 
             delegate: HelperWidgets.Section {
+                id: section
+
                 width: root.width
+                leftPadding: StudioTheme.Values.sectionPadding
+                rightPadding: StudioTheme.Values.sectionPadding
+                topPadding: StudioTheme.Values.sectionPadding
+                bottomPadding: StudioTheme.Values.sectionPadding
+
                 caption: bundleCategoryName
-                addTopPadding: false
-                sectionBackgroundColor: "transparent"
                 visible: bundleCategoryVisible && !ContentLibraryBackend.effectsModel.isEmpty
                 expanded: bundleCategoryExpanded
                 expandOnClick: false
@@ -65,22 +78,28 @@ HelperWidgets.ScrollView {
                     bundleCategoryExpanded = true
                 }
 
+                property alias count: repeater.count
+
+                onCountChanged: root.assignMaxCount()
+
                 Grid {
-                    width: root.width
-                    leftPadding: 5
-                    rightPadding: 5
-                    bottomPadding: 5
-                    columns: root.width / root.cellWidth
+                    width: section.width - section.leftPadding - section.rightPadding
+                    spacing: StudioTheme.Values.sectionGridSpacing
+                    columns: root.numColumns
 
                     Repeater {
+                        id: repeater
                         model: bundleCategoryItems
 
-                        delegate: ContentLibraryEffect {
+                        delegate: ContentLibraryItem {
                             width: root.cellWidth
                             height: root.cellHeight
 
                             onShowContextMenu: ctxMenu.popupMenu(modelData)
+                            onAddToProject: ContentLibraryBackend.effectsModel.addInstance(modelData)
                         }
+
+                        onCountChanged: root.assignMaxCount()
                     }
                 }
             }
@@ -89,9 +108,7 @@ HelperWidgets.ScrollView {
         Text {
             id: infoText
             text: {
-                if (!ContentLibraryBackend.effectsModel.bundleExists)
-                    qsTr("No effects available.")
-                else if (!ContentLibraryBackend.rootView.isQt6Project)
+                if (!ContentLibraryBackend.rootView.isQt6Project)
                     qsTr("<b>Content Library</b> effects are not supported in Qt5 projects.")
                 else if (!ContentLibraryBackend.rootView.hasQuick3DImport)
                     qsTr("To use <b>Content Library</b>, first add the QtQuick3D module in the <b>Components</b> view.")
@@ -99,6 +116,8 @@ HelperWidgets.ScrollView {
                     qsTr("To use <b>Content Library</b>, version 6.4 or later of the QtQuick3D module is required.")
                 else if (!ContentLibraryBackend.rootView.hasMaterialLibrary)
                     qsTr("<b>Content Library</b> is disabled inside a non-visual component.")
+                else if (!ContentLibraryBackend.effectsModel.bundleExists)
+                    qsTr("No effects available.")
                 else if (!searchBox.isEmpty())
                     qsTr("No match found.")
                 else

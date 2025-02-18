@@ -11,8 +11,8 @@ namespace Copilot {
 
 class Completion : public LanguageServerProtocol::JsonObject
 {
-    static constexpr char displayTextKey[] = "displayText";
-    static constexpr char uuidKey[] = "uuid";
+    static constexpr LanguageServerProtocol::Key displayTextKey{"displayText"};
+    static constexpr LanguageServerProtocol::Key uuidKey{"uuid"};
 
 public:
     using JsonObject::JsonObject;
@@ -22,9 +22,17 @@ public:
     {
         return typedValue<LanguageServerProtocol::Position>(LanguageServerProtocol::positionKey);
     }
+    void setPosition(const LanguageServerProtocol::Position &position)
+    {
+        insert(LanguageServerProtocol::positionKey, position);
+    }
     LanguageServerProtocol::Range range() const
     {
         return typedValue<LanguageServerProtocol::Range>(LanguageServerProtocol::rangeKey);
+    }
+    void setRange(const LanguageServerProtocol::Range &range)
+    {
+        insert(LanguageServerProtocol::rangeKey, range);
     }
     QString text() const { return typedValue<QString>(LanguageServerProtocol::textKey); }
     void setText(const QString &text) { insert(LanguageServerProtocol::textKey, text); }
@@ -41,7 +49,7 @@ public:
 class GetCompletionParams : public LanguageServerProtocol::JsonObject
 {
 public:
-    static constexpr char docKey[] = "doc";
+    static constexpr LanguageServerProtocol::Key docKey{"doc"};
 
     GetCompletionParams(const LanguageServerProtocol::TextDocumentIdentifier &document,
                         int version,
@@ -95,7 +103,7 @@ public:
 
 class GetCompletionResponse : public LanguageServerProtocol::JsonObject
 {
-    static constexpr char completionKey[] = "completions";
+    static constexpr LanguageServerProtocol::Key completionKey{"completions"};
 
 public:
     using JsonObject::JsonObject;
@@ -114,7 +122,7 @@ public:
         : Request(methodName, params)
     {}
     using Request::Request;
-    constexpr static const char methodName[] = "getCompletionsCycling";
+    constexpr static const LanguageServerProtocol::Key methodName{"getCompletionsCycling"};
 };
 
 } // namespace Copilot

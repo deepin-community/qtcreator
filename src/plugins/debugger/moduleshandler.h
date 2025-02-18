@@ -32,7 +32,7 @@ public:
     QString demangled;
 };
 
-using Symbols = QVector<Symbol>;
+using Symbols = QList<Symbol>;
 
 //////////////////////////////////////////////////////////////////
 //
@@ -50,7 +50,7 @@ public:
     QString flags;
 };
 
-using Sections = QVector<Section>;
+using Sections = QList<Section>;
 
 //////////////////////////////////////////////////////////////////
 //
@@ -71,7 +71,7 @@ public:
     };
     QString moduleName;
     Utils::FilePath modulePath;
-    QString hostPath;
+    Utils::FilePath hostPath;
     SymbolReadState symbolsRead = UnknownReadState;
     quint64 startAddress = 0;
     quint64 endAddress = 0;
@@ -79,7 +79,7 @@ public:
     Utils::ElfData elfData;
 };
 
-using Modules = QVector<Module>;
+using Modules = QList<Module>;
 
 //////////////////////////////////////////////////////////////////
 //

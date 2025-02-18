@@ -9,6 +9,7 @@
 
 #include <QFileInfo>
 
+using namespace Core;
 using namespace VcsBase;
 using namespace VcsBase::Internal;
 using namespace Utils;
@@ -26,12 +27,11 @@ SubmitEditorFile::SubmitEditorFile(VcsBaseSubmitEditor *editor) :
 {
     setTemporary(true);
     connect(m_editor, &VcsBaseSubmitEditor::fileContentsChanged,
-            this, &Core::IDocument::contentsChanged);
+            this, &IDocument::contentsChanged);
 }
 
-Core::IDocument::OpenResult SubmitEditorFile::open(QString *errorString,
-                                                   const FilePath &filePath,
-                                                   const FilePath &realFilePath)
+IDocument::OpenResult SubmitEditorFile::open(QString *errorString, const FilePath &filePath,
+                                             const FilePath &realFilePath)
 {
     if (filePath.isEmpty())
         return OpenResult::ReadError;
@@ -67,23 +67,24 @@ void SubmitEditorFile::setModified(bool modified)
     emit changed();
 }
 
-bool SubmitEditorFile::saveImpl(QString *errorString, const FilePath &filePath, bool autoSave)
+Result SubmitEditorFile::saveImpl(const FilePath &filePath, bool autoSave)
 {
     FileSaver saver(filePath, QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
     saver.write(m_editor->fileContents());
-    if (!saver.finalize(errorString))
-        return false;
+    QString errorString;
+    if (!saver.finalize(&errorString))
+        return Result::Error(errorString);
     if (autoSave)
-        return true;
+        return Result::Ok;
     setFilePath(filePath.absoluteFilePath());
     setModified(false);
-    if (!errorString->isEmpty())
-        return false;
+    if (!errorString.isEmpty())
+        return Result::Error(errorString);
     emit changed();
-    return true;
+    return Result::Ok;
 }
 
-Core::IDocument::ReloadBehavior SubmitEditorFile::reloadBehavior(ChangeTrigger state, ChangeType type) const
+IDocument::ReloadBehavior SubmitEditorFile::reloadBehavior(ChangeTrigger state, ChangeType type) const
 {
     Q_UNUSED(state)
     Q_UNUSED(type)

@@ -50,7 +50,7 @@
 #include <tools/toolchains.h>
 #include <tools/version.h>
 
-#if defined(Q_OS_MACOS) || defined(Q_OS_OSX)
+#if defined(Q_OS_MACOS)
 #include <tools/applecodesignutils.h>
 #endif
 
@@ -453,7 +453,7 @@ JSValue UtilitiesExtension::js_rfc1034identifier(JSContext *ctx, JSValueConst,
 JSValue UtilitiesExtension::js_smimeMessageContent(JSContext *ctx, JSValueConst,
                                                    int argc, JSValueConst *argv)
 {
-#if !defined(Q_OS_MACOS) && !defined(Q_OS_OSX)
+#if !defined(Q_OS_MACOS)
     Q_UNUSED(argc)
     Q_UNUSED(argv)
     return throwError(ctx, QStringLiteral("smimeMessageContent is not available on this platform"));
@@ -478,7 +478,7 @@ JSValue UtilitiesExtension::js_smimeMessageContent(JSContext *ctx, JSValueConst,
 JSValue UtilitiesExtension::js_certificateInfo(JSContext *ctx, JSValueConst,
                                                int argc, JSValueConst *argv)
 {
-#if !defined(Q_OS_MACOS) && !defined(Q_OS_OSX)
+#if !defined(Q_OS_MACOS)
     Q_UNUSED(argc)
     Q_UNUSED(argv)
     return throwError(ctx, QStringLiteral("certificateInfo is not available on this platform"));
@@ -495,7 +495,7 @@ JSValue UtilitiesExtension::js_certificateInfo(JSContext *ctx, JSValueConst,
 // Rough command line equivalent: security find-identity -p codesigning -v
 JSValue UtilitiesExtension::js_signingIdentities(JSContext *ctx, JSValueConst, int, JSValueConst *)
 {
-#if !defined(Q_OS_MACOS) && !defined(Q_OS_OSX)
+#if !defined(Q_OS_MACOS)
     return throwError(ctx, QStringLiteral("signingIdentities is not available on this platform"));
 #else
     return makeJsVariantMap(ctx, identitiesProperties());
@@ -782,7 +782,7 @@ static QStringList detectMachOArchs(QIODevice *device)
         if (strncmp(ar_header, ARMAG, SARMAG) == 0) {
             while (!device->atEnd()) {
                 static_assert(sizeof(ar_hdr) == 60, "sizeof(ar_hdr) != 60");
-                ar_hdr header;
+                ar_hdr header{};
                 if (device->read(reinterpret_cast<char *>(&header),
                                  sizeof(ar_hdr)) != sizeof(ar_hdr))
                     return {};
@@ -832,7 +832,7 @@ static QStringList detectMachOArchs(QIODevice *device)
 
     pos = device->pos();
 
-    fat_header fatheader;
+    fat_header fatheader{};
     fatheader.magic = readInt(device, nullptr, false);
     if (fatheader.magic == FAT_MAGIC || fatheader.magic == FAT_CIGAM ||
         fatheader.magic == FAT_MAGIC_64 || fatheader.magic == FAT_CIGAM_64) {
@@ -845,7 +845,7 @@ static QStringList detectMachOArchs(QIODevice *device)
         QStringList archs;
 
         for (uint32_t n = 0; n < fatheader.nfat_arch; ++n) {
-            fat_arch_64 fatarch;
+            fat_arch_64 fatarch{};
             static_assert(sizeof(fat_arch_64) == 32, "sizeof(fat_arch_64) != 32");
             static_assert(sizeof(fat_arch) == 20, "sizeof(fat_arch) != 20");
             const qint64 expectedBytes = is64bit ? sizeof(fat_arch_64) : sizeof(fat_arch);
@@ -875,7 +875,7 @@ static QStringList detectMachOArchs(QIODevice *device)
         return {};
 
     bool swap = false;
-    mach_header header;
+    mach_header header{};
     header.magic = readInt(device, nullptr, swap);
     switch (header.magic) {
     case MH_CIGAM:

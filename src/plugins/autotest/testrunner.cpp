@@ -23,7 +23,6 @@
 #include <projectexplorer/buildmanager.h>
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/project.h>
-#include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorersettings.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/runconfiguration.h>
@@ -33,7 +32,7 @@
 #include <utils/hostosinfo.h>
 #include <utils/layoutbuilder.h>
 #include <utils/outputformat.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -70,6 +69,23 @@ TestRunner::TestRunner()
     connect(this, &TestRunner::requestStopTestRun, this, [this] { cancelCurrent(UserCanceled); });
     connect(BuildManager::instance(), &BuildManager::buildQueueFinished,
             this, &TestRunner::onBuildQueueFinished);
+    connect(&m_taskTreeRunner, &TaskTreeRunner::aboutToStart, this, [this](TaskTree *taskTree) {
+        auto progress = new TaskProgress(taskTree);
+        progress->setDisplayName(Tr::tr("Running Tests"));
+        progress->setAutoStopOnCancel(false);
+        using namespace std::chrono_literals;
+        progress->setHalfLifeTimePerTask(10s);
+        connect(progress, &TaskProgress::canceled, this, [this, progress] {
+            // Progress was a child of task tree which is going to be deleted directly.
+            // Unwind properly.
+            progress->setParent(nullptr);
+            progress->deleteLater();
+            cancelCurrent(UserCanceled);
+        });
+        if (testSettings().popupOnStart())
+            popupResultsPane();
+    });
+    connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, &TestRunner::onFinished);
 }
 
 TestRunner::~TestRunner()
@@ -140,7 +156,7 @@ void TestRunner::cancelCurrent(TestRunner::CancelReason reason)
         reportResult(ResultType::MessageFatal, Tr::tr("Test case canceled due to timeout.\nMaybe raise the timeout?"));
     else if (reason == UserCanceled)
         reportResult(ResultType::MessageFatal, Tr::tr("Test run canceled by user."));
-    m_taskTree.reset();
+    m_taskTreeRunner.reset();
     onFinished();
 }
 
@@ -152,11 +168,9 @@ void TestRunner::runTests(TestRunMode mode, const QList<ITestConfiguration *> &s
 
     m_skipTargetsCheck = false;
     m_runMode = mode;
-    const ProjectExplorerSettings projectExplorerSettings
-            = ProjectExplorerPlugin::projectExplorerSettings();
     if (mode != TestRunMode::RunAfterBuild
-            && projectExplorerSettings.buildBeforeDeploy != BuildBeforeRunMode::Off
-            && !projectExplorerSettings.saveBeforeBuild) {
+            && projectExplorerSettings().buildBeforeDeploy != BuildBeforeRunMode::Off
+            && !projectExplorerSettings().saveBeforeBuild) {
         if (!ProjectExplorerPlugin::saveModifiedFiles())
             return;
     }
@@ -186,7 +200,7 @@ void TestRunner::runTests(TestRunMode mode, const QList<ITestConfiguration *> &s
     m_targetConnect = connect(project, &Project::activeTargetChanged,
                               this, [this] { cancelCurrent(KitChanged); });
 
-    if (projectExplorerSettings.buildBeforeDeploy == BuildBeforeRunMode::Off
+    if (projectExplorerSettings().buildBeforeDeploy == BuildBeforeRunMode::Off
             || mode == TestRunMode::DebugWithoutDeploy
             || mode == TestRunMode::RunWithoutDeploy || mode == TestRunMode::RunAfterBuild) {
         runOrDebugTests();
@@ -225,7 +239,7 @@ static RunConfiguration *getRunConfiguration(const QString &buildTargetKey)
         return !rc->runnable().command.isEmpty();
     });
 
-    const ChoicePair oldChoice = AutotestPlugin::cachedChoiceFor(buildTargetKey);
+    const ChoicePair oldChoice = cachedChoiceFor(buildTargetKey);
     if (!oldChoice.executable.isEmpty()) {
         runConfig = Utils::findOrDefault(runConfigurations,
                                          [&oldChoice](const RunConfiguration *rc) {
@@ -251,7 +265,7 @@ static RunConfiguration *getRunConfiguration(const QString &buildTargetKey)
             return rc->runnable().command.executable() == exe;
         });
         if (runConfig && dialog.rememberChoice())
-            AutotestPlugin::cacheRunConfigChoice(buildTargetKey, ChoicePair(dName, exe));
+            cacheRunConfigChoice(buildTargetKey, ChoicePair(dName, exe));
     }
     return runConfig;
 }
@@ -347,131 +361,114 @@ void TestRunner::runTestsHelper()
         std::unique_ptr<TestOutputReader> m_outputReader;
     };
 
-    QList<GroupItem> tasks{finishAllAndDone};
+    const LoopList iterator(m_selectedTests);
+    const Storage<TestStorage> storage;
 
-    for (ITestConfiguration *config : m_selectedTests) {
-        QTC_ASSERT(config, continue);
-        const TreeStorage<TestStorage> storage;
+    const auto onSetup = [this, iterator, storage](Process &process) {
+        ITestConfiguration *config = *iterator;
+        QTC_ASSERT(config, return SetupResult::StopWithError);
+        if (!config->project())
+            return SetupResult::StopWithSuccess;
+        if (config->testExecutable().isEmpty()) {
+            reportResult(ResultType::MessageFatal,
+                         Tr::tr("Executable path is empty. (%1)").arg(config->displayName()));
+            return SetupResult::StopWithSuccess;
+        }
+        TestStorage *testStorage = storage.activeStorage();
+        QTC_ASSERT(testStorage, return SetupResult::StopWithError);
+        testStorage->m_outputReader.reset(config->createOutputReader(&process));
+        QTC_ASSERT(testStorage->m_outputReader, return SetupResult::StopWithError);
+        connect(testStorage->m_outputReader.get(), &TestOutputReader::newResult,
+                this, &TestRunner::testResultReady);
+        connect(testStorage->m_outputReader.get(), &TestOutputReader::newOutputLineAvailable,
+                TestResultsPane::instance(), &TestResultsPane::addOutputLine);
 
-        const auto onSetup = [this, config] {
-            if (!config->project())
-                return SetupResult::StopWithDone;
-            if (config->testExecutable().isEmpty()) {
-                reportResult(ResultType::MessageFatal,
-                             Tr::tr("Executable path is empty. (%1)").arg(config->displayName()));
-                return SetupResult::StopWithDone;
+        CommandLine command{config->testExecutable()};
+        if (config->testBase()->type() == ITestBase::Framework) {
+            TestConfiguration *current = static_cast<TestConfiguration *>(config);
+            QStringList omitted;
+            command.addArgs(current->argumentsForTestRunner(&omitted).join(' '), CommandLine::Raw);
+            if (!omitted.isEmpty()) {
+                const QString &details = constructOmittedDetailsString(omitted);
+                reportResult(ResultType::MessageWarn, details.arg(current->displayName()));
             }
-            return SetupResult::Continue;
-        };
-        const auto onProcessSetup = [this, config, storage](Process &process) {
-            TestStorage *testStorage = storage.activeStorage();
-            QTC_ASSERT(testStorage, return);
-            testStorage->m_outputReader.reset(config->createOutputReader(&process));
-            QTC_ASSERT(testStorage->m_outputReader, return);
-            connect(testStorage->m_outputReader.get(), &TestOutputReader::newResult,
-                    this, &TestRunner::testResultReady);
-            connect(testStorage->m_outputReader.get(), &TestOutputReader::newOutputLineAvailable,
-                    TestResultsPane::instance(), &TestResultsPane::addOutputLine);
+        } else {
+            TestToolConfiguration *current = static_cast<TestToolConfiguration *>(config);
+            command.setArguments(current->commandLine().arguments());
+        }
+        process.setCommand(command);
 
-            CommandLine command{config->testExecutable(), {}};
-            if (config->testBase()->type() == ITestBase::Framework) {
-                TestConfiguration *current = static_cast<TestConfiguration *>(config);
-                QStringList omitted;
-                command.addArgs(current->argumentsForTestRunner(&omitted).join(' '), CommandLine::Raw);
-                if (!omitted.isEmpty()) {
-                    const QString &details = constructOmittedDetailsString(omitted);
-                    reportResult(ResultType::MessageWarn, details.arg(current->displayName()));
-                }
-            } else {
-                TestToolConfiguration *current = static_cast<TestToolConfiguration *>(config);
-                command.setArguments(current->commandLine().arguments());
-            }
-            process.setCommand(command);
+        process.setWorkingDirectory(config->workingDirectory());
+        const Environment &original = config->environment();
+        Environment environment = config->filteredEnvironment(original);
+        const EnvironmentItems removedVariables = Utils::filtered(
+                    original.diff(environment), [](const EnvironmentItem &it) {
+            return it.operation == EnvironmentItem::Unset;
+        });
+        if (!removedVariables.isEmpty()) {
+            const QString &details = constructOmittedVariablesDetailsString(removedVariables)
+                    .arg(config->displayName());
+            reportResult(ResultType::MessageWarn, details);
+        }
+        process.setEnvironment(environment);
 
-            process.setWorkingDirectory(config->workingDirectory());
-            const Environment &original = config->environment();
-            Environment environment = config->filteredEnvironment(original);
-            const EnvironmentItems removedVariables = Utils::filtered(
-                        original.diff(environment), [](const EnvironmentItem &it) {
-                return it.operation == EnvironmentItem::Unset;
-            });
-            if (!removedVariables.isEmpty()) {
-                const QString &details = constructOmittedVariablesDetailsString(removedVariables)
-                        .arg(config->displayName());
-                reportResult(ResultType::MessageWarn, details);
-            }
-            process.setEnvironment(environment);
-
+        if (testSettings().useTimeout()) {
             m_cancelTimer.setInterval(testSettings().timeout());
             m_cancelTimer.start();
+        }
 
-            qCInfo(runnerLog) << "Command:" << process.commandLine().executable();
-            qCInfo(runnerLog) << "Arguments:" << process.commandLine().arguments();
-            qCInfo(runnerLog) << "Working directory:" << process.workingDirectory();
-            qCDebug(runnerLog) << "Environment:" << process.environment().toStringList();
-        };
-        const auto onProcessDone = [this, config, storage](const Process &process) {
-            TestStorage *testStorage = storage.activeStorage();
-            QTC_ASSERT(testStorage, return);
-            if (process.result() == ProcessResult::StartFailed) {
-                reportResult(ResultType::MessageFatal,
-                    Tr::tr("Failed to start test for project \"%1\".").arg(config->displayName())
-                        + processInformation(&process) + rcInfo(config));
-            }
+        qCInfo(runnerLog) << "Command:" << process.commandLine().executable();
+        qCInfo(runnerLog) << "Arguments:" << process.commandLine().arguments();
+        qCInfo(runnerLog) << "Working directory:" << process.workingDirectory();
+        qCDebug(runnerLog) << "Environment:" << process.environment().toStringList();
+        return SetupResult::Continue;
+    };
+    const auto onDone = [this, iterator, storage](const Process &process) {
+        ITestConfiguration *config = *iterator;
+        TestStorage *testStorage = storage.activeStorage();
+        QTC_ASSERT(testStorage, return);
+        if (process.result() == ProcessResult::StartFailed) {
+            reportResult(ResultType::MessageFatal,
+                Tr::tr("Failed to start test for project \"%1\".").arg(config->displayName())
+                    + processInformation(&process) + rcInfo(config));
+        }
 
+        if (testStorage->m_outputReader)
+            testStorage->m_outputReader->onDone(process.exitCode());
+
+        if (process.exitStatus() == QProcess::CrashExit) {
             if (testStorage->m_outputReader)
-                testStorage->m_outputReader->onDone(process.exitCode());
+                testStorage->m_outputReader->reportCrash();
+            reportResult(ResultType::MessageFatal,
+                         Tr::tr("Test for project \"%1\" crashed.").arg(config->displayName())
+                         + processInformation(&process) + rcInfo(config));
+        } else if (testStorage->m_outputReader && !testStorage->m_outputReader->hadValidOutput()) {
+            reportResult(ResultType::MessageFatal,
+                         Tr::tr("Test for project \"%1\" did not produce any expected output.")
+                         .arg(config->displayName()) + processInformation(&process)
+                         + rcInfo(config));
+        }
+        if (testStorage->m_outputReader) {
+            const int disabled = testStorage->m_outputReader->disabledTests();
+            if (disabled > 0)
+                emit hadDisabledTests(disabled);
+            if (testStorage->m_outputReader->hasSummary())
+                emit reportSummary(testStorage->m_outputReader->id(), testStorage->m_outputReader->summary());
+            emit reportDuration(testStorage->m_outputReader->duration().value_or(
+                process.processDuration().count()));
 
-            if (process.exitStatus() == QProcess::CrashExit) {
-                if (testStorage->m_outputReader)
-                    testStorage->m_outputReader->reportCrash();
-                reportResult(ResultType::MessageFatal,
-                             Tr::tr("Test for project \"%1\" crashed.").arg(config->displayName())
-                             + processInformation(&process) + rcInfo(config));
-            } else if (testStorage->m_outputReader && !testStorage->m_outputReader->hadValidOutput()) {
-                reportResult(ResultType::MessageFatal,
-                             Tr::tr("Test for project \"%1\" did not produce any expected output.")
-                             .arg(config->displayName()) + processInformation(&process)
-                             + rcInfo(config));
-            }
-            if (testStorage->m_outputReader) {
-                const int disabled = testStorage->m_outputReader->disabledTests();
-                if (disabled > 0)
-                    emit hadDisabledTests(disabled);
-                if (testStorage->m_outputReader->hasSummary())
-                    emit reportSummary(testStorage->m_outputReader->id(), testStorage->m_outputReader->summary());
+            testStorage->m_outputReader->resetCommandlineColor();
+        }
+    };
 
-                testStorage->m_outputReader->resetCommandlineColor();
-            }
-        };
-        const Group group {
-            finishAllAndDone,
-            Tasking::Storage(storage),
-            onGroupSetup(onSetup),
-            ProcessTask(onProcessSetup, onProcessDone, onProcessDone)
-        };
-        tasks.append(group);
-    }
-
-    m_taskTree.reset(new TaskTree(tasks));
-    connect(m_taskTree.get(), &TaskTree::done, this, &TestRunner::onFinished);
-    connect(m_taskTree.get(), &TaskTree::errorOccurred, this, &TestRunner::onFinished);
-
-    auto progress = new TaskProgress(m_taskTree.get());
-    progress->setDisplayName(Tr::tr("Running Tests"));
-    progress->setAutoStopOnCancel(false);
-    progress->setHalfLifeTimePerTask(10000); // 10 seconds
-    connect(progress, &TaskProgress::canceled, this, [this, progress] {
-        // progress was a child of task tree which is going to be deleted directly. Unwind properly.
-        progress->setParent(nullptr);
-        progress->deleteLater();
-        cancelCurrent(UserCanceled);
-    });
-
-    if (testSettings().popupOnStart())
-        AutotestPlugin::popupResultsPane();
-
-    m_taskTree->start();
+    const Group recipe = For (iterator) >> Do {
+        finishAllAndSuccess,
+        Group {
+            storage,
+            ProcessTask(onSetup, onDone)
+        }
+    };
+    m_taskTreeRunner.start(recipe);
 }
 
 static void processOutput(TestOutputReader *outputreader, const QString &msg, OutputFormat format)
@@ -529,8 +526,10 @@ void TestRunner::debugTests()
 
     const FilePath &commandFilePath = config->executableFilePath();
     if (commandFilePath.isEmpty()) {
-        reportResult(ResultType::MessageFatal, Tr::tr("Could not find command \"%1\". (%2)")
-                     .arg(config->executableFilePath().toString(), config->displayName()));
+        reportResult(
+            ResultType::MessageFatal,
+            Tr::tr("Could not find command \"%1\". (%2)")
+                .arg(config->executableFilePath().toUserOutput(), config->displayName()));
         onFinished();
         return;
     }
@@ -575,7 +574,7 @@ void TestRunner::debugTests()
     if (useOutputProcessor) {
         TestOutputReader *outputreader = config->createOutputReader(nullptr);
         connect(outputreader, &TestOutputReader::newResult, this, &TestRunner::testResultReady);
-        outputreader->setId(inferior.command.executable().toString());
+        outputreader->setId(inferior.command.executable().toUserOutput());
         connect(outputreader, &TestOutputReader::newOutputLineAvailable,
                 TestResultsPane::instance(), &TestResultsPane::addOutputLine);
         connect(runControl, &RunControl::appendMessage,
@@ -591,7 +590,7 @@ void TestRunner::debugTests()
     connect(runControl, &RunControl::stopped, this, &TestRunner::onFinished);
     ProjectExplorerPlugin::startRunControl(runControl);
     if (useOutputProcessor && testSettings().popupOnStart())
-        AutotestPlugin::popupResultsPane();
+        popupResultsPane();
 }
 
 static bool executablesEmpty()
@@ -673,7 +672,7 @@ static RunAfterBuildMode runAfterBuild()
     if (!project->namedSettings(Constants::SK_USE_GLOBAL).isValid())
         return testSettings().runAfterBuildMode();
 
-    TestProjectSettings *projectSettings = AutotestPlugin::projectSettings(project);
+    TestProjectSettings *projectSettings = Internal::projectSettings(project);
     return projectSettings->useGlobalSettings() ? testSettings().runAfterBuildMode()
                                                 : projectSettings->runAfterBuild();
 }
@@ -701,8 +700,7 @@ void TestRunner::onBuildQueueFinished(bool success)
 
 void TestRunner::onFinished()
 {
-    if (m_taskTree)
-        m_taskTree.release()->deleteLater();
+    m_taskTreeRunner.reset();
     disconnect(m_stopDebugConnect);
     disconnect(m_targetConnect);
     qDeleteAll(m_selectedTests);
@@ -789,9 +787,10 @@ void RunConfigurationSelectionDialog::populate()
         if (auto target = project->activeTarget()) {
             for (RunConfiguration *rc : target->runConfigurations()) {
                 auto runnable = rc->runnable();
-                const QStringList rcDetails = { runnable.command.executable().toString(),
-                                                runnable.command.arguments(),
-                                                runnable.workingDirectory.toString() };
+                const QStringList rcDetails
+                    = {runnable.command.executable().toUserOutput(),
+                       runnable.command.arguments(),
+                       runnable.workingDirectory.toUserOutput()};
                 m_rcCombo->addItem(rc->displayName(), rcDetails);
             }
         }

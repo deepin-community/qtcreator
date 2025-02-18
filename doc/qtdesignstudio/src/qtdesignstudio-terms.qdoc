@@ -4,7 +4,7 @@
 /*!
     \page studio-terms.html
     \previouspage studio-use-cases.html
-    \nextpage {Examples}
+    \nextpage best-practices.html
 
     \title Concepts and Terms
 
@@ -30,7 +30,7 @@
     An \e asset is an image, font file, 3D model, or other supported file that
     you add to your \l{glossary-project}{project}.
 
-    \image qtquick-assets-tab.png "Assets"
+    \image qtquick-assets-tab.webp "Assets"
 
     Assets are packaged with \l{glossary-component}{components} for delivery
     to users.
@@ -57,7 +57,7 @@
     component height is adjusted automatically. Similarly, the opacity of a
     component can be bound to the opacity of its parent component.
 
-    \image qtquick-connection-editor-assignment.png "Binding Editor"
+    \image qtquick-connection-editor-assignment.webp "Binding Editor"
 
     Property bindings are created implicitly whenever a property is assigned a
     JavaScript expression.
@@ -115,7 +115,7 @@
     is to create \l{glossary-binding}{bindings} between the values of their
     \l{glossary-property}{properties}.
 
-    \image qmldesigner-connections.png "The Connections view"
+    \image qmldesigner-connections.webp "The Connections view"
 
     Read more about connections:
 
@@ -170,7 +170,7 @@
     example, if you create a 3D project, preset 3D components are added to it.
     You can add more preset components in \uicontrol {Components}.
 
-    \image studio-project-wizards.png "New Project dialog"
+    \image studio-project-wizards.webp "New Project dialog"
 
     Read more about projects:
 
@@ -187,7 +187,7 @@
     also be modified by another component, unless a particular component
     type has explicitly disallowed this for a specific property.
 
-    \image qtquick-item-properties-common.png "Properties view"
+    \image qtquick-item-properties-common.webp "Properties view"
 
     Read more about properties:
 
@@ -211,9 +211,9 @@
     the application. For example, the \l {Mouse Area} component has a \c clicked
     signal that is emitted whenever the mouse is clicked within the area. Since
     the signal name is \c clicked, the signal handler for receiving this signal
-    is named \c onClicked.
+    is named \c onClicked. Then it performs the defined \uicontrol {Action}.
 
-    \image washingmachineui-connections.png "Connections view, Connections tab"
+    \image qtquick-component-signal.webp "Component signal"
 
     Further, a signal is automatically emitted when the value of a
     \l{glossary-property}{property} changes.

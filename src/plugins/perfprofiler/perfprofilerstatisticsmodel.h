@@ -55,10 +55,12 @@ protected:
 };
 
 class PerfProfilerStatisticsRelativesModel;
-class PerfProfilerStatisticsMainModel : public PerfProfilerStatisticsModel {
+
+class PerfProfilerStatisticsMainModel : public PerfProfilerStatisticsModel
+{
     Q_OBJECT
 public:
-    PerfProfilerStatisticsMainModel(PerfProfilerTraceManager *parent);
+    PerfProfilerStatisticsMainModel(QObject *parent);
     ~PerfProfilerStatisticsMainModel() override;
     PerfProfilerStatisticsRelativesModel *children() const { return m_children; }
     PerfProfilerStatisticsRelativesModel *parents() const { return m_parents; }
@@ -100,7 +102,7 @@ private:
     qint64 m_endTime;
     uint m_totalSamples;
 
-    QScopedPointer<PerfProfilerStatisticsData> m_offlineData;
+    std::unique_ptr<PerfProfilerStatisticsData> m_offlineData;
 };
 
 class PerfProfilerStatisticsRelativesModel : public PerfProfilerStatisticsModel {

@@ -13,6 +13,7 @@
 #include <utils/environment.h>
 #include <utils/environmentdialog.h>
 #include <utils/environmentmodel.h>
+#include <utils/fileutils.h>
 #include <utils/headerviewstretcher.h>
 #include <utils/hostosinfo.h>
 #include <utils/itemviews.h>
@@ -125,38 +126,19 @@ private:
     PathTreeWidget m_view;
 };
 
-class EnvironmentDelegate : public QStyledItemDelegate
-{
-public:
-    EnvironmentDelegate(Utils::EnvironmentModel *model,
-                        QTreeView *view)
-        : QStyledItemDelegate(view), m_model(model), m_view(view)
-    {}
-
-    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override
-    {
-        QWidget *w = QStyledItemDelegate::createEditor(parent, option, index);
-        if (index.column() != 0)
-            return w;
-
-        if (auto edit = qobject_cast<QLineEdit *>(w))
-            edit->setValidator(new Utils::NameValueValidator(
-                edit, m_model, m_view, index, Tr::tr("Variable already exists.")));
-        return w;
-    }
-private:
-    Utils::EnvironmentModel *m_model;
-    QTreeView *m_view;
-};
-
-
 ////
 // EnvironmentWidget::EnvironmentWidget
 ////
 
-class EnvironmentWidgetPrivate
+class EnvironmentWidget::Private
 {
 public:
+    Private(EnvironmentWidget *q) : q(q) {}
+
+    void handleEditRequest(NameValueItemsWidget::Selection selection);
+
+    EnvironmentWidget * const q;
+    Utils::NameValueItemsWidget m_editor;
     Utils::EnvironmentModel *m_model;
     EnvironmentWidget::Type m_type = EnvironmentWidget::TypeLocal;
     QString m_baseEnvironmentText;
@@ -168,14 +150,13 @@ public:
     QPushButton *m_resetButton;
     QPushButton *m_unsetButton;
     QPushButton *m_toggleButton;
-    QPushButton *m_batchEditButton;
     QPushButton *m_appendPathButton = nullptr;
     QPushButton *m_prependPathButton = nullptr;
     QPushButton *m_terminalButton;
 };
 
 EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additionalDetailsWidget)
-    : QWidget(parent), d(std::make_unique<EnvironmentWidgetPrivate>())
+    : QWidget(parent), d(std::make_unique<Private>(this))
 {
     d->m_model = new Utils::EnvironmentModel();
     d->m_type = type;
@@ -183,14 +164,27 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
             this, &EnvironmentWidget::userChangesChanged);
     connect(d->m_model, &QAbstractItemModel::modelReset,
             this, &EnvironmentWidget::invalidateCurrentIndex);
-
     connect(d->m_model, &Utils::EnvironmentModel::focusIndex,
             this, &EnvironmentWidget::focusIndex);
+
+    // The text edit represents the raw, unexpanded user changes.
+    // There are two possible data flows:
+    //   a) text edit -> model -> view for when the user types in the text edit
+    //   b) top level widget
+    //        -> text edit
+    //        -> model -> view
+    //      for when convenience functionality is used via the buttons.
+    //   So the model is always updated from the text edit or text edit and model
+    //   are updated in sync from this widget.
+    connect(&d->m_editor, &NameValueItemsWidget::userChangedItems,
+            d->m_model, &EnvironmentModel::setUserChanges);
 
     auto vbox = new QVBoxLayout(this);
     vbox->setContentsMargins(0, 0, 0, 0);
 
     d->m_detailsContainer = new Utils::DetailsWidget(this);
+    connect(d->m_detailsContainer, &DetailsWidget::expanded,
+            this, &EnvironmentWidget::updateSummaryText);
 
     auto details = new QWidget(d->m_detailsContainer);
     d->m_detailsContainer->setWidget(details);
@@ -204,12 +198,8 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
 
     auto horizontalLayout = new QHBoxLayout();
     horizontalLayout->setContentsMargins(0, 0, 0, 0);
-    auto tree = new Utils::TreeView(this);
-    connect(tree, &QAbstractItemView::activated,
-            tree, [tree](const QModelIndex &idx) { tree->edit(idx); });
-    d->m_environmentView = tree;
+    d->m_environmentView = new Utils::TreeView(this);
     d->m_environmentView->setModel(d->m_model);
-    d->m_environmentView->setItemDelegate(new EnvironmentDelegate(d->m_model, d->m_environmentView));
     d->m_environmentView->setMinimumHeight(400);
     d->m_environmentView->setRootIsDecorated(false);
     const auto stretcher = new HeaderViewStretcher(d->m_environmentView->header(), 1);
@@ -218,7 +208,7 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
     connect(d->m_model, &EnvironmentModel::userChangesChanged,
             stretcher, &HeaderViewStretcher::softStretch);
     d->m_environmentView->setSelectionMode(QAbstractItemView::SingleSelection);
-    d->m_environmentView->setSelectionBehavior(QAbstractItemView::SelectItems);
+    d->m_environmentView->setSelectionBehavior(QAbstractItemView::SelectRows);
     d->m_environmentView->setFrameShape(QFrame::NoFrame);
     QFrame *findWrapper = Core::ItemViewFind::createSearchableWrapper(d->m_environmentView, Core::ItemViewFind::LightColored);
     findWrapper->setFrameStyle(QFrame::StyledPanel);
@@ -248,6 +238,7 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
     buttonLayout->addWidget(d->m_toggleButton);
     connect(d->m_toggleButton, &QPushButton::clicked, this, [this] {
         d->m_model->toggleVariable(d->m_environmentView->currentIndex());
+        d->m_editor.setEnvironmentItems(d->m_model->userChanges());
         updateButtons();
     });
 
@@ -266,10 +257,6 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
                 this, &EnvironmentWidget::prependPathButtonClicked);
     }
 
-    d->m_batchEditButton = new QPushButton(this);
-    d->m_batchEditButton->setText(Tr::tr("&Batch Edit..."));
-    buttonLayout->addWidget(d->m_batchEditButton);
-
     d->m_terminalButton = new QPushButton(this);
     d->m_terminalButton->setText(Tr::tr("Open &Terminal"));
     d->m_terminalButton->setToolTip(Tr::tr("Open a terminal with this environment set up."));
@@ -278,10 +265,12 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
     buttonLayout->addStretch();
 
     horizontalLayout->addLayout(buttonLayout);
+    horizontalLayout->addWidget(&d->m_editor);
     vbox2->addLayout(horizontalLayout);
 
     vbox->addWidget(d->m_detailsContainer);
 
+    updateButtons();
     connect(d->m_model, &QAbstractItemModel::dataChanged,
             this, &EnvironmentWidget::updateButtons);
 
@@ -293,8 +282,6 @@ EnvironmentWidget::EnvironmentWidget(QWidget *parent, Type type, QWidget *additi
             this, &EnvironmentWidget::removeEnvironmentButtonClicked);
     connect(d->m_unsetButton, &QAbstractButton::clicked,
             this, &EnvironmentWidget::unsetEnvironmentButtonClicked);
-    connect(d->m_batchEditButton, &QAbstractButton::clicked,
-            this, &EnvironmentWidget::batchEditEnvironmentButtonClicked);
     connect(d->m_environmentView->selectionModel(), &QItemSelectionModel::currentChanged,
             this, &EnvironmentWidget::environmentCurrentIndexChanged);
     connect(d->m_terminalButton, &QAbstractButton::clicked,
@@ -348,13 +335,14 @@ void EnvironmentWidget::setBaseEnvironmentText(const QString &text)
 
 Utils::EnvironmentItems EnvironmentWidget::userChanges() const
 {
+    forceUpdateCheck();
     return d->m_model->userChanges();
 }
 
 void EnvironmentWidget::setUserChanges(const Utils::EnvironmentItems &list)
 {
     d->m_model->setUserChanges(list);
-    updateSummaryText();
+    d->m_editor.setEnvironmentItems(list);
 }
 
 void EnvironmentWidget::setOpenTerminalFunc(const EnvironmentWidget::OpenTerminalFunc &func)
@@ -368,9 +356,23 @@ void EnvironmentWidget::expand()
     d->m_detailsContainer->setState(Utils::DetailsWidget::Expanded);
 }
 
+void EnvironmentWidget::forceUpdateCheck() const
+{
+    d->m_editor.forceUpdateCheck();
+}
+
 void EnvironmentWidget::updateSummaryText()
 {
-    Utils::EnvironmentItems list = d->m_model->userChanges();
+    // The summary is redundant with the text edit, so we hide it on expansion.
+    if (d->m_detailsContainer->state() == DetailsWidget::Expanded) {
+        d->m_detailsContainer->setSummaryText({});
+        return;
+    }
+
+    Utils::EnvironmentItems list
+            = Utils::filtered(d->m_model->userChanges(), [](const EnvironmentItem &it) {
+        return it.operation != Utils::EnvironmentItem::Comment;
+    });
     Utils::EnvironmentItem::sort(&list);
 
     QString text;
@@ -393,6 +395,8 @@ void EnvironmentWidget::updateSummaryText()
                 break;
             case Utils::EnvironmentItem::SetDisabled:
                 text.append(Tr::tr("Set <a href=\"%1\"><b>%1</b></a> to <b>%2</b> [disabled]").arg(item.name.toHtmlEscaped(), item.value.toHtmlEscaped()));
+                break;
+            case Utils::EnvironmentItem::Comment:
                 break;
             }
         }
@@ -428,30 +432,52 @@ void EnvironmentWidget::updateButtons()
 
 void EnvironmentWidget::editEnvironmentButtonClicked()
 {
-    const QModelIndex current = d->m_environmentView->currentIndex();
-    if (current.column() == 1
-            && d->m_type == TypeLocal
-            && d->m_model->currentEntryIsPathList(current)) {
-        PathListDialog dlg(d->m_model->indexToVariable(current),
-                           d->m_model->data(current).toString(), this);
-        if (dlg.exec() == QDialog::Accepted)
-            d->m_model->setData(current, dlg.paths());
-    } else {
-        d->m_environmentView->edit(current);
+    d->handleEditRequest(NameValueItemsWidget::Selection::Value);
+}
+
+void EnvironmentWidget::Private::handleEditRequest(NameValueItemsWidget::Selection selection)
+{
+    QModelIndex current = m_environmentView->currentIndex();
+    if (current.column() == 0)
+        current = current.siblingAtColumn(1);
+    const QString varName = m_model->indexToVariable(current);
+
+    // Known path lists are edited via a dedicated widget.
+    if (m_type == TypeLocal && m_model->currentEntryIsPathList(current)) {
+        PathListDialog dlg(varName, m_model->data(current).toString(), q);
+        if (dlg.exec() == QDialog::Accepted) {
+            m_model->setData(current, dlg.paths());
+            m_editor.setEnvironmentItems(m_model->userChanges());
+        }
+        return;
     }
+
+    if (m_editor.editVariable(varName, selection))
+        return;
+
+    // The variable does not appear on an LHS in the text edit. This means it is not
+    // set or unset in any of the user changes. Therefore, we have to create a new
+    // change item for the user to edit.
+    EnvironmentItems items = m_model->userChanges();
+    items.append({varName, "NEWVALUE"});
+    q->setUserChanges(items);
+    const bool editable = m_editor.editVariable(varName, NameValueItemsWidget::Selection::Value);
+    QTC_CHECK(editable);
 }
 
 void EnvironmentWidget::addEnvironmentButtonClicked()
 {
     QModelIndex index = d->m_model->addVariable();
+    d->m_editor.setEnvironmentItems(d->m_model->userChanges());
     d->m_environmentView->setCurrentIndex(index);
-    d->m_environmentView->edit(index);
+    d->handleEditRequest(NameValueItemsWidget::Selection::Name);
 }
 
 void EnvironmentWidget::removeEnvironmentButtonClicked()
 {
     const QString &name = d->m_model->indexToVariable(d->m_environmentView->currentIndex());
     d->m_model->resetVariable(name);
+    d->m_editor.setEnvironmentItems(d->m_model->userChanges());
 }
 
 // unset in Merged Environment Mode means, unset if it comes from the base environment
@@ -463,37 +489,28 @@ void EnvironmentWidget::unsetEnvironmentButtonClicked()
         d->m_model->resetVariable(name);
     else
         d->m_model->unsetVariable(name);
+    d->m_editor.setEnvironmentItems(d->m_model->userChanges());
 }
 
-void EnvironmentWidget::amendPathList(Utils::NameValueItem::Operation op)
+void EnvironmentWidget::amendPathList(Utils::EnvironmentItem::Operation op)
 {
     const QString varName = d->m_model->indexToVariable(d->m_environmentView->currentIndex());
     const FilePath dir = FileUtils::getExistingDirectory(this, Tr::tr("Choose Directory"));
     if (dir.isEmpty())
         return;
-    Utils::NameValueItems changes = d->m_model->userChanges();
+    Utils::EnvironmentItems changes = d->m_model->userChanges();
     changes.append({varName, dir.toUserOutput(), op});
-    d->m_model->setUserChanges(changes);
+    setUserChanges(changes);
 }
 
 void EnvironmentWidget::appendPathButtonClicked()
 {
-    amendPathList(Utils::NameValueItem::Append);
+    amendPathList(Utils::EnvironmentItem::Append);
 }
 
 void EnvironmentWidget::prependPathButtonClicked()
 {
-    amendPathList(Utils::NameValueItem::Prepend);
-}
-
-void EnvironmentWidget::batchEditEnvironmentButtonClicked()
-{
-    const Utils::EnvironmentItems changes = d->m_model->userChanges();
-
-    const auto newChanges = Utils::EnvironmentDialog::getEnvironmentItems(this, changes);
-
-    if (newChanges)
-        d->m_model->setUserChanges(*newChanges);
+    amendPathList(Utils::EnvironmentItem::Prepend);
 }
 
 void EnvironmentWidget::environmentCurrentIndexChanged(const QModelIndex &current)

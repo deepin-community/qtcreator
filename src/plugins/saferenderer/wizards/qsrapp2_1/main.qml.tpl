@@ -1,5 +1,5 @@
-import Qt.SafeRenderer 2.0
-import QtQuick.Window 2.15
+import Qt.SafeRenderer
+import QtQuick.Window
 
 Window {
     id: window
@@ -13,14 +13,13 @@ Window {
         objectName: "safetextitem"
         x: 206
         y: 208
-        width: 340
-        height: 34
+        width: 380
+        height: 50
         color: "#8ae234"
         fillColor: "black"
         text: "Hello Qt Safe Renderer!"
-        font.family: "Lato"
+        font.family: "Arial"
         horizontalAlignment: Text.AlignLeft
         font.pixelSize: 32
-        runtimeEditable: true
     }
 }

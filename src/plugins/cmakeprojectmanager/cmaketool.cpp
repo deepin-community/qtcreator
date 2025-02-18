@@ -11,8 +11,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/environment.h>
-#include <utils/persistentcachestore.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/temporarydirectory.h>
 
@@ -23,7 +22,6 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QXmlStreamReader>
-#include <QUuid>
 
 #include <memory>
 
@@ -37,7 +35,6 @@ static Q_LOGGING_CATEGORY(cmakeToolLog, "qtc.cmake.tool", QtWarningMsg);
 const char CMAKE_INFORMATION_ID[] = "Id";
 const char CMAKE_INFORMATION_COMMAND[] = "Binary";
 const char CMAKE_INFORMATION_DISPLAYNAME[] = "DisplayName";
-const char CMAKE_INFORMATION_AUTORUN[] = "AutoRun";
 const char CMAKE_INFORMATION_QCH_FILE_PATH[] = "QchFile";
 // obsolete since Qt Creator 5. Kept for backward compatibility
 const char CMAKE_INFORMATION_AUTO_CREATE_BUILD_DIRECTORY[] = "AutoCreateBuildDirectory";
@@ -106,7 +103,7 @@ CMakeTool::CMakeTool(Detection d, const Id &id)
     , m_isAutoDetected(d == AutoDetection)
     , m_introspection(std::make_unique<Internal::IntrospectionData>())
 {
-    QTC_ASSERT(m_id.isValid(), m_id = Id::fromString(QUuid::createUuid().toString()));
+    QTC_ASSERT(m_id.isValid(), m_id = Id::generate());
 }
 
 CMakeTool::CMakeTool(const Store &map, bool fromSdk) :
@@ -114,7 +111,6 @@ CMakeTool::CMakeTool(const Store &map, bool fromSdk) :
               Id::fromSetting(map.value(CMAKE_INFORMATION_ID)))
 {
     m_displayName = map.value(CMAKE_INFORMATION_DISPLAYNAME).toString();
-    m_isAutoRun = map.value(CMAKE_INFORMATION_AUTORUN, true).toBool();
     m_autoCreateBuildDirectory = map.value(CMAKE_INFORMATION_AUTO_CREATE_BUILD_DIRECTORY, false).toBool();
     m_readerType = Internal::readerTypeFromString(
         map.value(CMAKE_INFORMATION_READERTYPE).toString());
@@ -124,19 +120,17 @@ CMakeTool::CMakeTool(const Store &map, bool fromSdk) :
         m_isAutoDetected = map.value(CMAKE_INFORMATION_AUTODETECTED, false).toBool();
     m_detectionSource = map.value(CMAKE_INFORMATION_DETECTIONSOURCE).toString();
 
-    setFilePath(FilePath::fromString(map.value(CMAKE_INFORMATION_COMMAND).toString()));
-
     m_qchFilePath = FilePath::fromSettings(map.value(CMAKE_INFORMATION_QCH_FILE_PATH));
 
-    if (m_qchFilePath.isEmpty())
-        m_qchFilePath = searchQchFile(m_executable);
+    // setFilePath searches for qchFilePath if not already set
+    setFilePath(FilePath::fromSettings(map.value(CMAKE_INFORMATION_COMMAND)));
 }
 
 CMakeTool::~CMakeTool() = default;
 
 Id CMakeTool::createId()
 {
-    return Id::fromString(QUuid::createUuid().toString());
+    return Id::generate();
 }
 
 void CMakeTool::setFilePath(const FilePath &executable)
@@ -147,6 +141,9 @@ void CMakeTool::setFilePath(const FilePath &executable)
     m_introspection = std::make_unique<Internal::IntrospectionData>();
 
     m_executable = executable;
+    if (m_qchFilePath.isEmpty())
+        m_qchFilePath = searchQchFile(m_executable);
+
     CMakeToolManager::notifyAboutUpdate(this);
 }
 
@@ -155,13 +152,13 @@ FilePath CMakeTool::filePath() const
     return m_executable;
 }
 
-bool CMakeTool::isValid(bool ignoreCache) const
+bool CMakeTool::isValid() const
 {
     if (!m_id.isValid() || !m_introspection)
         return false;
 
     if (!m_introspection->m_didAttemptToRun)
-        readInformation(ignoreCache);
+        readInformation();
 
     return m_introspection->m_haveCapabilitites && !m_introspection->m_fileApis.isEmpty();
 }
@@ -169,14 +166,12 @@ bool CMakeTool::isValid(bool ignoreCache) const
 void CMakeTool::runCMake(Process &cmake, const QStringList &args, int timeoutS) const
 {
     const FilePath executable = cmakeExecutable();
-    cmake.setTimeoutS(timeoutS);
     cmake.setDisableUnixTerminal();
     Environment env = executable.deviceEnvironment();
     env.setupEnglishOutput();
     cmake.setEnvironment(env);
-    cmake.setTimeOutMessageBoxEnabled(false);
     cmake.setCommand({executable, args});
-    cmake.runBlocking();
+    cmake.runBlocking(std::chrono::seconds(timeoutS));
 }
 
 Store CMakeTool::toMap() const
@@ -184,9 +179,8 @@ Store CMakeTool::toMap() const
     Store data;
     data.insert(CMAKE_INFORMATION_DISPLAYNAME, m_displayName);
     data.insert(CMAKE_INFORMATION_ID, m_id.toSetting());
-    data.insert(CMAKE_INFORMATION_COMMAND, m_executable.toString());
-    data.insert(CMAKE_INFORMATION_QCH_FILE_PATH, m_qchFilePath.toString());
-    data.insert(CMAKE_INFORMATION_AUTORUN, m_isAutoRun);
+    data.insert(CMAKE_INFORMATION_COMMAND, m_executable.toSettings());
+    data.insert(CMAKE_INFORMATION_QCH_FILE_PATH, m_qchFilePath.toSettings());
     data.insert(CMAKE_INFORMATION_AUTO_CREATE_BUILD_DIRECTORY, m_autoCreateBuildDirectory);
     if (m_readerType)
         data.insert(CMAKE_INFORMATION_READERTYPE,
@@ -234,11 +228,6 @@ FilePath CMakeTool::cmakeExecutable(const FilePath &path)
         return path;
 
     return resolvedPath;
-}
-
-bool CMakeTool::isAutoRun() const
-{
-    return m_isAutoRun;
 }
 
 QList<CMakeTool::Generator> CMakeTool::supportedGenerators() const
@@ -326,9 +315,9 @@ CMakeKeywords CMakeTool::keywords()
     return m_introspection->m_keywords;
 }
 
-bool CMakeTool::hasFileApi(bool ignoreCache) const
+bool CMakeTool::hasFileApi() const
 {
-    return isValid(ignoreCache) ? !m_introspection->m_fileApis.isEmpty() : false;
+    return isValid() ? !m_introspection->m_fileApis.isEmpty() : false;
 }
 
 CMakeTool::Version CMakeTool::version() const
@@ -396,16 +385,16 @@ FilePath CMakeTool::searchQchFile(const FilePath &executable)
         return {};
 
     FilePath prefixDir = executable.parentDir().parentDir();
-    QDir docDir{prefixDir.pathAppended("doc/cmake").toString()};
+    FilePath docDir = prefixDir.pathAppended("doc/cmake");
     if (!docDir.exists())
-        docDir.setPath(prefixDir.pathAppended("share/doc/cmake").toString());
+        docDir = prefixDir.pathAppended("share/doc/cmake");
     if (!docDir.exists())
         return {};
 
-    const QStringList files = docDir.entryList(QStringList("*.qch"));
-    for (const QString &docFile : files) {
-        if (docFile.startsWith("cmake", Qt::CaseInsensitive)) {
-            return FilePath::fromString(docDir.absoluteFilePath(docFile));
+    const FilePaths files = docDir.dirEntries(QStringList("*.qch"));
+    for (const FilePath &docFile : files) {
+        if (docFile.fileName().startsWith("cmake", Qt::CaseInsensitive)) {
+            return docFile.absoluteFilePath();
         }
     }
 
@@ -440,7 +429,7 @@ void CMakeTool::openCMakeHelpUrl(const CMakeTool *tool, const QString &linkUrl)
     Core::HelpManager::showHelpUrl(linkUrl.arg(documentationUrl(version, online)));
 }
 
-void CMakeTool::readInformation(bool ignoreCache) const
+void CMakeTool::readInformation() const
 {
     QTC_ASSERT(m_introspection, return );
     if (!m_introspection->m_haveCapabilitites && m_introspection->m_didAttemptToRun)
@@ -448,7 +437,7 @@ void CMakeTool::readInformation(bool ignoreCache) const
 
     m_introspection->m_didAttemptToRun = true;
 
-    fetchFromCapabilities(ignoreCache);
+    fetchFromCapabilities();
 }
 
 
@@ -627,17 +616,8 @@ QStringList CMakeTool::parseSyntaxHighlightingXml()
     return moduleFunctions;
 }
 
-void CMakeTool::fetchFromCapabilities(bool ignoreCache) const
+void CMakeTool::fetchFromCapabilities() const
 {
-    expected_str<Utils::Store> cache = PersistentCacheStore::byKey(
-        keyFromString("CMake_" + cmakeExecutable().toUserOutput()));
-
-    if (cache && !ignoreCache) {
-        m_introspection->m_haveCapabilitites = true;
-        parseFromCapabilities(cache->value("CleanedStdOut").toString());
-        return;
-    }
-
     Process cmake;
     runCMake(cmake, {"-E", "capabilities"});
 
@@ -645,15 +625,14 @@ void CMakeTool::fetchFromCapabilities(bool ignoreCache) const
         m_introspection->m_haveCapabilitites = true;
         parseFromCapabilities(cmake.cleanedStdOut());
     } else {
-        qCCritical(cmakeToolLog) << "Fetching capabilities failed: " << cmake.allOutput() << cmake.error();
+        qCCritical(cmakeToolLog) << "Fetching capabilities failed: " << cmake.commandLine()
+                                 << cmake.allOutput() << cmake.error() << cmake.errorString();
         m_introspection->m_haveCapabilitites = false;
-    }
 
-    Store newData{{"CleanedStdOut", cmake.cleanedStdOut()}};
-    const auto result
-        = PersistentCacheStore::write(keyFromString("CMake_" + cmakeExecutable().toUserOutput()),
-                                      newData);
-    QTC_ASSERT_EXPECTED(result, return);
+        // In the rare case when "cmake -E capabilities" crashes / fails to run
+        // allow to try again
+        m_introspection->m_didAttemptToRun = false;
+    }
 }
 
 static int getVersion(const QVariantMap &obj, const QString &value)

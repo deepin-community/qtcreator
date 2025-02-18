@@ -97,5 +97,17 @@ void showHelpUrl(const QString &url, HelpViewerLocation location)
     showHelpUrl(QUrl(url), location);
 }
 
+void setBlockedDocumentation(const QStringList &fileNames)
+{
+    if (checkInstance())
+        m_instance->setBlockedDocumentation(fileNames);
+}
+
+void addOnlineHelpHandler(const OnlineHelpHandler &handler)
+{
+    if (checkInstance())
+        m_instance->addOnlineHelpHandler(handler);
+}
+
 } // HelpManager
 } // Core

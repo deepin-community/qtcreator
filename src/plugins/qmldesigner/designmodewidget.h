@@ -11,7 +11,6 @@
 
 #include <QWidget>
 #include <QMainWindow>
-#include <QScopedPointer>
 
 #include <advanceddockingsystem/dockmanager.h>
 #include <annotationeditor/globalannotationeditor.h>
@@ -74,6 +73,8 @@ public:
 
     GlobalAnnotationEditor &globalAnnotationEditor();
 
+    void setMinimumSizeHintFromContentMinimumSize(bool value);
+
 signals:
     void navigationHistoryChanged();
     void initialized();
@@ -91,6 +92,7 @@ private:
     QWidget *createCenterWidget();
     QWidget *createCrumbleBarFrame();
 
+    void aboutToShowViews();
     void aboutToShowWorkspaces();
 
     QPointer<QWidget> m_bottomSideBar;
@@ -113,6 +115,8 @@ private:
 
     bool m_canGoForward = false;
     bool m_canGoBack = false;
+
+    ADS::DockWidget::eMinimumSizeHintMode m_minimumSizeHintMode = ADS::DockWidget::MinimumSizeHintFromDockWidget;
 };
 
 } // namespace Internal

@@ -13,6 +13,7 @@
 #include <projectexplorer/project.h>
 
 #include <utils/environment.h>
+#include <utils/guiutils.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
 
@@ -103,7 +104,7 @@ void CommandBuilderAspectPrivate::tryToMigrate()
         for (Utils::Id stepId : migratableSteps) {
             if (BuildStep *bs = m_buildStep->stepList()->firstStepWithId(stepId)) {
                 m_activeCommandBuilder = p;
-                bs->setEnabled(false);
+                bs->setStepEnabled(false);
                 m_buildStep->project()->saveSettings();
                 return;
             }
@@ -111,7 +112,7 @@ void CommandBuilderAspectPrivate::tryToMigrate()
     }
 }
 
-void CommandBuilderAspect::addToLayout(Layouting::LayoutItem &parent)
+void CommandBuilderAspect::addToLayoutImpl(Layouting::Layout &parent)
 {
     if (!d->commandBuilder) {
         d->commandBuilder = new QComboBox;
@@ -122,6 +123,7 @@ void CommandBuilderAspect::addToLayout(Layouting::LayoutItem &parent)
                 d->m_activeCommandBuilder = d->m_commandBuilders[idx];
             updateGui();
         });
+        setWheelScrollingWithoutFocusBlocked(d->commandBuilder);
     }
 
     if (!d->makePathChooser) {
@@ -130,7 +132,7 @@ void CommandBuilderAspect::addToLayout(Layouting::LayoutItem &parent)
         d->makePathChooser->setBaseDirectory(PathChooser::homePath());
         d->makePathChooser->setHistoryCompleter("IncrediBuild.BuildConsole.MakeCommand.History");
         connect(d->makePathChooser, &PathChooser::rawPathChanged, this, [this] {
-            d->m_activeCommandBuilder->setCommand(d->makePathChooser->rawFilePath());
+            d->m_activeCommandBuilder->setCommand(d->makePathChooser->unexpandedFilePath());
             updateGui();
         });
     }

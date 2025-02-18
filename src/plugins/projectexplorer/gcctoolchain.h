@@ -10,29 +10,31 @@
 #include "headerpath.h"
 
 #include <functional>
-#include <memory>
 #include <optional>
 
 namespace ProjectExplorer {
 
 namespace Internal {
-class GccToolChainConfigWidget;
-class GccToolChainFactory;
+class GccToolchainConfigWidget;
+class GccToolchainFactory;
 
 const QStringList gccPredefinedMacrosOptions(Utils::Id languageId);
 }
 
 // --------------------------------------------------------------------------
-// GccToolChain
+// GccToolchain
 // --------------------------------------------------------------------------
 
-class PROJECTEXPLORER_EXPORT GccToolChain : public ToolChain
+class PROJECTEXPLORER_EXPORT GccToolchain : public Toolchain
 {
 public:
     enum SubType { RealGcc, Clang, MinGW, LinuxIcc };
 
-    GccToolChain(Utils::Id typeId, SubType subType = RealGcc);
-    ~GccToolChain() override;
+    GccToolchain(Utils::Id typeId, SubType subType = RealGcc);
+    ~GccToolchain() override;
+
+    static std::unique_ptr<ToolchainConfigWidget> createConfigurationWidget(
+        const ToolchainBundle &bundle);
 
     QString originalTargetTriple() const override;
     Utils::FilePath installDir() const override;
@@ -55,11 +57,9 @@ public:
     void toMap(Utils::Store &data) const override;
     void fromMap(const Utils::Store &data) override;
 
-    std::unique_ptr<ToolChainConfigWidget> createConfigurationWidget() override;
+    bool operator ==(const Toolchain &) const override;
 
-    bool operator ==(const ToolChain &) const override;
-
-    void resetToolChain(const Utils::FilePath &);
+    void resetToolchain(const Utils::FilePath &);
     void setPlatformCodeGenFlags(const QStringList &);
     QStringList extraCodeModelFlags() const override;
     QStringList platformCodeGenFlags() const;
@@ -79,19 +79,26 @@ public:
         Abis supportedAbis;
         QString originalTargetTriple;
     };
-    GccToolChain *asGccToolChain() final { return this; }
+    GccToolchain *asGccToolchain() final { return this; }
 
     bool matchesCompilerCommand(const Utils::FilePath &command) const override;
 
     void setPriority(int priority) { m_priority = priority; }
+    void setOriginalTargetTriple(const QString &targetTriple);
+
+    static Utils::FilePath correspondingCompilerCommand(
+        const Utils::FilePath &srcPath,
+        Utils::Id targetLang,
+        const QString &cPattern,
+        const QString &cxxPattern);
 
 protected:
     using CacheItem = QPair<QStringList, Macros>;
     using GccCache = QVector<CacheItem>;
 
     void setSupportedAbis(const Abis &abis);
-    void setOriginalTargetTriple(const QString &targetTriple);
     void setInstallDir(const Utils::FilePath &installDir);
+
     void setMacroCache(const QStringList &allCxxflags, const Macros &macroCache) const;
     Macros macroCache(const QStringList &allCxxflags) const;
 
@@ -102,7 +109,7 @@ protected:
     virtual QString detectVersion() const;
     virtual Utils::FilePath detectInstallDir() const;
 
-    // Reinterpret options for compiler drivers inheriting from GccToolChain (e.g qcc) to apply -Wp option
+    // Reinterpret options for compiler drivers inheriting from GccToolchain (e.g qcc) to apply -Wp option
     // that passes the initial options directly down to the gcc compiler
     using OptionsReinterpreter = std::function<QStringList(const QStringList &options)>;
     void setOptionsReinterpreter(const OptionsReinterpreter &optionsReinterpreter);
@@ -110,40 +117,15 @@ protected:
     using ExtraHeaderPathsFunction = std::function<void(HeaderPaths &)>;
     void initExtraHeaderPathsFunction(ExtraHeaderPathsFunction &&extraHeaderPathsFunction) const;
 
-    static HeaderPaths builtInHeaderPaths(const Utils::Environment &env,
-                                          const Utils::FilePath &compilerCommand,
-                                          const QStringList &platformCodeGenFlags,
-                                          OptionsReinterpreter reinterpretOptions,
-                                          HeaderPathsCache headerCache,
-                                          Utils::Id languageId,
-                                          ExtraHeaderPathsFunction extraHeaderPathsFunction,
-                                          const QStringList &flags,
-                                          const Utils::FilePath &sysRoot,
-                                          const QString &originalTargetTriple);
-
-    static HeaderPaths gccHeaderPaths(const Utils::FilePath &gcc,
-                                      const QStringList &args,
-                                      const Utils::Environment &env);
-
     int priority() const override { return m_priority; }
 
-    class WarningFlagAdder
-    {
-    public:
-        WarningFlagAdder(const QString &flag, Utils::WarningFlags &flags);
-        void operator ()(const char name[], Utils::WarningFlags flagsSet);
-
-        bool triggered() const;
-    private:
-        QByteArray m_flagUtf8;
-        Utils::WarningFlags &m_flags;
-        bool m_doesEnable = false;
-        bool m_triggered = false;
-    };
-
     QString sysRoot() const override;
+    SubType subType() const { return m_subType; }
+    QByteArray parentToolchainId() const { return m_parentToolchainId; }
 
 private:
+    bool canShareBundleImpl(const Toolchain &other) const override;
+
     void syncAutodetectedWithParentToolchains();
     void updateSupportedAbis() const;
 
@@ -162,42 +144,18 @@ private:
     mutable QString m_version;
     mutable Utils::FilePath m_installDir;
 
-    friend class Internal::GccToolChainConfigWidget;
-    friend class Internal::GccToolChainFactory;
-    friend class ToolChainFactory;
+    friend class Internal::GccToolchainConfigWidget;
+    friend class Internal::GccToolchainFactory;
 
     // "resolved" on macOS from /usr/bin/clang(++) etc to <DeveloperDir>/usr/bin/clang(++)
     // which is used for comparison with matchesCompilerCommand
     mutable std::optional<Utils::FilePath> m_resolvedCompilerCommand;
-    QByteArray m_parentToolChainId;
+    QByteArray m_parentToolchainId;
     int m_priority = PriorityNormal;
     QMetaObject::Connection m_mingwToolchainAddedConnection;
     QMetaObject::Connection m_thisToolchainRemovedConnection;
 };
 
+namespace Internal { void setupGccToolchains(); }
 
-namespace Internal {
-
-class GccToolChainFactory : public ToolChainFactory
-{
-public:
-    explicit GccToolChainFactory(GccToolChain::SubType subType);
-
-    Toolchains autoDetect(const ToolchainDetector &detector) const final;
-    Toolchains detectForImport(const ToolChainDescription &tcd) const final;
-
-private:
-    static Toolchains autoDetectToolchains(const Utils::FilePaths &compilerPaths,
-                                           const Utils::Id language,
-                                           const Utils::Id requiredTypeId,
-                                           const Toolchains &known,
-                                           const GccToolChain::SubType subType);
-    static Toolchains autoDetectToolChain(const ToolChainDescription &tcd,
-                                          const GccToolChain::SubType subType);
-    static Toolchains autoDetectSdkClangToolchain(const Toolchains &known);
-
-    const bool m_autoDetecting;
-};
-
-} // namespace Internal
 } // namespace ProjectExplorer

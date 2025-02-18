@@ -14,6 +14,7 @@
 #include "session.h"
 #include "settingsdatabase.h"
 #include "themechooser.h"
+#include "vcsmanager.h"
 
 #include "actionmanager/actionmanager.h"
 #include "coreconstants.h"
@@ -30,8 +31,11 @@
 #include <utils/checkablemessagebox.h>
 #include <utils/commandline.h>
 #include <utils/infobar.h>
+#include <utils/layoutbuilder.h>
 #include <utils/macroexpander.h>
 #include <utils/mimeutils.h>
+#include <utils/networkaccessmanager.h>
+#include <utils/passworddialog.h>
 #include <utils/pathchooser.h>
 #include <utils/savefile.h>
 #include <utils/store.h>
@@ -40,14 +44,18 @@
 #include <utils/theme/theme.h>
 #include <utils/theme/theme_p.h>
 
+#include <QAuthenticator>
+#include <QCheckBox>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QGuiApplication>
 #include <QJsonObject>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QUuid>
 
 #include <cstdlib>
@@ -61,15 +69,8 @@ static CorePlugin *m_instance = nullptr;
 const char kWarnCrashReportingSetting[] = "WarnCrashReporting";
 const char kEnvironmentChanges[] = "Core/EnvironmentChanges";
 
-void CorePlugin::setupSystemEnvironment()
-{
-    m_instance->m_startupSystemEnvironment = Environment::systemEnvironment();
-    const EnvironmentItems changes = EnvironmentItem::fromStringList(
-        ICore::settings()->value(kEnvironmentChanges).toStringList());
-    setEnvironmentChanges(changes);
-}
-
 CorePlugin::CorePlugin()
+    : m_startupSystemEnvironment(Environment::systemEnvironment())
 {
     qRegisterMetaType<Id>();
     qRegisterMetaType<Utils::Text::Position>();
@@ -81,7 +82,10 @@ CorePlugin::CorePlugin()
     qRegisterMetaType<Utils::KeyList>();
     qRegisterMetaType<Utils::OldStore>();
     m_instance = this;
-    setupSystemEnvironment();
+
+    const EnvironmentItems changes = EnvironmentItem::fromStringList(
+        ICore::settings()->value(kEnvironmentChanges).toStringList());
+    setEnvironmentChanges(changes);
 }
 
 CorePlugin::~CorePlugin()
@@ -130,18 +134,100 @@ CoreArguments parseArguments(const QStringList &arguments)
     return args;
 }
 
+void CorePlugin::loadMimeFromPlugin(const ExtensionSystem::PluginSpec *plugin)
+{
+    const QJsonObject metaData = plugin->metaData();
+    const QJsonValue mimetypes = metaData.value("Mimetypes");
+    QString mimetypeString;
+    if (Utils::readMultiLineString(mimetypes, &mimetypeString))
+        Utils::addMimeTypes(plugin->name() + ".mimetypes", mimetypeString.trimmed().toUtf8());
+}
+
+static void initProxyAuthDialog()
+{
+    QObject::connect(Utils::NetworkAccessManager::instance(),
+                     &QNetworkAccessManager::proxyAuthenticationRequired,
+                     Utils::NetworkAccessManager::instance(),
+                     [](const QNetworkProxy &, QAuthenticator *authenticator) {
+                         static bool doNotAskAgain = false;
+
+                         std::optional<QPair<QString, QString>> answer
+                             = Utils::PasswordDialog::getUserAndPassword(
+                                 Tr::tr("Proxy Authentication Required"),
+                                 authenticator->realm(),
+                                 Tr::tr("Do not ask again."),
+                                 {},
+                                 &doNotAskAgain,
+                                 Core::ICore::dialogParent());
+
+                         if (answer) {
+                             authenticator->setUser(answer->first);
+                             authenticator->setPassword(answer->second);
+                         }
+                     });
+}
+
+static void initTAndCAcceptDialog()
+{
+    ExtensionSystem::PluginManager::instance()->setAcceptTermsAndConditionsCallback(
+        [](ExtensionSystem::PluginSpec *spec) {
+            using namespace Layouting;
+
+            QDialog dialog(ICore::dialogParent());
+            dialog.setWindowTitle(Tr::tr("Terms and Conditions"));
+
+            QDialogButtonBox buttonBox;
+            QCheckBox *acceptCheckBox;
+            QPushButton *acceptButton
+                = buttonBox.addButton(Tr::tr("Accept"), QDialogButtonBox::ButtonRole::YesRole);
+            QPushButton *decline
+                = buttonBox.addButton(Tr::tr("Decline"), QDialogButtonBox::ButtonRole::NoRole);
+            acceptButton->setAutoDefault(false);
+            acceptButton->setDefault(false);
+            acceptButton->setEnabled(false);
+            decline->setAutoDefault(true);
+            decline->setDefault(true);
+            QObject::connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            QObject::connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+            const QLatin1String legal = QLatin1String(
+                "I confirm that I have reviewed and accept the terms and conditions\n"
+                "of this extension. I confirm that I have the authority and ability to\n"
+                "accept the terms and conditions of this extension for the customer.\n"
+                "I acknowledge that if the customer and the Qt Company already have a\n"
+                "valid agreement in place, that agreement shall apply, but these terms\n"
+                "shall govern the use of this extension.");
+
+            // clang-format off
+            Column {
+                Tr::tr("The plugin %1 requires you to accept the following terms and conditions:").arg(spec->name()), br,
+                TextEdit {
+                    markdown(spec->termsAndConditions()->text),
+                    readOnly(true),
+                }, br,
+                Row {
+                    acceptCheckBox = new QCheckBox(legal), &buttonBox,
+                }
+            }.attachTo(&dialog);
+            // clang-format on
+
+            QObject::connect(
+                acceptCheckBox, &QCheckBox::toggled, acceptButton, &QPushButton::setEnabled);
+
+            return dialog.exec() == QDialog::Accepted;
+        });
+}
+
 bool CorePlugin::initialize(const QStringList &arguments, QString *errorMessage)
 {
     // register all mime types from all plugins
     for (ExtensionSystem::PluginSpec *plugin : ExtensionSystem::PluginManager::plugins()) {
         if (!plugin->isEffectivelyEnabled())
             continue;
-        const QJsonObject metaData = plugin->metaData();
-        const QJsonValue mimetypes = metaData.value("Mimetypes");
-        QString mimetypeString;
-        if (Utils::readMultiLineString(mimetypes, &mimetypeString))
-            Utils::addMimeTypes(plugin->name() + ".mimetypes", mimetypeString.trimmed().toUtf8());
+        loadMimeFromPlugin(plugin);
     }
+    initTAndCAcceptDialog();
+    initProxyAuthDialog();
 
     if (ThemeEntry::availableThemes().isEmpty()) {
         *errorMessage = Tr::tr("No themes found in installation.");
@@ -157,12 +243,11 @@ bool CorePlugin::initialize(const QStringList &arguments, QString *errorMessage)
     CheckableMessageBox::initialize(ICore::settings());
     new ActionManager(this);
     ActionManager::setPresentationModeEnabled(args.presentationMode);
-    m_core = new ICore;
     if (args.overrideColor.isValid())
         ICore::setOverrideColor(args.overrideColor);
+    m_core = new ICore;
     m_locator = new Locator;
     std::srand(unsigned(QDateTime::currentDateTime().toSecsSinceEpoch()));
-    ICore::init();
     m_editMode = new EditMode;
     ModeManager::activateMode(m_editMode->id());
     m_folderNavigationWidgetFactory = new FolderNavigationWidgetFactory;
@@ -221,10 +306,17 @@ bool CorePlugin::initialize(const QStringList &arguments, QString *errorMessage)
     expander->registerVariable("HostOs:ExecutableSuffix",
                                Tr::tr("The platform executable suffix."),
                                [] { return QString(Utils::HostOsInfo::withExecutableSuffix("")); });
+    expander->registerFileVariables("IDE:Executable",
+                               Tr::tr("The path to the running %1 itself.").arg(QGuiApplication::applicationDisplayName()),
+                               []() { return FilePath::fromUserInput(QCoreApplication::applicationFilePath()); });
     expander->registerVariable("IDE:ResourcePath",
                                Tr::tr("The directory where %1 finds its pre-installed resources.")
                                    .arg(QGuiApplication::applicationDisplayName()),
                                [] { return ICore::resourcePath().toString(); });
+    expander->registerVariable("IDE:UserResourcePath",
+                               Tr::tr("The directory where %1 puts custom user data.")
+                                   .arg(QGuiApplication::applicationDisplayName()),
+                               [] { return ICore::userResourcePath().toString(); });
     expander->registerPrefix("CurrentDate:", Tr::tr("The current date (QDate formatstring)."),
                              [](const QString &fmt) { return QDate::currentDate().toString(fmt); });
     expander->registerPrefix("CurrentTime:", Tr::tr("The current time (QTime formatstring)."),
@@ -233,12 +325,19 @@ bool CorePlugin::initialize(const QStringList &arguments, QString *errorMessage)
                                [] { return QUuid::createUuid().toString(); });
 
     expander->registerPrefix("#:", Tr::tr("A comment."), [](const QString &) { return QString(); });
+    expander->registerPrefix("Asciify:",
+                             Tr::tr("Convert string to pure ASCII."),
+                             [expander](const QString &s) { return asciify(expander->expand(s)); });
 
     Utils::PathChooser::setAboutToShowContextMenuHandler(&CorePlugin::addToPathChooserContextMenu);
 
 #ifdef ENABLE_CRASHPAD
     connect(ICore::instance(), &ICore::coreOpened, this, &CorePlugin::warnAboutCrashReporing,
             Qt::QueuedConnection);
+#endif
+
+#ifdef WITH_TESTS
+    addTestCreator(&createVcsManagerTest);
 #endif
 
     return true;
@@ -275,13 +374,13 @@ static void registerActionsForOptions()
         const Id commandId = generateOpenPageCommandId(page);
         if (!commandId.isValid())
             continue;
-        const QString actionTitle = Tr::tr("%1 > %2 Preferences...")
-            .arg(categoryDisplay.value(page->category()), page->displayName());
-        auto action = new QAction(actionTitle, m_instance);
-        QObject::connect(action, &QAction::triggered, m_instance, [id = page->id()] {
-            ICore::showOptionsDialog(id);
-        });
-        ActionManager::registerAction(action, commandId);
+
+        ActionBuilder(m_instance, commandId)
+            .setText(Tr::tr("%1 > %2 Preferences...")
+                         .arg(categoryDisplay.value(page->category()), page->displayName()))
+            .addOnTriggered(m_instance, [id = page->id()] {
+                ICore::showOptionsDialog(id);
+            });
     }
 }
 
@@ -314,8 +413,8 @@ QObject *CorePlugin::remoteCommand(const QStringList & /* options */,
 {
     if (!ExtensionSystem::PluginManager::isInitializationDone()) {
         connect(ExtensionSystem::PluginManager::instance(),
-                &ExtensionSystem::PluginManager::initializationDone,
-                this, [=] { remoteCommand(QStringList(), workingDirectory, args); });
+                &ExtensionSystem::PluginManager::initializationDone, this,
+                [this, workingDirectory, args] { remoteCommand({}, workingDirectory, args); });
         return nullptr;
     }
     const FilePaths filePaths = Utils::transform(args, FilePath::fromUserInput);
@@ -325,11 +424,6 @@ QObject *CorePlugin::remoteCommand(const QStringList & /* options */,
                 FilePath::fromString(workingDirectory));
     ICore::raiseMainWindow();
     return res;
-}
-
-Environment CorePlugin::startupSystemEnvironment()
-{
-    return m_instance->m_startupSystemEnvironment;
 }
 
 EnvironmentItems CorePlugin::environmentChanges()
@@ -473,7 +567,7 @@ void CorePlugin::warnAboutCrashReporing()
 // static
 QString CorePlugin::msgCrashpadInformation()
 {
-    return Tr::tr("%1 uses Google Crashpad for collecting crashes and sending them to our backend "
+    return Tr::tr("%1 uses Google Crashpad for collecting crashes and sending them to Sentry "
                   "for processing. Crashpad may capture arbitrary contents from crashed process’ "
                   "memory, including user sensitive information, URLs, and whatever other content "
                   "users have trusted %1 with. The collected crash reports are however only used "

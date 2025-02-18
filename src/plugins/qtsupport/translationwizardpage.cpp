@@ -6,14 +6,16 @@
 #include "qtsupporttr.h"
 
 #include <projectexplorer/jsonwizard/jsonwizard.h>
+#include <projectexplorer/jsonwizard/jsonwizardpagefactory.h>
+#include <projectexplorer/project.h>
+#include <projectexplorer/projectmanager.h>
 
 #include <utils/algorithm.h>
-#include <utils/filepath.h>
+#include <utils/fileutils.h>
 #include <utils/macroexpander.h>
 #include <utils/wizardpage.h>
 
 #include <QComboBox>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -28,20 +30,17 @@ using namespace Core;
 using namespace ProjectExplorer;
 using namespace Utils;
 
-namespace QtSupport {
-namespace Internal {
+namespace QtSupport::Internal {
 
-class TranslationWizardPage : public WizardPage
+class TranslationWizardPage final : public WizardPage
 {
-    Q_OBJECT
-
 public:
-    TranslationWizardPage(const QString &enabledExpr);
+    TranslationWizardPage(const QString &enabledExpr, bool singleFile);
 
 private:
-    void initializePage() override;
-    bool isComplete() const override;
-    bool validatePage() override;
+    void initializePage() final;
+    bool isComplete() const final;
+    bool validatePage() final;
 
     QString tsBaseName() const { return m_fileNameLineEdit.text(); }
     void updateLineEdit();
@@ -49,29 +48,21 @@ private:
     QComboBox m_languageComboBox;
     QLineEdit m_fileNameLineEdit;
     const QString m_enabledExpr;
+    const bool m_isProjectWizard;
 };
 
-TranslationWizardPageFactory::TranslationWizardPageFactory()
-{
-    setTypeIdsSuffix("QtTranslation");
-}
-
-WizardPage *TranslationWizardPageFactory::create(JsonWizard *wizard, Id typeId,
-                                                 const QVariant &data)
-{
-    Q_UNUSED(wizard)
-    Q_UNUSED(typeId)
-    return new TranslationWizardPage(data.toMap().value("enabled").toString());
-}
-
-TranslationWizardPage::TranslationWizardPage(const QString &enabledExpr)
+TranslationWizardPage::TranslationWizardPage(const QString &enabledExpr, bool singleFile)
     : m_enabledExpr(enabledExpr)
+    , m_isProjectWizard(!singleFile)
 {
     const auto mainLayout = new QVBoxLayout(this);
     const auto descriptionLabel = new QLabel(
-                Tr::tr("If you plan to provide translations for your project's "
-                       "user interface via the Qt Linguist tool, please select a language here. "
-                       "A corresponding translation (.ts) file will be generated for you."));
+                singleFile ? Tr::tr("Select a language for which a corresponding "
+                                    "translation (.ts) file will be generated for you.")
+                           : Tr::tr("If you plan to provide translations for your project's "
+                                    "user interface via the Qt Linguist tool, select a "
+                                    "language here. A corresponding translation (.ts) file will be "
+                                    "generated for you."));
     descriptionLabel->setWordWrap(true);
     mainLayout->addWidget(descriptionLabel);
     const auto formLayout = new QFormLayout;
@@ -84,7 +75,7 @@ TranslationWizardPage::TranslationWizardPage(const QString &enabledExpr)
     auto localeStrings = transform<QList<LocalePair>>(allLocales,
                 [](const QLocale &l) {
                     const QString displayName = QLocale::languageToString(l.language()).append(" (")
-                            .append(QLocale::countryToString(l.country())).append(')');
+                            .append(QLocale::territoryToString(l.territory())).append(')');
                     const QString tsFileBaseName = l.name();
                     return qMakePair(displayName, tsFileBaseName);
                 });
@@ -116,7 +107,9 @@ void TranslationWizardPage::initializePage()
 
 bool TranslationWizardPage::isComplete() const
 {
-    return m_languageComboBox.currentIndex() == 0 || !tsBaseName().isEmpty();
+    if (m_isProjectWizard)
+        return m_languageComboBox.currentIndex() == 0 || !tsBaseName().isEmpty();
+    return m_languageComboBox.currentIndex() > 0 && !tsBaseName().isEmpty();
 }
 
 bool TranslationWizardPage::validatePage()
@@ -131,7 +124,14 @@ void TranslationWizardPage::updateLineEdit()
 {
     m_fileNameLineEdit.setEnabled(m_languageComboBox.currentIndex() != 0);
     if (m_fileNameLineEdit.isEnabled()) {
-        const QString projectName = static_cast<JsonWizard *>(wizard())->stringValue("ProjectName");
+        auto jsonWizard = static_cast<JsonWizard *>(wizard());
+        QString projectName = jsonWizard->stringValue("ProjectName");
+        if (!m_isProjectWizard && projectName.isEmpty()) {
+            if (auto project = ProjectManager::startupProject())
+                projectName = FileUtils::fileSystemFriendlyName(project->displayName());
+            else
+                projectName = FilePath::fromUserInput(jsonWizard->stringValue("InitialPath")).baseName();
+        }
         m_fileNameLineEdit.setText(projectName + '_' + m_languageComboBox.currentData().toString());
     } else {
         m_fileNameLineEdit.clear();
@@ -140,7 +140,29 @@ void TranslationWizardPage::updateLineEdit()
     emit completeChanged();
 }
 
-} // namespace Internal
-} // namespace QtSupport
+class TranslationWizardPageFactory final : public JsonWizardPageFactory
+{
+public:
+    TranslationWizardPageFactory()
+    {
+        setTypeIdsSuffix("QtTranslation");
+    }
 
-#include <translationwizardpage.moc>
+private:
+    WizardPage *create(JsonWizard *wizard, Id typeId, const QVariant &data) final
+    {
+        Q_UNUSED(wizard)
+        Q_UNUSED(typeId)
+        return new TranslationWizardPage(data.toMap().value("enabled").toString(),
+                                         data.toMap().value("singleFile").toBool());
+    }
+
+    bool validateData(Id, const QVariant &, QString *) final { return true; }
+};
+
+void setupTranslationWizardPage()
+{
+    static TranslationWizardPageFactory theTranslationWizardPageFactory;
+}
+
+} // QtSupport::Internal

@@ -143,8 +143,7 @@ SettingsPageWidget::SettingsPageWidget()
         st
     }.attachTo(this);
 
-
-    const ClearCaseSettings &s = ClearCasePlugin::settings();
+    const ClearCaseSettings &s = settings();
 
     commandPathChooser->setFilePath(FilePath::fromString(s.ccCommand));
     timeOutSpinBox->setValue(s.timeOutS);
@@ -178,7 +177,7 @@ SettingsPageWidget::SettingsPageWidget()
 void SettingsPageWidget::apply()
 {
     ClearCaseSettings rc;
-    rc.ccCommand = commandPathChooser->rawFilePath().toString();
+    rc.ccCommand = commandPathChooser->unexpandedFilePath().toUserOutput();
     rc.ccBinaryPath = commandPathChooser->filePath();
     rc.timeOutS = timeOutSpinBox->value();
     rc.autoCheckOut = autoCheckOutCheckBox->isChecked();
@@ -194,7 +193,7 @@ void SettingsPageWidget::apply()
     rc.indexOnlyVOBs = indexOnlyVOBsEdit->text();
     rc.extDiffAvailable = externalDiffRadioButton->isEnabled();
 
-    ClearCasePlugin::setSettings(rc);
+    setSettings(rc);
 }
 
 ClearCaseSettingsPage::ClearCaseSettingsPage()

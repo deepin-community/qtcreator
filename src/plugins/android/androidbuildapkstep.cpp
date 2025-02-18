@@ -33,10 +33,11 @@
 
 #include <utils/algorithm.h>
 #include <utils/fancylineedit.h>
+#include <utils/fileutils.h>
 #include <utils/infolabel.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -52,20 +53,16 @@
 #include <QListView>
 #include <QLoggingCategory>
 #include <QMessageBox>
-#include <QProcess>
 #include <QPushButton>
 #include <QTimer>
-#include <QToolButton>
 
-#include <algorithm>
 #include <memory>
 
 using namespace ProjectExplorer;
 using namespace QtSupport;
 using namespace Utils;
 
-namespace Android {
-namespace Internal {
+namespace Android::Internal {
 
 static Q_LOGGING_CATEGORY(buildapkstepLog, "qtc.android.build.androidbuildapkstep", QtWarningMsg)
 
@@ -141,7 +138,7 @@ AndroidBuildApkWidget::AndroidBuildApkWidget(AndroidBuildApkStep *step)
     keystoreLocationChooser->setPromptDialogFilter(Tr::tr("Keystore files (*.keystore *.jks)"));
     keystoreLocationChooser->setPromptDialogTitle(Tr::tr("Select Keystore File"));
     connect(keystoreLocationChooser, &PathChooser::textChanged, this, [this, keystoreLocationChooser] {
-        const FilePath file = keystoreLocationChooser->rawFilePath();
+        const FilePath file = keystoreLocationChooser->unexpandedFilePath();
         m_step->setKeystorePath(file);
         m_signPackageCheckBox->setChecked(!file.isEmpty());
         if (!file.isEmpty())
@@ -229,11 +226,12 @@ AndroidBuildApkWidget::AndroidBuildApkWidget(AndroidBuildApkStep *step)
         m_step->setBuildToolsVersion(buildToolsSdkComboBox->itemData(idx).value<QVersionNumber>());
     });
 
-    const int initIdx = (m_step->buildToolsVersion().majorVersion() < 1)
-            ? buildToolsVersions.indexOf(buildToolsVersions.last())
-            : buildToolsVersions.indexOf(m_step->buildToolsVersion());
-    buildToolsSdkComboBox->setCurrentIndex(initIdx);
-
+    if (!buildToolsVersions.isEmpty()) {
+        const int initIdx = (m_step->buildToolsVersion().majorVersion() < 1)
+                                ? buildToolsVersions.indexOf(buildToolsVersions.last())
+                                : buildToolsVersions.indexOf(m_step->buildToolsVersion());
+        buildToolsSdkComboBox->setCurrentIndex(initIdx);
+    }
 
     auto createAndroidTemplatesButton = new QPushButton(Tr::tr("Create Templates"));
     createAndroidTemplatesButton->setToolTip(
@@ -415,10 +413,10 @@ bool AndroidBuildApkWidget::isOpenSslLibsIncluded()
 
 QString AndroidBuildApkWidget::openSslIncludeFileContent(const FilePath &projectPath)
 {
-    QString openSslPath = AndroidConfigurations::currentConfig().openSslLocation().toString();
-    if (projectPath.endsWith(".pro"))
+    QString openSslPath = AndroidConfig::openSslLocation().path();
+    if (projectPath.suffixView() == u"pro")
         return "android: include(" + openSslPath + "/openssl.pri)";
-    if (projectPath.endsWith("CMakeLists.txt"))
+    if (projectPath.fileNameView() == u"CMakeLists.txt")
         return "if (ANDROID)\n    include(" + openSslPath + "/CMakeLists.txt)\nendif()";
     return {};
 }
@@ -495,7 +493,7 @@ bool AndroidBuildApkStep::init()
         return false;
     }
 
-    if (version->qtVersion() < QVersionNumber(5, 4, 0)) {
+    if (version->qtVersion() < AndroidManager::firstQtWithAndroidDeployQt) {
         const QString error = Tr::tr("The minimum Qt version required for Gradle build to work is %1. "
                                      "It is recommended to install the latest Qt version.")
                 .arg("5.4.0");
@@ -541,7 +539,7 @@ bool AndroidBuildApkStep::init()
     QStringList arguments = {"--input", m_inputFile.path(),
                              "--output", outputDir.path(),
                              "--android-platform", m_buildTargetSdk,
-                             "--jdk", AndroidConfigurations::currentConfig().openJDKLocation().path()};
+                             "--jdk", AndroidConfig::openJDKLocation().path()};
 
     if (verboseOutput())
         arguments << "--verbose";
@@ -605,7 +603,16 @@ void AndroidBuildApkStep::setupOutputFormatter(OutputFormatter *formatter)
 
 void AndroidBuildApkStep::showInGraphicalShell()
 {
-    Core::FileUtils::showInGraphicalShell(Core::ICore::dialogParent(), m_packagePath);
+    FilePath packagePath = m_packagePath;
+    if (!packagePath.exists()) { // File name might be incorrect. See: QTCREATORBUG-22627
+        packagePath = packagePath.parentDir();
+        if (!packagePath.exists()) {
+            qCDebug(buildapkstepLog).noquote()
+                    << "Could not open package location: " << packagePath;
+            return;
+        }
+    }
+    Core::FileUtils::showInGraphicalShell(Core::ICore::dialogParent(), packagePath);
 }
 
 QWidget *AndroidBuildApkStep::createConfigWidget()
@@ -672,7 +679,7 @@ static bool copyFileIfNewer(const FilePath &sourceFilePath,
 
     if (!destinationFilePath.parentDir().ensureWritableDir())
         return false;
-    expected_str<void> result = sourceFilePath.copyFile(destinationFilePath);
+    Result result = sourceFilePath.copyFile(destinationFilePath);
     QTC_ASSERT_EXPECTED(result, return false);
     return true;
 }
@@ -740,7 +747,7 @@ Tasking::GroupItem AndroidBuildApkStep::runRecipe()
         QString applicationBinary;
         if (!version->supportsMultipleQtAbis()) {
             QTC_ASSERT(androidAbis.size() == 1, return false);
-            applicationBinary = buildSystem()->buildTarget(buildKey).targetFilePath.toString();
+            applicationBinary = buildSystem()->buildTarget(buildKey).targetFilePath.path();
             FilePath androidLibsDir = androidBuildDir / "libs" / androidAbis.first();
             for (const FilePath &target : targets) {
                 if (!copyFileIfNewer(target, androidLibsDir.pathAppended(target.fileName()))) {
@@ -797,16 +804,20 @@ Tasking::GroupItem AndroidBuildApkStep::runRecipe()
 
         QString qmlRootPath = bs->extraData(buildKey, "QML_ROOT_PATH").toString();
         if (qmlRootPath.isEmpty())
-            qmlRootPath = target()->project()->rootProjectDirectory().toString();
+            qmlRootPath = target()->project()->rootProjectDirectory().path();
         deploySettings["qml-root-path"] = qmlRootPath;
 
-        QFile f{m_inputFile.toString()};
-        if (!f.open(QIODevice::WriteOnly)) {
-            reportWarningOrError(Tr::tr("Cannot open androiddeployqt input file \"%1\" for writing.")
-                                     .arg(m_inputFile.toUserOutput()), Task::Error);
+        const expected_str<qint64> result = m_inputFile.writeFileContents(QJsonDocument{deploySettings}.toJson());
+        if (!result) {
+            reportWarningOrError(
+                Tr::tr("Cannot open androiddeployqt input file \"%1\" for writing.")
+                    .arg(m_inputFile.toUserOutput())
+                    .append(' ')
+                    .append(result.error()),
+                Task::Error);
             return false;
         }
-        f.write(QJsonDocument{deploySettings}.toJson());
+
         return true;
     };
 
@@ -814,12 +825,12 @@ Tasking::GroupItem AndroidBuildApkStep::runRecipe()
         if (m_skipBuilding) {
             reportWarningOrError(Tr::tr("Android deploy settings file not found, "
                                         "not building an APK."), Task::Error);
-            return SetupResult::StopWithDone;
+            return SetupResult::StopWithSuccess;
         }
         if (AndroidManager::skipInstallationAndPackageSteps(target())) {
             reportWarningOrError(Tr::tr("Product type is not an application, not building an APK."),
                                  Task::Warning);
-            return SetupResult::StopWithDone;
+            return SetupResult::StopWithSuccess;
         }
         if (setupHelper())
             return SetupResult::Continue;
@@ -834,7 +845,7 @@ Tasking::GroupItem AndroidBuildApkStep::runRecipe()
 
     const Group root {
         onGroupSetup(onSetup),
-        onGroupDone(onDone),
+        onGroupDone(onDone, CallDoneIf::Success),
         defaultProcessTask()
     };
     return root;
@@ -929,17 +940,16 @@ QVariant AndroidBuildApkStep::data(Utils::Id id) const
 {
     if (id == Constants::AndroidNdkPlatform) {
         if (auto qtVersion = QtKitAspect::qtVersion(kit()))
-            return AndroidConfigurations::currentConfig()
-                .bestNdkPlatformMatch(AndroidManager::minimumSDK(target()), qtVersion);
+            return AndroidConfig::bestNdkPlatformMatch(AndroidManager::minimumSDK(target()), qtVersion);
         return {};
     }
     if (id == Constants::NdkLocation) {
         if (auto qtVersion = QtKitAspect::qtVersion(kit()))
-            return QVariant::fromValue(AndroidConfigurations::currentConfig().ndkLocation(qtVersion));
+            return QVariant::fromValue(AndroidConfig::ndkLocation(qtVersion));
         return {};
     }
     if (id == Constants::SdkLocation)
-        return QVariant::fromValue(AndroidConfigurations::currentConfig().sdkLocation());
+        return QVariant::fromValue(AndroidConfig::sdkLocation());
 
     if (id == Constants::AndroidMkSpecAbis)
         return AndroidManager::applicationAbis(target());
@@ -1000,9 +1010,9 @@ QAbstractItemModel *AndroidBuildApkStep::keystoreCertificates()
         "-storepass", m_keystorePasswd, "-J-Duser.language=en"};
 
     Process keytoolProc;
-    keytoolProc.setTimeoutS(30);
-    keytoolProc.setCommand({AndroidConfigurations::currentConfig().keytoolPath(), params});
-    keytoolProc.runBlocking(EventLoopMode::On);
+    keytoolProc.setCommand({AndroidConfig::keytoolPath(), params});
+    using namespace std::chrono_literals;
+    keytoolProc.runBlocking(30s);
     if (keytoolProc.result() > ProcessResult::FinishedWithError)
         QMessageBox::critical(nullptr, Tr::tr("Error"), Tr::tr("Failed to run keytool."));
     else
@@ -1072,14 +1082,22 @@ QString PasswordInputDialog::getPassword(Context context, std::function<bool (co
 
 // AndroidBuildApkStepFactory
 
-AndroidBuildApkStepFactory::AndroidBuildApkStepFactory()
+class AndroidBuildApkStepFactory final : public BuildStepFactory
 {
-    registerStep<AndroidBuildApkStep>(Constants::ANDROID_BUILD_APK_ID);
-    setSupportedDeviceType(Constants::ANDROID_DEVICE_TYPE);
-    setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_BUILD);
-    setDisplayName(Tr::tr("Build Android APK"));
-    setRepeatable(false);
+public:
+    AndroidBuildApkStepFactory()
+    {
+        registerStep<AndroidBuildApkStep>(Constants::ANDROID_BUILD_APK_ID);
+        setSupportedDeviceType(Constants::ANDROID_DEVICE_TYPE);
+        setSupportedStepList(ProjectExplorer::Constants::BUILDSTEPS_BUILD);
+        setDisplayName(Tr::tr("Build Android APK"));
+        setRepeatable(false);
+    }
+};
+
+void setupAndroidBuildApkStep()
+{
+    static AndroidBuildApkStepFactory theAndroidBuildApkStepFactory;
 }
 
-} // namespace Internal
-} // namespace Android
+} // Android::Internal

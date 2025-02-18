@@ -40,6 +40,7 @@
 
 #include "projectdata_p.h"
 #include "propertymap_p.h"
+#include <language/builtindeclarations.h>
 #include <language/language.h>
 #include <language/propertymapinternal.h>
 #include <loader/loaderutils.h>
@@ -48,7 +49,6 @@
 #include <tools/qbsassert.h>
 #include <tools/qttools.h>
 #include <tools/stlutils.h>
-#include <tools/stringconstants.h>
 #include <tools/stringconstants.h>
 
 #include <QtCore/qdir.h>
@@ -75,7 +75,7 @@ static QVariant getModuleProperty(const PropertyMap &properties, const QString &
 {
     const int lastDotIndex = fullPropertyName.lastIndexOf(QLatin1Char('.'));
     if (lastDotIndex == -1)
-        return QVariant();
+        return {};
     return properties.getModuleProperty(fullPropertyName.left(lastDotIndex),
                                         fullPropertyName.mid(lastDotIndex + 1));
 }
@@ -86,7 +86,7 @@ static void addModuleProperties(QJsonObject &obj, const PropertyMap &properties,
     QJsonObject propertyValues;
     for (const QString &prop : propertyNames) {
         const QVariant v = getModuleProperty(properties, prop);
-        if (v.isValid())
+        if (v.isValid() && !v.isNull())
             propertyValues.insert(prop, QJsonValue::fromVariant(v));
     }
     if (!propertyValues.isEmpty())
@@ -95,7 +95,8 @@ static void addModuleProperties(QJsonObject &obj, const PropertyMap &properties,
 
 /*!
  * \class GroupData
- * \brief The \c GroupData class corresponds to the Group item in a qbs source file.
+ * \brief The \c GroupData class corresponds to a Group item in a qbs source file that has its
+ *        \c files property set.
  */
 
 GroupData::GroupData() : d(new GroupDataPrivate)
@@ -732,21 +733,16 @@ bool operator==(const ProductData &lhs, const ProductData &rhs)
     if (!lhs.isValid() && !rhs.isValid())
         return true;
 
-    return lhs.isValid() == rhs.isValid()
-            && lhs.name() == rhs.name()
-            && lhs.targetName() == rhs.targetName()
-            && lhs.type() == rhs.type()
-            && lhs.version() == rhs.version()
-            && lhs.dependencies() == rhs.dependencies()
-            && lhs.profile() == rhs.profile()
-            && lhs.multiplexConfigurationId() == rhs.multiplexConfigurationId()
-            && lhs.location() == rhs.location()
-            && lhs.groups() == rhs.groups()
-            && lhs.generatedArtifacts() == rhs.generatedArtifacts()
-            && lhs.properties() == rhs.properties()
-            && lhs.moduleProperties() == rhs.moduleProperties()
-            && lhs.isEnabled() == rhs.isEnabled()
-            && lhs.isMultiplexed() == rhs.isMultiplexed();
+    return lhs.isValid() == rhs.isValid() && lhs.name() == rhs.name()
+           && lhs.targetName() == rhs.targetName() && lhs.type() == rhs.type()
+           && lhs.version() == rhs.version() && lhs.dependencies() == rhs.dependencies()
+           && lhs.profile() == rhs.profile()
+           && lhs.multiplexConfigurationId() == rhs.multiplexConfigurationId()
+           && lhs.location() == rhs.location() && lhs.groups() == rhs.groups()
+           && lhs.generatedArtifacts() == rhs.generatedArtifacts()
+           && qVariantMapsEqual(lhs.properties(), rhs.properties())
+           && lhs.moduleProperties() == rhs.moduleProperties() && lhs.isEnabled() == rhs.isEnabled()
+           && lhs.isMultiplexed() == rhs.isMultiplexed();
 }
 
 bool operator!=(const ProductData &lhs, const ProductData &rhs)
@@ -949,6 +945,52 @@ QStringList PropertyMap::allProperties() const
             it != d->m_map->value().constEnd(); ++it) {
         if (!it.value().canConvert<QVariantMap>())
             properties << it.key();
+    }
+    return properties;
+}
+
+/*!
+ * \brief Returns the names of all modules whose properties can be requested.
+ */
+QStringList PropertyMap::allModules() const
+{
+    QStringList modules;
+    for (auto it = d->m_map->value().constBegin(); it != d->m_map->value().constEnd(); ++it) {
+        if (it.value().canConvert<QVariantMap>())
+            modules << it.key();
+    }
+    return modules;
+}
+
+/*!
+ * \brief Returns information about all properties of the given module.
+ */
+QList<PropertyMap::PropertyInfo> PropertyMap::allPropertiesForModule(const QString &module) const
+{
+    const QVariantMap moduleProps = d->m_map->value().value(module).toMap();
+    QList<PropertyInfo> properties;
+    const auto builtinProps = transformed<QStringList>(
+        BuiltinDeclarations::instance().declarationsForType(ItemType::Module).properties(),
+        [](const PropertyDeclaration &decl) { return decl.name(); });
+    for (auto it = moduleProps.begin(); it != moduleProps.end(); ++it) {
+        static const auto getType = [](const QVariant &v) -> QString {
+            switch (qVariantType(v)) {
+            case QMetaType::Bool:
+                return PropertyDeclaration::typeString(PropertyDeclaration::Boolean);
+            case QMetaType::Int:
+                return PropertyDeclaration::typeString(PropertyDeclaration::Integer);
+            case QMetaType::QVariantList:
+                return PropertyDeclaration::typeString(PropertyDeclaration::VariantList);
+            case QMetaType::QString:
+                return PropertyDeclaration::typeString(PropertyDeclaration::String);
+            case QMetaType::QStringList:
+                return PropertyDeclaration::typeString(PropertyDeclaration::StringList);
+            default:
+                return PropertyDeclaration::typeString(PropertyDeclaration::Variant);
+            }
+        };
+        properties << PropertyInfo{
+            it.key(), getType(it.value()), it.value(), builtinProps.contains(it.key())};
     }
     return properties;
 }

@@ -18,11 +18,13 @@
 #include <projectstorage/filestatus.h>
 #include <projectstorage/projectstoragepathwatchertypes.h>
 #include <projectstorage/projectstoragetypes.h>
-#include <projectstorage/sourcepathcachetypes.h>
+#include <sourcepathstorage/sourcepathcachetypes.h>
 #include <sqlitesessionchangeset.h>
 #include <sqlitevalue.h>
 #include <utils/fileutils.h>
 #include <variantproperty.h>
+
+#include <utils/smallstringio.h>
 
 namespace std {
 template <typename T> ostream &operator<<(ostream &out, const QVector<T> &vector)
@@ -153,6 +155,11 @@ void PrintTo(Utils::SmallStringView text, ::std::ostream *os)
 }
 
 void PrintTo(const Utils::SmallString &text, ::std::ostream *os)
+{
+    *os << "\"" << text << "\"";
+}
+
+void PrintTo(const Utils::BasicSmallString<96> &text, ::std::ostream *os)
 {
     *os << "\"" << text << "\"";
 }
@@ -512,6 +519,59 @@ std::ostream &operator<<(std::ostream &out, const ModelResourceSet &set)
                << set.setExpressions << ")";
 }
 
+std::ostream &operator<<(std::ostream &out, FlagIs flagIs)
+{
+    switch (flagIs) {
+    case QmlDesigner::FlagIs::False:
+        out << "False";
+        break;
+    case QmlDesigner::FlagIs::True:
+        out << "True";
+        break;
+    case QmlDesigner::FlagIs::Set:
+        out << "Set";
+        break;
+    }
+
+    return out;
+}
+
+std::ostream &operator<<(std::ostream &out, const BasicAuxiliaryDataKey<Utils::SmallStringView> &key)
+{
+    return out << "(" << key.name << ", " << key.type << ")";
+}
+
+std::ostream &operator<<(std::ostream &out, const BasicAuxiliaryDataKey<Utils::SmallString> &key)
+{
+    return out << "(" << key.name << ", " << key.type << ")";
+}
+
+std::ostream &operator<<(std::ostream &out, AuxiliaryDataType type)
+{
+    switch (type) {
+    case AuxiliaryDataType::None:
+        out << "None";
+        break;
+    case AuxiliaryDataType::Temporary:
+        out << "Temporary";
+        break;
+    case AuxiliaryDataType::Document:
+        out << "Document";
+        break;
+    case AuxiliaryDataType::NodeInstancePropertyOverwrite:
+        out << "NodeInstancePropertyOverwrite";
+        break;
+    case AuxiliaryDataType::NodeInstanceAuxiliary:
+        out << "NodeInstanceAuxiliary";
+        break;
+    case AuxiliaryDataType::Persistent:
+        out << "Persistent";
+        break;
+    }
+
+    return out;
+}
+
 namespace Cache {
 
 std::ostream &operator<<(std::ostream &out, const SourceContext &sourceContext)
@@ -522,45 +582,81 @@ std::ostream &operator<<(std::ostream &out, const SourceContext &sourceContext)
 
 namespace Storage {
 
-namespace {
-TypeTraits cleanFlags(TypeTraits traits)
+std::ostream &operator<<(std::ostream &out, TypeTraitsKind kind)
 {
-    auto data = static_cast<int>(traits);
-    data &= ~static_cast<int>(TypeTraits::IsEnum);
-    return static_cast<TypeTraits>(data);
-}
-
-const char *typeTraitsToString(TypeTraits traits)
-{
-    switch (cleanFlags(traits)) {
-    case TypeTraits::None:
-        return "None";
-    case TypeTraits::Reference:
-        return "Reference";
-    case TypeTraits::Sequence:
-        return "Sequence";
-    case TypeTraits::Value:
-        return "Value";
+    switch (kind) {
+    case TypeTraitsKind::None:
+        out << "None";
+        break;
+    case TypeTraitsKind::Reference:
+        out << "Reference";
+        break;
+    case TypeTraitsKind::Sequence:
+        out << "Sequence";
+        break;
+    case TypeTraitsKind::Value:
+        out << "Value";
+        break;
     default:
         break;
     }
 
-    return "";
+    return out;
 }
-
-const char *typeTraitsFlagsToString(TypeTraits traits)
-{
-    if (bool(traits & TypeTraits::IsEnum))
-        return "(IsEnum)";
-
-    return "";
-}
-
-} // namespace
 
 std::ostream &operator<<(std::ostream &out, TypeTraits traits)
 {
-    return out << typeTraitsToString(traits) << typeTraitsFlagsToString(traits);
+    out << "(" << traits.kind;
+
+    if (traits.isEnum)
+        out << " | isEnum";
+
+    if (traits.isFileComponent)
+        out << " | isFileComponent";
+
+    if (traits.usesCustomParser)
+        out << " | usesCustomParser";
+
+    if (traits.canBeContainer != QmlDesigner::FlagIs::False)
+        out << " | canBeContainer(" << traits.canBeContainer << ")";
+
+    if (traits.forceClip != QmlDesigner::FlagIs::False)
+        out << " | forceClip(" << traits.forceClip << ")";
+
+    if (traits.doesLayoutChildren != QmlDesigner::FlagIs::False)
+        out << " | doesLayoutChildren(" << traits.doesLayoutChildren << ")";
+
+    if (traits.canBeDroppedInFormEditor != QmlDesigner::FlagIs::False)
+        out << " | canBeDroppedInFormEditor(" << traits.canBeDroppedInFormEditor << ")";
+
+    if (traits.canBeDroppedInNavigator != QmlDesigner::FlagIs::False)
+        out << " | canBeDroppedInNavigator(" << traits.canBeDroppedInNavigator << ")";
+
+    if (traits.canBeDroppedInView3D != QmlDesigner::FlagIs::False)
+        out << " | canBeDroppedInView3D(" << traits.canBeDroppedInView3D << ")";
+
+    if (traits.isMovable != QmlDesigner::FlagIs::False)
+        out << " | isMovable(" << traits.isMovable << ")";
+
+    if (traits.isResizable != QmlDesigner::FlagIs::False)
+        out << " | isResizable(" << traits.isResizable << ")";
+
+    if (traits.hasFormEditorItem != QmlDesigner::FlagIs::False)
+        out << " | hasFormEditorItem(" << traits.hasFormEditorItem << ")";
+
+    if (traits.isStackedContainer != QmlDesigner::FlagIs::False)
+        out << " | isStackedContainer(" << traits.isStackedContainer << ")";
+
+    if (traits.takesOverRenderingOfChildren != QmlDesigner::FlagIs::False)
+        out << " | takesOverRenderingOfChildren(" << traits.takesOverRenderingOfChildren << ")";
+
+    if (traits.visibleInNavigator != QmlDesigner::FlagIs::False)
+        out << " | visibleInNavigator(" << traits.visibleInNavigator << ")";
+
+    if (traits.visibleInLibrary != QmlDesigner::FlagIs::False)
+        out << " | visibleInLibrary(" << traits.visibleInLibrary << ")";
+
+    return out << ")";
 }
 
 std::ostream &operator<<(std::ostream &out, PropertyDeclarationTraits traits)
@@ -605,19 +701,37 @@ std::ostream &operator<<(std::ostream &out, const PropertyDeclaration &propertyD
 {
     using Utils::operator<<;
     return out << "(\"" << propertyDeclaration.typeId << "\", " << propertyDeclaration.name << ", "
-               << propertyDeclaration.typeId << ", " << propertyDeclaration.traits << ", "
-               << propertyDeclaration.propertyTypeId << ")";
+               << propertyDeclaration.traits << ", " << propertyDeclaration.propertyTypeId << ")";
 }
 
 std::ostream &operator<<(std::ostream &out, const Type &type)
 {
-    return out << "(" << type.defaultPropertyId << ")";
+    return out << "(" << type.sourceId << ")";
 }
 
 std::ostream &operator<<(std::ostream &out, const ExportedTypeName &name)
 {
-    return out << "(\"" << name.name << "\"," << name.moduleId << ", " << name.version << ")";
+    return out << "(\"" << name.name << "\", " << name.moduleId << ", " << name.version << ")";
 }
+
+std::ostream &operator<<(std::ostream &out, const TypeHint &hint)
+{
+    return out << "(\"" << hint.name << "\", \"" << hint.expression << "\")";
+}
+
+std::ostream &operator<<(std::ostream &out, const ItemLibraryProperty &property)
+{
+    return out << "(\"" << property.name << "\"," << property.type << "," << property.value << ")";
+}
+
+std::ostream &operator<<(std::ostream &out, const ItemLibraryEntry &entry)
+{
+    return out << R"((")" << entry.typeName << R"(", ")" << entry.name << R"(", ")"
+               << entry.iconPath << R"(", ")" << entry.category << R"(", ")" << entry.import
+               << R"(", ")" << entry.toolTip << R"(", ")" << entry.templatePath << R"(", )"
+               << entry.properties << ", " << entry.extraFilePaths << ")";
+}
+
 } // namespace Storage::Info
 
 namespace Storage::Synchronization {
@@ -671,6 +785,8 @@ const char *fileTypeToText(FileType fileType)
         return "QmlDocument";
     case FileType::QmlTypes:
         return "QmlTypes";
+    case FileType::Directory:
+        return "Directory";
     }
 
     return "";
@@ -708,16 +824,19 @@ std::ostream &operator<<(std::ostream &out, const SynchronizationPackage &packag
                << ", updatedSourceIds: " << package.updatedSourceIds
                << ", fileStatuses: " << package.fileStatuses
                << ", updatedFileStatusSourceIds: " << package.updatedFileStatusSourceIds
-               << ", updatedProjectSourceIds: " << package.updatedProjectSourceIds
-               << ", projectDatas: " << package.projectDatas
+               << ", updatedDirectoryInfoSourceIds: " << package.updatedDirectoryInfoSourceIds
+               << ", directoryInfos: " << package.directoryInfos
                << ", propertyEditorQmlPaths: " << package.propertyEditorQmlPaths
                << ", updatedPropertyEditorQmlPathSourceIds: "
-               << package.updatedPropertyEditorQmlPathSourceIds << ")";
+               << package.updatedPropertyEditorQmlPathSourceIds
+               << ", typeAnnotations: " << package.typeAnnotations
+               << ", updatedTypeAnnotationSourceIds: " << package.updatedTypeAnnotationSourceIds
+               << ")";
 }
 
-std::ostream &operator<<(std::ostream &out, const ProjectData &data)
+std::ostream &operator<<(std::ostream &out, const DirectoryInfo &data)
 {
-    return out << "(" << data.projectSourceId << ", " << data.sourceId << ", " << data.moduleId
+    return out << "(" << data.directorySourceId << ", " << data.sourceId << ", " << data.moduleId
                << ", " << data.fileType << ")";
 }
 
@@ -745,9 +864,11 @@ std::ostream &operator<<(std::ostream &out, const Type &type)
 {
     using std::operator<<;
     using Utils::operator<<;
-    return out << "( typename: \"" << type.typeName << "\", prototype: " << type.prototype << ", "
-               << type.prototypeId << ", " << type.traits << ", source: " << type.sourceId
-               << ", exports: " << type.exportedTypes << ", properties: " << type.propertyDeclarations
+    return out << "( typename: \"" << type.typeName << "\", prototype: {\"" << type.prototype
+               << "\", " << type.prototypeId << "}, " << "\", extension: {\"" << type.extension
+               << "\", " << type.extensionId << "}, traits" << type.traits
+               << ", source: " << type.sourceId << ", exports: " << type.exportedTypes
+               << ", properties: " << type.propertyDeclarations
                << ", functions: " << type.functionDeclarations
                << ", signals: " << type.signalDeclarations << ", changeLevel: " << type.changeLevel
                << ", default: " << type.defaultPropertyName << ")";
@@ -814,6 +935,14 @@ std::ostream &operator<<(std::ostream &out, const ModuleExportedImport &import)
 std::ostream &operator<<(std::ostream &out, const PropertyEditorQmlPath &path)
 {
     return out << "(" << path.moduleId << ", " << path.typeName << ", " << path.pathId << ")";
+}
+
+std::ostream &operator<<(std::ostream &out, const TypeAnnotation &annotation)
+{
+    return out << R"x((")x" << annotation.typeName << R"(", )" << annotation.moduleId << ", "
+               << annotation.sourceId << R"(, ")" << annotation.iconPath << R"(", )"
+               << annotation.traits << R"(, ")" << annotation.hintsJson << R"(", ")"
+               << annotation.itemLibraryJson << R"x("))x";
 }
 
 } // namespace Storage::Synchronization

@@ -4,13 +4,13 @@
 /*!
     \page creator-indenting-code.html
     \if defined(qtdesignstudio)
-    \previouspage creator-completing-code.html
-    \nextpage creator-preferences-text-editor-behavior.html
+    \previouspage qtquick-text-editor.html
     \else
     \previouspage creator-how-tos.html
     \endif
 
     \ingroup creator-how-to-edit
+    \ingroup studio-how-to-code
 
     \title Indent text or code
 
@@ -74,8 +74,8 @@
     To use a context-specific margin when available, select the
     \uicontrol {Use context-specific margin} check box.
     \if defined(qtcreator)
-    Then, use the ClangFormat \c ColumnLimit option to set the margin, for
-    example.
+    Then, use the \l{ClangFormat Style Options}{ClangFormat} \c ColumnLimit
+    option to set the margin, for example.
 
     \sa {C++ Code Style}
     \endif

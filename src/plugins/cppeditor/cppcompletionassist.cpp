@@ -5,13 +5,20 @@
 
 #include "builtineditordocumentparser.h"
 #include "cppdoxygen.h"
-#include "cppeditorconstants.h"
 #include "cppmodelmanager.h"
 #include "cpptoolsreuse.h"
-#include "editordocumenthandle.h"
 
 #include <coreplugin/icore.h>
+
+#include <cplusplus/BackwardsScanner.h>
+#include <cplusplus/CppRewriter.h>
+#include <cplusplus/ExpressionUnderCursor.h>
+#include <cplusplus/MatchingText.h>
+#include <cplusplus/Overview.h>
+#include <cplusplus/ResolveExpression.h>
+
 #include <cppeditor/cppeditorconstants.h>
+
 #include <texteditor/codeassist/assistproposalitem.h>
 #include <texteditor/codeassist/genericproposal.h>
 #include <texteditor/codeassist/ifunctionhintproposalmodel.h>
@@ -21,16 +28,10 @@
 #include <texteditor/completionsettings.h>
 
 #include <utils/algorithm.h>
+#include <utils/mimeconstants.h>
 #include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
 #include <utils/textutils.h>
-
-#include <cplusplus/BackwardsScanner.h>
-#include <cplusplus/CppRewriter.h>
-#include <cplusplus/ExpressionUnderCursor.h>
-#include <cplusplus/MatchingText.h>
-#include <cplusplus/Overview.h>
-#include <cplusplus/ResolveExpression.h>
 
 #include <QDirIterator>
 #include <QLatin1String>
@@ -63,7 +64,7 @@ class CppAssistProposalItem final : public AssistProposalItem
 public:
     ~CppAssistProposalItem() noexcept override = default;
     bool prematurelyApplies(const QChar &c) const override;
-    void applyContextualContent(TextDocumentManipulatorInterface &manipulator, int basePosition) const override;
+    void applyContextualContent(TextEditorWidget *editorWidget, int basePosition) const override;
 
     bool isOverloaded() const { return m_isOverloaded; }
     void markAsOverloaded() { m_isOverloaded = true; }
@@ -142,9 +143,9 @@ bool CppAssistProposalItem::prematurelyApplies(const QChar &typedChar) const
     return false;
 }
 
-static bool isDereferenced(TextDocumentManipulatorInterface &manipulator, int basePosition)
+static bool isDereferenced(TextEditorWidget *editorWidget, int basePosition)
 {
-    QTextCursor cursor = manipulator.textCursorAt(basePosition);
+    QTextCursor cursor = editorWidget->textCursorAt(basePosition);
     cursor.setPosition(basePosition);
 
     BackwardsScanner scanner(cursor, LanguageFeatures());
@@ -172,8 +173,10 @@ quint64 CppAssistProposalItem::hash() const
     return 0;
 }
 
-void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterface &manipulator, int basePosition) const
+void CppAssistProposalItem::applyContextualContent(TextEditorWidget *editorWidget, int basePosition) const
 {
+    QTC_ASSERT(editorWidget, return);
+
     Symbol *symbol = nullptr;
 
     if (data().isValid())
@@ -223,7 +226,7 @@ void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterf
                     if (function->argumentCount() == 0)
                         extraChars += QLatin1Char('<');
 #endif
-                } else if (!isDereferenced(manipulator, basePosition) && !function->isAmbiguous()) {
+                } else if (!isDereferenced(editorWidget, basePosition) && !function->isAmbiguous()) {
                     // When the user typed the opening parenthesis, he'll likely also type the closing one,
                     // in which case it would be annoying if we put the cursor after the already automatically
                     // inserted closing parenthesis.
@@ -237,7 +240,7 @@ void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterf
 
                     // If the function doesn't return anything, automatically place the semicolon,
                     // unless we're doing a scope completion (then it might be function definition).
-                    const QChar characterAtCursor = manipulator.characterAt(manipulator.currentPosition());
+                    const QChar characterAtCursor = editorWidget->characterAt(editorWidget->position());
                     bool endWithSemicolon = m_typedChar == QLatin1Char(';')
                             || (function->returnType()->asVoidType() && m_completionOperator != T_COLON_COLON);
                     const QChar semicolon = m_typedChar.isNull() ? QLatin1Char(';') : m_typedChar;
@@ -255,7 +258,7 @@ void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterf
                             m_typedChar = QChar();
                         }
                     } else if (autoParenthesesEnabled) {
-                        const QChar lookAhead = manipulator.characterAt(manipulator.currentPosition() + 1);
+                        const QChar lookAhead = editorWidget->characterAt(editorWidget->position() + 1);
                         if (MatchingText::shouldInsertMatchingText(lookAhead)) {
                             extraChars += QLatin1Char(')');
                             --cursorOffset;
@@ -293,10 +296,10 @@ void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterf
     }
 
     // Avoid inserting characters that are already there
-    int currentPosition = manipulator.currentPosition();
-    QTextCursor cursor = manipulator.textCursorAt(basePosition);
+    int currentPosition = editorWidget->position();
+    QTextCursor cursor = editorWidget->textCursorAt(basePosition);
     cursor.movePosition(QTextCursor::EndOfWord);
-    const QString textAfterCursor = manipulator.textAt(currentPosition,
+    const QString textAfterCursor = editorWidget->textAt(currentPosition,
                                                        cursor.position() - currentPosition);
     if (toInsert != textAfterCursor
             && toInsert.indexOf(textAfterCursor, currentPosition - basePosition) >= 0) {
@@ -305,7 +308,7 @@ void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterf
 
     for (int i = 0; i < extraChars.length(); ++i) {
         const QChar a = extraChars.at(i);
-        const QChar b = manipulator.characterAt(currentPosition + i);
+        const QChar b = editorWidget->characterAt(currentPosition + i);
         if (a == b)
             ++extraLength;
         else
@@ -316,12 +319,12 @@ void CppAssistProposalItem::applyContextualContent(TextDocumentManipulatorInterf
 
     // Insert the remainder of the name
     const int length = currentPosition - basePosition + extraLength;
-    manipulator.replace(basePosition, length, toInsert);
-    manipulator.setCursorPosition(basePosition + toInsert.length());
+    editorWidget->replace(basePosition, length, toInsert);
+    editorWidget->setCursorPosition(basePosition + toInsert.length());
     if (cursorOffset)
-        manipulator.setCursorPosition(manipulator.currentPosition() + cursorOffset);
+        editorWidget->setCursorPosition(editorWidget->position() + cursorOffset);
     if (setAutoCompleteSkipPos)
-        manipulator.setAutoCompleteSkipPosition(manipulator.currentPosition());
+        editorWidget->setAutoCompleteSkipPosition(editorWidget->textCursor());
 }
 
 // --------------------
@@ -371,27 +374,11 @@ QString CppFunctionHintModel::text(int index) const
 
 int CppFunctionHintModel::activeArgument(const QString &prefix) const
 {
-    int argnr = 0;
-    int parcount = 0;
-    SimpleLexer tokenize;
-    Tokens tokens = tokenize(prefix);
-    for (int i = 0; i < tokens.count(); ++i) {
-        const Token &tk = tokens.at(i);
-        if (tk.is(T_LPAREN))
-            ++parcount;
-        else if (tk.is(T_RPAREN))
-            --parcount;
-        else if (!parcount && tk.is(T_COMMA))
-            ++argnr;
-    }
-
-    if (parcount < 0)
+    const int arg = activeArgumenForPrefix(prefix);
+    if (arg < 0)
         return -1;
-
-    if (argnr != m_currentArg)
-        m_currentArg = argnr;
-
-    return argnr;
+    m_currentArg = arg;
+    return arg;
 }
 
 // ---------------------------
@@ -783,7 +770,7 @@ const Name *minimalName(Symbol *symbol, Scope *targetScope, const LookupContext 
     ClassOrNamespace *target = context.lookupType(targetScope);
     if (!target)
         target = context.globalNamespace();
-    return LookupContext::minimalName(symbol, target, context.bindings()->control().data());
+    return LookupContext::minimalName(symbol, target, context.bindings()->control().get());
 }
 
 } // Anonymous
@@ -1218,7 +1205,8 @@ bool InternalCppCompletionAssistProcessor::completeInclude(const QTextCursor &cu
     if (!headerPaths.contains(currentFilePath))
         headerPaths.append(currentFilePath);
 
-    const QStringList suffixes = Utils::mimeTypeForName(QLatin1String("text/x-c++hdr")).suffixes();
+    const QStringList suffixes =
+        Utils::mimeTypeForName(Utils::Constants::CPP_HEADER_MIMETYPE).suffixes();
 
     for (const ProjectExplorer::HeaderPath &headerPath : std::as_const(headerPaths)) {
         QString realPath = headerPath.path;
@@ -1267,8 +1255,8 @@ bool InternalCppCompletionAssistProcessor::objcKeywordsWanted() const
         return false;
 
     const Utils::MimeType mt = Utils::mimeTypeForFile(interface()->filePath());
-    return mt.matchesName(QLatin1String(CppEditor::Constants::OBJECTIVE_C_SOURCE_MIMETYPE))
-            || mt.matchesName(QLatin1String(CppEditor::Constants::OBJECTIVE_CPP_SOURCE_MIMETYPE));
+    return mt.matchesName(QLatin1String(Utils::Constants::OBJECTIVE_C_SOURCE_MIMETYPE))
+            || mt.matchesName(QLatin1String(Utils::Constants::OBJECTIVE_CPP_SOURCE_MIMETYPE));
 }
 
 int InternalCppCompletionAssistProcessor::startCompletionInternal(const Utils::FilePath &filePath,
@@ -2038,7 +2026,7 @@ bool InternalCppCompletionAssistProcessor::completeConstructorOrFunction(const Q
                     targetCoN = context.globalNamespace();
                 UseMinimalNames q(targetCoN);
                 env.enter(&q);
-                Control *control = context.bindings()->control().data();
+                Control *control = context.bindings()->control().get();
 
                 // set up signature autocompletion
                 for (Function *f : std::as_const(functions)) {

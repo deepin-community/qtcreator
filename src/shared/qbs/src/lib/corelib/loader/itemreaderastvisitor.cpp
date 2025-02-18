@@ -108,6 +108,8 @@ bool ItemReaderASTVisitor::visit(AST::UiObjectDefinition *ast)
     Item *item = Item::create(m_itemPool, ItemType::Unknown);
     item->setFile(m_file);
     item->setLocation(itemLocation);
+    const AST::SourceLocation &endLoc = ast->lastSourceLocation();
+    item->setEndPosition(CodePosition(endLoc.startLine, endLoc.startColumn));
 
     // Inheritance resolving, part 1: Find out our actual type name (needed for setting
     // up children and alternatives).
@@ -160,7 +162,7 @@ bool ItemReaderASTVisitor::visit(AST::UiObjectDefinition *ast)
         m_visitorState.setMostDerivingItem(mdi);
     }
 
-    ASTPropertiesItemHandler(item, *m_itemPool).handlePropertiesItems();
+    ASTPropertiesItemHandler(item, *m_itemPool, m_logger).handlePropertiesItems();
 
     // Inheritance resolving, part 2 (depends on alternatives having been set up).
     if (baseItem) {
@@ -246,6 +248,8 @@ bool ItemReaderASTVisitor::visit(AST::UiScriptBinding *ast)
         const auto * const idExp = AST::cast<AST::IdentifierExpression *>(expStmt->expression);
         if (Q_UNLIKELY(!idExp || idExp->name.isEmpty()))
             throw ErrorInfo(Tr::tr("id: must be followed by identifier"));
+        if (m_item->type() == ItemType::Module)
+            throw ErrorInfo(Tr::tr("Module items cannot have an id property."));
         m_item->m_id = idExp->name.toString();
         m_file->ensureIdScope(m_itemPool);
         ItemValueConstPtr existingId = m_file->idScope()->itemProperty(m_item->id(), *m_itemPool);
