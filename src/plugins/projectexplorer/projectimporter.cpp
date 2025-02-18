@@ -38,7 +38,7 @@ static Utils::Id fullId(Utils::Id id)
     const QString idStr = id.toString();
     QTC_ASSERT(!idStr.startsWith(prefix), return Utils::Id::fromString(idStr));
 
-    return Utils::Id::fromString(prefix + idStr);
+    return Utils::Id::fromString(prefix).withSuffix(idStr);
 }
 
 static bool hasOtherUsers(Utils::Id id, const QVariant &v, Kit *k)
@@ -53,9 +53,9 @@ static bool hasOtherUsers(Utils::Id id, const QVariant &v, Kit *k)
 
 ProjectImporter::ProjectImporter(const Utils::FilePath &path) : m_projectPath(path)
 {
-    useTemporaryKitAspect(ToolChainKitAspect::id(),
-                               [this](Kit *k, const QVariantList &vl) { cleanupTemporaryToolChains(k, vl); },
-                               [this](Kit *k, const QVariantList &vl) { persistTemporaryToolChains(k, vl); });
+    useTemporaryKitAspect(ToolchainKitAspect::id(),
+                               [this](Kit *k, const QVariantList &vl) { cleanupTemporaryToolchains(k, vl); },
+                               [this](Kit *k, const QVariantList &vl) { persistTemporaryToolchains(k, vl); });
 }
 
 ProjectImporter::~ProjectImporter()
@@ -310,31 +310,31 @@ bool ProjectImporter::findTemporaryHandler(Utils::Id id) const
     return Utils::contains(m_temporaryHandlers, [id](const TemporaryInformationHandler &ch) { return ch.id == id; });
 }
 
-static ToolChain *toolChainFromVariant(const QVariant &v)
+static Toolchain *toolChainFromVariant(const QVariant &v)
 {
     const QByteArray tcId = v.toByteArray();
-    return ToolChainManager::findToolChain(tcId);
+    return ToolchainManager::findToolchain(tcId);
 }
 
-void ProjectImporter::cleanupTemporaryToolChains(Kit *k, const QVariantList &vl)
+void ProjectImporter::cleanupTemporaryToolchains(Kit *k, const QVariantList &vl)
 {
-    for (const QVariant &v : vl) {
-        ToolChain *tc = toolChainFromVariant(v);
-        QTC_ASSERT(tc, continue);
-        ToolChainManager::deregisterToolChain(tc);
-        ToolChainKitAspect::setToolChain(k, nullptr);
-    }
+    const Toolchains toolchains = Utils::transform(vl, toolChainFromVariant);
+    for (Toolchain * const tc : toolchains)
+        ToolchainKitAspect::clearToolchain(k, tc->language());
+    ToolchainManager::deregisterToolchains(toolchains);
 }
 
-void ProjectImporter::persistTemporaryToolChains(Kit *k, const QVariantList &vl)
+void ProjectImporter::persistTemporaryToolchains(Kit *k, const QVariantList &vl)
 {
+    Toolchains toDeregister;
     for (const QVariant &v : vl) {
-        ToolChain *tmpTc = toolChainFromVariant(v);
+        Toolchain *tmpTc = toolChainFromVariant(v);
         QTC_ASSERT(tmpTc, continue);
-        ToolChain *actualTc = ToolChainKitAspect::toolChain(k, tmpTc->language());
+        Toolchain *actualTc = ToolchainKitAspect::toolchain(k, tmpTc->language());
         if (tmpTc && actualTc != tmpTc)
-            ToolChainManager::deregisterToolChain(tmpTc);
+            toDeregister << tmpTc;
     }
+    ToolchainManager::deregisterToolchains(toDeregister);
 }
 
 void ProjectImporter::useTemporaryKitAspect(Utils::Id id,
@@ -366,18 +366,15 @@ bool ProjectImporter::hasKitWithTemporaryData(Utils::Id id, const QVariant &data
     });
 }
 
-static ProjectImporter::ToolChainData createToolChains(const ToolChainDescription &tcd)
+static ProjectImporter::ToolchainData createToolChains(const ToolchainDescription &tcd)
 {
-    ProjectImporter::ToolChainData data;
+    ProjectImporter::ToolchainData data;
 
-    for (ToolChainFactory *factory : ToolChainFactory::allToolChainFactories()) {
+    for (ToolchainFactory *factory : ToolchainFactory::allToolchainFactories()) {
         data.tcs = factory->detectForImport(tcd);
         if (data.tcs.isEmpty())
             continue;
-
-        for (ToolChain *tc : std::as_const(data.tcs))
-            ToolChainManager::registerToolChain(tc);
-
+        ToolchainManager::registerToolchains(data.tcs);
         data.areTemporary = true;
         break;
     }
@@ -385,16 +382,16 @@ static ProjectImporter::ToolChainData createToolChains(const ToolChainDescriptio
     return data;
 }
 
-ProjectImporter::ToolChainData
-ProjectImporter::findOrCreateToolChains(const ToolChainDescription &tcd) const
+ProjectImporter::ToolchainData
+ProjectImporter::findOrCreateToolchains(const ToolchainDescription &tcd) const
 {
-    ToolChainData result;
-    result.tcs = ToolChainManager::toolchains([&tcd](const ToolChain *tc) {
+    ToolchainData result;
+    result.tcs = ToolchainManager::toolchains([&tcd](const Toolchain *tc) {
         return tc->language() == tcd.language && tc->matchesCompilerCommand(tcd.compilerPath);
     });
-    for (const ToolChain *tc : std::as_const(result.tcs)) {
+    for (const Toolchain *tc : std::as_const(result.tcs)) {
         const QByteArray tcId = tc->id();
-        result.areTemporary = result.areTemporary ? true : hasKitWithTemporaryData(ToolChainKitAspect::id(), tcId);
+        result.areTemporary = result.areTemporary ? true : hasKitWithTemporaryData(ToolchainKitAspect::id(), tcId);
     }
     if (!result.tcs.isEmpty())
         return result;

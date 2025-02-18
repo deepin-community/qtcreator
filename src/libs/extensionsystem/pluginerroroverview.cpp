@@ -4,15 +4,18 @@
 #include "pluginerroroverview.h"
 
 #include "extensionsystemtr.h"
+#include "plugindetailsview.h"
 #include "pluginmanager.h"
 #include "pluginspec.h"
 
+#include <utils/algorithm.h>
 #include <utils/layoutbuilder.h>
 
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QListWidget>
+#include <QPushButton>
 #include <QTextEdit>
 
 Q_DECLARE_METATYPE(ExtensionSystem::PluginSpec *)
@@ -24,6 +27,13 @@ PluginErrorOverview::PluginErrorOverview(QWidget *parent)
 {
     QListWidget *pluginList = new QListWidget(this);
 
+    const auto showPluginDetails = [this](QListWidgetItem *item) {
+        QTC_ASSERT(item, return);
+        auto spec = item->data(Qt::UserRole).value<PluginSpec *>();
+        QTC_ASSERT(spec, return);
+        PluginDetailsView::showModal(this, spec);
+    };
+
     QTextEdit *pluginError = new QTextEdit(this);
     pluginError->setReadOnly(true);
 
@@ -32,8 +42,17 @@ PluginErrorOverview::PluginErrorOverview(QWidget *parent)
     buttonBox->setStandardButtons(QDialogButtonBox::NoButton);
     buttonBox->addButton(Tr::tr("Continue"), QDialogButtonBox::AcceptRole);
 
-    connect(pluginList, &QListWidget::currentItemChanged,
-            this, [pluginError](QListWidgetItem *item) {
+    QPushButton *detailsButton = buttonBox->addButton(Tr::tr("Details"), QDialogButtonBox::HelpRole);
+    connect(detailsButton, &QPushButton::clicked, this, [pluginList, showPluginDetails] {
+        QListWidgetItem *item = pluginList->currentItem();
+        showPluginDetails(item);
+    });
+    connect(pluginList,
+            &QListWidget::itemDoubleClicked,
+            this,
+            [showPluginDetails](QListWidgetItem *item) { showPluginDetails(item); });
+
+    connect(pluginList, &QListWidget::currentItemChanged, this, [pluginError](QListWidgetItem *item) {
         if (item)
             pluginError->setText(item->data(Qt::UserRole).value<PluginSpec *>()->errorString());
         else
@@ -61,7 +80,8 @@ PluginErrorOverview::PluginErrorOverview(QWidget *parent)
     for (PluginSpec *spec : PluginManager::plugins()) {
         // only show errors on startup if plugin is enabled.
         if (spec->hasError() && spec->isEffectivelyEnabled()) {
-            QListWidgetItem *item = new QListWidgetItem(spec->name());
+            const QString name = spec->displayName();
+            QListWidgetItem *item = new QListWidgetItem(name);
             item->setData(Qt::UserRole, QVariant::fromValue(spec));
             pluginList->addItem(item);
         }

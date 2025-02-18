@@ -62,8 +62,8 @@ OutputLineParser::Result KeilParser::parseArmWarningOrErrorDetailsMessage(const 
     const QString descr = match.captured(DescriptionIndex);
     newTask(CompileTask(type, descr, absoluteFilePath(fileName), lineno));
     LinkSpecs linkSpecs;
-    addLinkSpecForAbsoluteFilePath(linkSpecs, m_lastTask.file, m_lastTask.line, match,
-                                   FilePathIndex);
+    addLinkSpecForAbsoluteFilePath(
+        linkSpecs, m_lastTask.file, m_lastTask.line, m_lastTask.column, match, FilePathIndex);
     return {Status::InProgress, linkSpecs};
 }
 
@@ -98,8 +98,8 @@ OutputLineParser::Result KeilParser::parseMcs51WarningOrErrorDetailsMessage1(con
                                                 match.captured(MessageTextIndex));
     newTask(CompileTask(type, descr, absoluteFilePath(fileName), lineno));
     LinkSpecs linkSpecs;
-    addLinkSpecForAbsoluteFilePath(linkSpecs, m_lastTask.file, m_lastTask.line, match,
-                                   FilePathIndex);
+    addLinkSpecForAbsoluteFilePath(
+        linkSpecs, m_lastTask.file, m_lastTask.line, m_lastTask.column, match, FilePathIndex);
     return {Status::InProgress, linkSpecs};
 }
 
@@ -119,8 +119,8 @@ OutputLineParser::Result KeilParser::parseMcs51WarningOrErrorDetailsMessage2(con
                                                 match.captured(MessageTextIndex));
     newTask(CompileTask(type, descr, absoluteFilePath(fileName), lineno));
     LinkSpecs linkSpecs;
-    addLinkSpecForAbsoluteFilePath(linkSpecs, m_lastTask.file, m_lastTask.line, match,
-                                   FilePathIndex);
+    addLinkSpecForAbsoluteFilePath(
+        linkSpecs, m_lastTask.file, m_lastTask.line, m_lastTask.column, match, FilePathIndex);
     return {Status::InProgress, linkSpecs};
 }
 
@@ -247,13 +247,22 @@ void KeilParser::flush()
 // Unit tests:
 
 #ifdef WITH_TESTS
-#include "baremetalplugin.h"
+
 #include <projectexplorer/outputparser_test.h>
 #include <QTest>
 
 namespace BareMetal::Internal {
 
-void BareMetalPlugin::testKeilOutputParsers_data()
+class KeilParserTest final : public QObject
+{
+   Q_OBJECT
+
+private slots:
+   void testKeilOutputParsers_data();
+   void testKeilOutputParsers();
+};
+
+void KeilParserTest::testKeilOutputParsers_data()
 {
     QTest::addColumn<QString>("input");
     QTest::addColumn<OutputParserTester::Channel>("inputChannel");
@@ -504,7 +513,7 @@ void BareMetalPlugin::testKeilOutputParsers_data()
             << QString();
 }
 
-void BareMetalPlugin::testKeilOutputParsers()
+void KeilParserTest::testKeilOutputParsers()
 {
     OutputParserTester testbench;
     testbench.addLineParser(new KeilParser);
@@ -520,6 +529,13 @@ void BareMetalPlugin::testKeilOutputParsers()
                           outputLines);
 }
 
+QObject *createKeilParserTest()
+{
+    return new KeilParserTest;
+}
+
 } // BareMetal::Internal
 
 #endif // WITH_TESTS
+
+#include "keilparser.moc"

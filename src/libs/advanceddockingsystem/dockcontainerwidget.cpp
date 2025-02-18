@@ -16,6 +16,7 @@
 #include "floatingdockcontainer.h"
 
 #include <QAbstractButton>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QGridLayout>
 #include <QList>
@@ -227,8 +228,7 @@ public:
     eDropMode getDropMode(const QPoint &targetPosition);
 
     /**
-     * Initializes the visible dock area count variable if it is not initialized
-     * yet
+     * Initializes the visible dock area count variable if it is not initialized yet
      */
     void initVisibleDockAreaCount()
     {
@@ -245,15 +245,14 @@ public:
      */
     int visibleDockAreaCount()
     {
-        // Lazy initialization - we initialize the m_visibleDockAreaCount variable
-        // on first use
+        // Lazy initialization - we initialize the m_visibleDockAreaCount variable on first use
         initVisibleDockAreaCount();
         return m_visibleDockAreaCount;
     }
 
     /**
-     * The visible dock area count changes, if dock areas are remove, added or
-     * when its view is toggled
+     * The visible dock area count changes, if dock areas are removed, added or when its view
+     * is toggled
      */
     void onVisibleDockAreaCountChanged();
 
@@ -274,15 +273,14 @@ public:
      */
     DockSplitter *createSplitter(Qt::Orientation orientation, QWidget *parent = nullptr)
     {
-        auto *splitter = new DockSplitter(orientation, parent);
+        auto splitter = new DockSplitter(orientation, parent);
         splitter->setOpaqueResize(DockManager::testConfigFlag(DockManager::OpaqueSplitterResize));
         splitter->setChildrenCollapsible(false);
         return splitter;
     }
 
     /**
-     * Ensures equal distribution of the sizes of a splitter if an dock widget
-     * is inserted from code
+     * Ensures equal distribution of the sizes of a splitter if a dock widget is inserted from code
      */
     void adjustSplitterSizesOnInsertion(QSplitter *splitter, qreal lastRatio = 1.0)
     {
@@ -299,15 +297,14 @@ public:
     }
 
     /**
-     * This function forces the dock container widget to update handles of splitters
-     * based if a central widget exists.
+     * This function forces the dock container widget to update handles of splitters based if
+     * a central widget exists.
      */
     void updateSplitterHandles(QSplitter *splitter);
 
     /**
-     * If no central widget exists, the widgets resize with the container.
-     * If a central widget exists, the widgets surrounding the central widget
-     * do not resize its height or width.
+     * If no central widget exists, the widgets resize with the container. If a central widget
+     * exists, the widgets surrounding the central widget do not resize its height or width.
      */
     bool widgetResizesWithContainer(QWidget *widget);
 
@@ -325,7 +322,7 @@ DockContainerWidgetPrivate::DockContainerWidgetPrivate(DockContainerWidget *pare
     std::fill(std::begin(m_lastAddedAreaCache), std::end(m_lastAddedAreaCache), nullptr);
     m_delayedAutoHideTimer.setSingleShot(true);
     m_delayedAutoHideTimer.setInterval(500);
-    QObject::connect(&m_delayedAutoHideTimer, &QTimer::timeout, q, [this]() {
+    QObject::connect(&m_delayedAutoHideTimer, &QTimer::timeout, q, [this] {
         auto globalPos = m_delayedAutoHideTab->mapToGlobal(QPoint(0, 0));
         qApp->sendEvent(m_delayedAutoHideTab,
                         new QMouseEvent(QEvent::MouseButtonPress,
@@ -388,12 +385,12 @@ void DockContainerWidgetPrivate::dropIntoContainer(FloatingDockContainer *floati
     auto newDockAreas
         = floatingDockContainer->findChildren<DockAreaWidget *>(QString(),
                                                                 Qt::FindChildrenRecursively);
-    auto *splitter = m_rootSplitter;
+    auto splitter = m_rootSplitter;
 
     if (m_dockAreas.count() <= 1) {
         splitter->setOrientation(insertParam.orientation());
     } else if (splitter->orientation() != insertParam.orientation()) {
-        auto *newSplitter = createSplitter(insertParam.orientation());
+        auto newSplitter = createSplitter(insertParam.orientation());
         QLayoutItem *layoutItem = m_layout->replaceWidget(splitter, newSplitter);
         newSplitter->addWidget(splitter);
         updateSplitterHandles(newSplitter);
@@ -419,9 +416,8 @@ void DockContainerWidgetPrivate::dropIntoContainer(FloatingDockContainer *floati
     m_rootSplitter = splitter;
     addDockAreasToList(newDockAreas);
 
-    // If we dropped the floating widget into the main dock container that does
-    // not contain any dock widgets, then splitter is invisible and we need to
-    // show it to display the docked widgets
+    // If we dropped the floating widget into the main dock container that does not contain any dock
+    // widgets, then splitter is invisible and we need to show it to display the docked widgets
     if (!splitter->isVisible())
         splitter->show();
 
@@ -467,7 +463,6 @@ void DockContainerWidgetPrivate::dropIntoCenterOfSection(FloatingDockContainer *
     }
     targetArea->setCurrentIndex(newCurrentIndex + tabIndex);
     targetArea->updateTitleBarVisibility();
-    return;
 }
 
 void DockContainerWidgetPrivate::dropIntoSection(FloatingDockContainer *floatingWidget,
@@ -489,10 +484,11 @@ void DockContainerWidgetPrivate::dropIntoSection(FloatingDockContainer *floating
     QSplitter *targetAreaSplitter = internal::findParent<QSplitter *>(targetArea);
 
     if (!targetAreaSplitter) {
-        QSplitter *splitter = createSplitter(insertParam.orientation());
-        m_layout->replaceWidget(targetArea, splitter);
+        auto splitter = createSplitter(insertParam.orientation());
+        QLayoutItem *layoutItem = m_layout->replaceWidget(targetArea, splitter);
         splitter->addWidget(targetArea);
         targetAreaSplitter = splitter;
+        delete layoutItem;
     }
     int areaIndex = targetAreaSplitter->indexOf(targetArea);
     auto floatingSplitter = floatingContainer->rootSplitter();
@@ -523,7 +519,7 @@ void DockContainerWidgetPrivate::dropIntoSection(FloatingDockContainer *floating
             targetAreaSplitter->setSizes(sizes);
         }
     } else {
-        QSplitter *newSplitter = createSplitter(insertParam.orientation());
+        auto newSplitter = createSplitter(insertParam.orientation());
         int targetAreaSize = (insertParam.orientation() == Qt::Horizontal) ? targetArea->width()
                                                                            : targetArea->height();
         bool adjustSplitterSizes = true;
@@ -539,8 +535,7 @@ void DockContainerWidgetPrivate::dropIntoSection(FloatingDockContainer *floating
             }
         }
 
-        // Save the sizes before insertion and restore it later to prevent
-        // shrinking of existing area
+        // Save the sizes before insertion and restore it later to prevent shrinking of existing area
         auto sizes = targetAreaSplitter->sizes();
         insertWidgetIntoSplitter(newSplitter, targetArea, !insertParam.append());
         updateSplitterHandles(newSplitter);
@@ -585,7 +580,7 @@ void DockContainerWidgetPrivate::moveToNewSection(QWidget *widget,
     }
 
     auto insertParam = internal::dockAreaInsertParameters(area);
-    QSplitter *targetAreaSplitter = internal::findParent<QSplitter *>(targetArea);
+    auto targetAreaSplitter = internal::findParent<DockSplitter *>(targetArea);
     const int areaIndex = targetAreaSplitter->indexOf(targetArea);
     auto sizes = targetAreaSplitter->sizes();
     if (targetAreaSplitter->orientation() == insertParam.orientation()) {
@@ -601,7 +596,7 @@ void DockContainerWidgetPrivate::moveToNewSection(QWidget *widget,
         const int targetAreaSize = (insertParam.orientation() == Qt::Horizontal)
                                        ? targetArea->width()
                                        : targetArea->height();
-        QSplitter *newSplitter = createSplitter(insertParam.orientation());
+        auto newSplitter = createSplitter(insertParam.orientation());
         newSplitter->addWidget(targetArea);
         insertWidgetIntoSplitter(newSplitter, newDockArea, insertParam.append());
         updateSplitterHandles(newSplitter);
@@ -629,10 +624,9 @@ void DockContainerWidgetPrivate::moveToContainer(QWidget *widget, DockWidgetArea
 
         newDockArea->addDockWidget(droppedDockWidget);
     } else {
-        // We check, if we insert the dropped widget into the same place that
-        // it already has and do nothing, if it is the same place. It would
-        // also work without this check, but it looks nicer with the check
-        // because there will be no layout updates
+        // We check, if we insert the dropped widget into the same place that it already has and do
+        // nothing, if it is the same place. It would also work without this check, but it looks
+        // nicer with the check because there will be no layout updates.
         auto splitter = internal::findParent<DockSplitter *>(droppedDockArea);
         auto insertParam = internal::dockAreaInsertParameters(area);
         if (splitter == m_rootSplitter && insertParam.orientation() == splitter->orientation()) {
@@ -679,7 +673,6 @@ void DockContainerWidgetPrivate::moveIntoCenterOfSection(QWidget *widget,
     }
 
     targetArea->updateTitleBarVisibility();
-    return;
 }
 
 void DockContainerWidgetPrivate::moveToAutoHideSideBar(QWidget *widget,
@@ -740,16 +733,16 @@ void DockContainerWidgetPrivate::addDockAreasToList(const QList<DockAreaWidget *
     const int countBefore = m_dockAreas.count();
     const int newAreaCount = newDockAreas.count();
     appendDockAreas(newDockAreas);
-    // If the user dropped a floating widget that contains only one single
-    // visible dock area, then its title bar button TitleBarButtonUndock is
-    // likely hidden. We need to ensure, that it is visible
+    // If the user dropped a floating widget that contains only one single visible dock area, then
+    // its title bar button TitleBarButtonUndock is likely hidden. We need to ensure, that it is
+    // visible.
     for (auto dockArea : newDockAreas) {
         dockArea->titleBarButton(TitleBarButtonUndock)->setVisible(true);
         dockArea->titleBarButton(TitleBarButtonClose)->setVisible(true);
     }
 
-    // We need to ensure, that the dock area title bar is visible. The title bar
-    // is invisible, if the dock are is a single dock area in a floating widget.
+    // We need to ensure, that the dock area title bar is visible. The title bar is invisible,
+    // if the dock area is a single dock area in a floating widget.
     if (1 == countBefore)
         m_dockAreas.at(0)->updateTitleBarVisibility();
 
@@ -892,6 +885,9 @@ bool DockContainerWidgetPrivate::restoreSplitter(DockingStateReader &stateReader
         visible |= childNode->isVisibleTo(splitter);
     }
 
+    if (!testing)
+        updateSplitterHandles(splitter);
+
     if (sizes.count() != widgetCount)
         return false;
 
@@ -995,7 +991,7 @@ void DockContainerWidgetPrivate::addDockArea(DockAreaWidget *newDockArea, DockWi
     if (m_dockAreas.count() <= 1)
         m_rootSplitter->setOrientation(insertParam.orientation());
 
-    auto *splitter = m_rootSplitter;
+    auto splitter = m_rootSplitter;
     if (splitter->orientation() == insertParam.orientation()) {
         insertWidgetIntoSplitter(splitter, newDockArea, insertParam.append());
         updateSplitterHandles(splitter);
@@ -1003,7 +999,7 @@ void DockContainerWidgetPrivate::addDockArea(DockAreaWidget *newDockArea, DockWi
             splitter->show();
 
     } else {
-        auto *newSplitter = createSplitter(insertParam.orientation());
+        auto newSplitter = createSplitter(insertParam.orientation());
         if (insertParam.append()) {
             QLayoutItem *layoutItem = m_layout->replaceWidget(splitter, newSplitter);
             newSplitter->addWidget(splitter);
@@ -1083,18 +1079,19 @@ DockAreaWidget *DockContainerWidgetPrivate::addDockWidgetToDockArea(DockWidgetAr
     newDockArea->addDockWidget(dockWidget);
     auto insertParam = internal::dockAreaInsertParameters(area);
 
-    QSplitter *targetAreaSplitter = internal::findParent<QSplitter *>(targetDockArea);
+    auto targetAreaSplitter = internal::findParent<DockSplitter *>(targetDockArea);
     int targetIndex = targetAreaSplitter->indexOf(targetDockArea);
     if (targetAreaSplitter->orientation() == insertParam.orientation()) {
         qCInfo(adsLog) << "TargetAreaSplitter->orientation() == InsertParam.orientation()";
         targetAreaSplitter->insertWidget(targetIndex + insertParam.insertOffset(), newDockArea);
+        updateSplitterHandles(targetAreaSplitter);
         // do nothing, if flag is not enabled
         if (DockManager::testConfigFlag(DockManager::EqualSplitOnInsertion))
             adjustSplitterSizesOnInsertion(targetAreaSplitter);
     } else {
         qCInfo(adsLog) << "TargetAreaSplitter->orientation() != InsertParam.orientation()";
         auto targetAreaSizes = targetAreaSplitter->sizes();
-        QSplitter *newSplitter = createSplitter(insertParam.orientation());
+        auto newSplitter = createSplitter(insertParam.orientation());
         newSplitter->addWidget(targetDockArea);
         insertWidgetIntoSplitter(newSplitter, newDockArea, insertParam.append());
         updateSplitterHandles(newSplitter);
@@ -1143,12 +1140,17 @@ DockContainerWidget::~DockContainerWidget()
     delete d;
 }
 
+QSize DockContainerWidget::minimumSizeHint() const
+{
+    return d->m_layout->minimumSize();
+}
+
 DockAreaWidget *DockContainerWidget::addDockWidget(DockWidgetArea area,
                                                    DockWidget *dockWidget,
                                                    DockAreaWidget *dockAreaWidget,
                                                    int index)
 {
-    auto currentTopLevelDockWIdget = topLevelDockWidget();
+    auto currentTopLevelDockWidget = topLevelDockWidget();
     DockAreaWidget *oldDockArea = dockWidget->dockAreaWidget();
     if (oldDockArea)
         oldDockArea->removeDockWidget(dockWidget);
@@ -1160,12 +1162,12 @@ DockAreaWidget *DockContainerWidget::addDockWidget(DockWidgetArea area,
     else
         dockArea = d->addDockWidgetToContainer(area, dockWidget);
 
-    if (currentTopLevelDockWIdget) {
+    if (currentTopLevelDockWidget) {
         auto newTopLevelDockWidget = topLevelDockWidget();
         // If the container contained only one visible dock widget, we need to emit a top level
         // event for this widget because it is not the one and only visible docked widget anymore.
         if (!newTopLevelDockWidget)
-            DockWidget::emitTopLevelEventForWidget(currentTopLevelDockWIdget, false);
+            DockWidget::emitTopLevelEventForWidget(currentTopLevelDockWidget, false);
     }
 
     return dockArea;
@@ -1177,7 +1179,7 @@ AutoHideDockContainer *DockContainerWidget::createAndSetupAutoHideContainer(Side
 {
     if (!DockManager::testAutoHideConfigFlag(DockManager::AutoHideFeatureEnabled)) {
         Q_ASSERT_X(false,
-                   "CDockContainerWidget::createAndInitializeDockWidgetOverlayContainer",
+                   "DockContainerWidget::createAndInitializeDockWidgetOverlayContainer",
                    "Requested area does not exist in config");
         return nullptr;
     }
@@ -1203,7 +1205,7 @@ unsigned int DockContainerWidget::zOrderIndex() const
 
 bool DockContainerWidget::isInFrontOf(DockContainerWidget *other) const
 {
-    return this->zOrderIndex() > other->zOrderIndex();
+    return zOrderIndex() > other->zOrderIndex();
 }
 
 bool DockContainerWidget::event(QEvent *event)
@@ -1243,10 +1245,10 @@ void DockContainerWidget::removeDockArea(DockAreaWidget *area)
 
     area->disconnect(this);
     d->m_dockAreas.removeAll(area);
-    DockSplitter *splitter = internal::findParent<DockSplitter *>(area);
+    auto splitter = internal::findParent<DockSplitter *>(area);
 
-    // Remove area from parent splitter and recursively hide tree of parent
-    // splitters if it has no visible content
+    // Remove area from parent splitter and recursively hide tree of parent splitters if it has
+    // no visible content
     area->setParent(nullptr);
     internal::hideEmptyParentSplitters(splitter);
 
@@ -1262,8 +1264,7 @@ void DockContainerWidget::removeDockArea(DockAreaWidget *area)
         return;
     }
 
-    // If this is the RootSplitter we need to remove empty splitters to
-    // avoid too many empty splitters
+    // If this is the RootSplitter we need to remove empty splitters to avoid too many empty splitters
     if (splitter == d->m_rootSplitter) {
         qCInfo(adsLog) << "Removed from RootSplitter";
         // If splitter is empty, we are finished
@@ -1275,9 +1276,8 @@ void DockContainerWidget::removeDockArea(DockAreaWidget *area)
         }
 
         QWidget *widget = splitter->widget(0);
-        auto *childSplitter = qobject_cast<DockSplitter *>(widget);
-        // If the one and only content widget of the splitter is not a splitter
-        // then we are finished
+        auto childSplitter = qobject_cast<DockSplitter *>(widget);
+        // If the one and only content widget of the splitter is not a splitter then we are finished
         if (!childSplitter) {
             updateSplitterHandles(splitter);
             emitAndExit();
@@ -1292,7 +1292,7 @@ void DockContainerWidget::removeDockArea(DockAreaWidget *area)
         qCInfo(adsLog) << "RootSplitter replaced by child splitter";
     } else if (splitter->count() == 1) {
         qCInfo(adsLog) << "Replacing splitter with content";
-        auto *parentSplitter = internal::findParent<QSplitter *>(splitter);
+        auto parentSplitter = internal::findParent<DockSplitter *>(splitter);
         auto sizes = parentSplitter->sizes();
         QWidget *widget = splitter->widget(0);
         widget->setParent(this);
@@ -1312,8 +1312,8 @@ void DockContainerWidget::emitAndExit() const
 {
     DockWidget *topLevelWidget = topLevelDockWidget();
 
-    // Updated the title bar visibility of the dock widget if there is only
-    // one single visible dock widget
+    // Updated the title bar visibility of the dock widget if there is only one single visible
+    // dock widget
     DockWidget::emitTopLevelEventForWidget(topLevelWidget, true);
     dumpLayout();
     d->emitDockAreasRemoved();
@@ -1407,12 +1407,11 @@ void DockContainerWidget::dropFloatingWidget(FloatingDockContainer *floatingWidg
         // Fix https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System/issues/351
         floatingWidget->hideAndDeleteLater();
 
-        // If we dropped a floating widget with only one single dock widget, then we
-        // drop a top level widget that changes from floating to docked now
+        // If we dropped a floating widget with only one single dock widget, then we drop a top
+        // level widget that changes from floating to docked now
         DockWidget::emitTopLevelEventForWidget(singleDroppedDockWidget, false);
 
-        // If there was a top level widget before the drop, then it is not top
-        // level widget anymore
+        // If there was a top level widget before the drop, then it is not top level widget anymore
         DockWidget::emitTopLevelEventForWidget(singleDockWidget, false);
     }
 
@@ -1436,8 +1435,7 @@ void DockContainerWidget::dropWidget(QWidget *widget,
     else
         d->moveToContainer(widget, dropArea);
 
-    // If there was a top level widget before the drop, then it is not top
-    // level widget anymore
+    // If there was a top level widget before the drop, then it is not top level widget anymore
     DockWidget::emitTopLevelEventForWidget(singleDockWidget, false);
 
     window()->activateWindow();
@@ -1458,7 +1456,7 @@ QList<DockAreaWidget *> DockContainerWidget::openedDockAreas() const
 QList<DockWidget *> DockContainerWidget::openedDockWidgets() const
 {
     QList<DockWidget *> dockWidgetList;
-    for (auto dockArea : d->m_dockAreas) {
+    for (auto dockArea : std::as_const(d->m_dockAreas)) {
         if (!dockArea->isHidden())
             dockWidgetList.append(dockArea->openedDockWidgets());
     }
@@ -1467,7 +1465,7 @@ QList<DockWidget *> DockContainerWidget::openedDockWidgets() const
 
 bool DockContainerWidget::hasOpenDockAreas() const
 {
-    for (auto dockArea : d->m_dockAreas) {
+    for (auto dockArea : std::as_const(d->m_dockAreas)) {
         if (!dockArea->isHidden())
             return true;
     }
@@ -1531,15 +1529,16 @@ bool DockContainerWidget::restoreState(DockingStateReader &stateReader, bool tes
     if (testing)
         return true;
 
-    // If the root splitter is empty, restoreChildNodes returns a nullptr
-    // and we need to create a new empty root splitter
+    // If the root splitter is empty, restoreChildNodes returns a nullptr and we need to create
+    // a new empty root splitter
     if (!newRootSplitter)
         newRootSplitter = d->createSplitter(Qt::Horizontal);
 
-    d->m_layout->replaceWidget(d->m_rootSplitter, newRootSplitter);
-    QSplitter *oldRoot = d->m_rootSplitter;
+    QLayoutItem *layoutItem = d->m_layout->replaceWidget(d->m_rootSplitter, newRootSplitter);
+    auto oldRoot = d->m_rootSplitter;
     d->m_rootSplitter = qobject_cast<DockSplitter *>(newRootSplitter);
     oldRoot->deleteLater();
+    delete layoutItem;
 
     return true;
 }
@@ -1653,7 +1652,7 @@ void DockContainerWidget::updateSplitterHandles(QSplitter *splitter)
 void DockContainerWidget::registerAutoHideWidget(AutoHideDockContainer *autohideWidget)
 {
     d->m_autoHideWidgets.append(autohideWidget);
-    Q_EMIT autoHideWidgetCreated(autohideWidget);
+    emit autoHideWidgetCreated(autohideWidget);
     qCInfo(adsLog) << "d->AutoHideWidgets.count() " << d->m_autoHideWidgets.count();
 }
 
@@ -1703,14 +1702,6 @@ QRect DockContainerWidget::contentRect() const
     if (!d->m_rootSplitter)
         return QRect();
 
-    return d->m_rootSplitter->geometry();
-}
-
-QRect DockContainerWidget::contentRectGlobal() const
-{
-    if (!d->m_rootSplitter)
-        return QRect();
-
     if (d->m_rootSplitter->hasVisibleContent()) {
         return d->m_rootSplitter->geometry();
     } else {
@@ -1722,6 +1713,14 @@ QRect DockContainerWidget::contentRectGlobal() const
 
         return contentRect;
     }
+}
+
+QRect DockContainerWidget::contentRectGlobal() const
+{
+    if (!d->m_rootSplitter)
+        return QRect();
+
+    return internal::globalGeometry(d->m_rootSplitter);
 }
 
 DockManager *DockContainerWidget::dockManager() const

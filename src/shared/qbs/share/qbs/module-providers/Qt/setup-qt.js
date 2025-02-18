@@ -107,6 +107,8 @@ function qbsTargetPlatformFromQtMkspec(qtProps) {
         return "vxworks";
     if (ProviderUtils.isDesktopWindowsQt(qtProps) || mkspec.startsWith("winrt-"))
         return "windows";
+    if (mkspec.startsWith("wasm-"))
+        return "wasm-emscripten";
 }
 
 function pathToJSLiteral(path) { return JSON.stringify(FileInfo.fromNativeSeparators(path)); }
@@ -114,16 +116,27 @@ function pathToJSLiteral(path) { return JSON.stringify(FileInfo.fromNativeSepara
 function defaultQpaPlugin(module, qtProps) {
     if (qtProps.qtMajorVersion < 5)
         return undefined;
-    if (qtProps.qtMajorVersion === 5 && qtProps.qtMinorVersion < 8) {
-        var qConfigPri = new TextFile(FileInfo.joinPaths(qtProps.mkspecBasePath, "qconfig.pri"));
+
+    function findInPriFile(filePath) {
+        var priFile = new TextFile(filePath);
         var magicString = "QT_DEFAULT_QPA_PLUGIN =";
-        while (!qConfigPri.atEof()) {
-            var line = qConfigPri.readLine().trim();
+        while (!priFile.atEof()) {
+            var line = priFile.readLine().trim();
             if (line.startsWith(magicString))
                 return line.slice(magicString.length).trim();
         }
-        qConfigPri.close();
+    };
+
+    if (qtProps.qtMajorVersion === 5 && qtProps.qtMinorVersion < 8) {
+        var pluginName = findInPriFile(FileInfo.joinPaths(qtProps.mkspecBasePath, "qconfig.pri"));
+        if (pluginName)
+            return pluginName;
     } else {
+        pluginName = findInPriFile(FileInfo.joinPaths(qtProps.mkspecBasePath, "modules",
+                                                      "qt_lib_gui.pri"));
+        if (pluginName)
+            return pluginName;
+
         var gtGuiHeadersPath = qtProps.frameworkBuild
                 ? FileInfo.joinPaths(qtProps.libraryPath, "QtGui.framework", "Headers")
                 : FileInfo.joinPaths(qtProps.includePath, "QtGui");
@@ -136,7 +149,7 @@ function defaultQpaPlugin(module, qtProps) {
             var regexp = /^#define QT_QPA_DEFAULT_PLATFORM_NAME "(.+)".*$/;
             var includeRegexp = /^#include "(.+)".*$/;
             while (!headerFile.atEof()) {
-                line = headerFile.readLine().trim();
+                var line = headerFile.readLine().trim();
                 var match = line.match(regexp);
                 if (match)
                     return 'q' + match[1];
@@ -213,6 +226,8 @@ function replaceSpecialValues(content, module, qtProps, abi) {
         targetPlatform: ModUtils.toJSLiteral(qbsTargetPlatformFromQtMkspec(qtProps)),
         config: ModUtils.toJSLiteral(qtProps.configItems),
         qtConfig: ModUtils.toJSLiteral(qtProps.qtConfigItems),
+        enabledFeatures: ModUtils.toJSLiteral(qtProps.enabledFeatures),
+        disabledFeatures: ModUtils.toJSLiteral(qtProps.disabledFeatures),
         binPath: ModUtils.toJSLiteral(qtProps.binaryPath),
         installPath: ModUtils.toJSLiteral(qtProps.installPath),
         installPrefixPath: ModUtils.toJSLiteral(qtProps.installPrefixPath),
@@ -222,6 +237,7 @@ function replaceSpecialValues(content, module, qtProps, abi) {
         pluginPath: ModUtils.toJSLiteral(qtProps.pluginPath),
         incPath: ModUtils.toJSLiteral(qtProps.includePath),
         docPath: ModUtils.toJSLiteral(qtProps.documentationPath),
+        translationsPath: ModUtils.toJSLiteral(qtProps.translationsPath),
         helpGeneratorLibExecPath: ModUtils.toJSLiteral(qtProps.helpGeneratorLibExecPath),
         mkspecName: ModUtils.toJSLiteral(qtProps.mkspecName),
         mkspecPath: ModUtils.toJSLiteral(qtProps.mkspecPath),
@@ -229,6 +245,7 @@ function replaceSpecialValues(content, module, qtProps, abi) {
         libInfix: ModUtils.toJSLiteral(qtProps.qtLibInfix),
         availableBuildVariants: ModUtils.toJSLiteral(qtProps.buildVariant),
         staticBuild: ModUtils.toJSLiteral(qtProps.staticBuild),
+        multiThreading: ModUtils.toJSLiteral(qtProps.multiThreading),
         frameworkBuild: ModUtils.toJSLiteral(qtProps.frameworkBuild),
         name: ModUtils.toJSLiteral(ProviderUtils.qtModuleNameWithoutPrefix(module)),
         has_library: ModUtils.toJSLiteral(module.hasLibrary),
@@ -318,10 +335,9 @@ function replaceSpecialValues(content, module, qtProps, abi) {
         additionalContent += "Group {\n";
         if (module.isPlugin) {
             additionalContent += indent + indent
-                    + "condition: Qt[\"" + module.qbsName + "\"].enableLinking\n";
+                    + "condition: enableLinking\n";
         }
-        additionalContent += indent + indent + "files: [Qt[\"" + module.qbsName + "\"]"
-                + ".libFilePath]\n"
+        additionalContent += indent + indent + "files: libFilePath\n"
                 + indent + indent + "filesAreTargets: true\n"
                 + indent + indent + "fileTags: [\"" + libraryFileTag(module, qtProps)
                                   + "\"]\n"
@@ -408,6 +424,9 @@ function setupOneQt(moduleName, qtInfo, outputBaseDir, uniquify, location) {
             copyTemplateFile("android_support.qbs",
                             FileInfo.joinPaths(qbsQtModuleBaseDir, "android_support"),
                             qtProps, androidAbi, location, allFiles);
+            copyTemplateFile("android_support.js",
+                            FileInfo.joinPaths(qbsQtModuleBaseDir, "android_support"),
+                            qtProps, androidAbi, location, allFiles);
             relativeSearchPaths.push(relativeSearchPath);
             return relativeSearchPaths;
         } else if (moduleName === "qmlcache") {
@@ -429,6 +448,8 @@ function setupOneQt(moduleName, qtInfo, outputBaseDir, uniquify, location) {
 
             if (module.qbsName === "core") {
                 moduleTemplateFileName = "core.qbs";
+                copyTemplateFile("core.js", qbsQtModuleDir, qtProps, androidAbi, location,
+                                 allFiles);
                 copyTemplateFile("moc.js", qbsQtModuleDir, qtProps, androidAbi, location,
                                  allFiles);
                 copyTemplateFile("qdoc.js", qbsQtModuleDir, qtProps, androidAbi, location,

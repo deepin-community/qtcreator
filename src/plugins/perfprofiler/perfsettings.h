@@ -20,9 +20,8 @@ public:
     void readGlobalSettings();
     void writeGlobalSettings() const;
 
-    void addPerfRecordArguments(Utils::CommandLine *cmd) const;
-
-    void resetToDefault();
+    void toMap(Utils::Store &map) const override;
+    QString perfRecordArguments() const;
 
     QWidget *createPerfConfigWidget(ProjectExplorer::Target *target);
 

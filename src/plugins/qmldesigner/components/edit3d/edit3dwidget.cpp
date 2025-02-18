@@ -2,46 +2,57 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "edit3dwidget.h"
-#include "designdocument.h"
-#include "designericons.h"
+
 #include "edit3dactions.h"
 #include "edit3dcanvas.h"
+#include "edit3dmaterialsaction.h"
 #include "edit3dtoolbarmenu.h"
 #include "edit3dview.h"
-#include "edit3dviewconfig.h"
-#include "externaldependenciesinterface.h"
-#include "materialutils.h"
-#include "metainfo.h"
-#include "modelnodeoperations.h"
-#include "nodeabstractproperty.h"
-#include "nodehints.h"
-#include "qmldesignerconstants.h"
-#include "qmldesignerplugin.h"
-#include "qmleditormenu.h"
-#include "qmlvisualnode.h"
-#include "viewmanager.h"
 
 #include <auxiliarydataproperties.h>
 #include <designeractionmanager.h>
+#include <designdocument.h>
+#include <designericons.h>
 #include <designermcumanager.h>
+#include <designmodewidget.h>
+#include <externaldependenciesinterface.h>
+#include <generatedcomponentutils.h>
 #include <import.h>
-#include <model/modelutils.h>
+#include <materialutils.h>
+#include <metainfo.h>
+#include <modelnodeoperations.h>
+#include <nodeabstractproperty.h>
+#include <nodehints.h>
 #include <nodeinstanceview.h>
+#include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
+#include <qmleditormenu.h>
+#include <qmlvisualnode.h>
 #include <seekerslider.h>
+#include <toolbox.h>
+#include <viewmanager.h>
+#include <utils3d.h>
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/icore.h>
-#include <toolbox.h>
-#include <utils/asset.h>
+
+#include <modelutils.h>
+
+#include <qmldesignerutils/asset.h>
+#include <utils/fileutils.h>
 #include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
 
 #include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
+#include <QLabel>
+#include <QMenu>
 #include <QMimeData>
 #include <QVBoxLayout>
+
+using namespace Core;
 
 namespace QmlDesigner {
 
@@ -74,13 +85,14 @@ static QIcon getEntryIcon(const ItemLibraryEntry &entry)
 
 Edit3DWidget::Edit3DWidget(Edit3DView *view)
     : m_view(view)
+    , m_bundleHelper(std::make_unique<BundleHelper>(view, this))
 {
     setAcceptDrops(true);
 
     QByteArray sheet = Utils::FileReader::fetchQrc(":/qmldesigner/stylesheet.css");
     setStyleSheet(Theme::replaceCssColors(QString::fromUtf8(sheet)));
 
-    Core::Context context(Constants::C_QMLEDITOR3D);
+    Core::Context context(Constants::qml3DEditorContextId);
     m_context = new Core::IContext(this);
     m_context->setContext(context);
     m_context->setWidget(this);
@@ -121,7 +133,8 @@ Edit3DWidget::Edit3DWidget(Edit3DView *view)
 
                 // Register action as creator command to make it configurable
                 Core::Command *command = Core::ActionManager::registerAction(
-                            a, action->menuId().constData(), context);
+                            a, Utils::Id::fromName(action->menuId()), context);
+                m_actionToCommandHash.insert(a, command);
                 command->setDefaultKeySequence(a->shortcut());
                 if (proxyGroup)
                     proxyGroup->addAction(command->action());
@@ -181,6 +194,10 @@ Edit3DWidget::Edit3DWidget(Edit3DView *view)
     m_canvas = new Edit3DCanvas(this);
     fillLayout->addWidget(m_canvas.data());
     showCanvas(false);
+
+    IContext::attach(this,
+                     Context(Constants::qml3DEditorContextId, Constants::qtQuickToolsMenuContextId),
+                     [this](const IContext::HelpCallback &callback) { contextHelp(callback); });
 }
 
 void Edit3DWidget::createContextMenu()
@@ -193,13 +210,8 @@ void Edit3DWidget::createContextMenu()
         DocumentManager::goIntoComponent(m_view->singleSelectedModelNode());
     });
 
-    m_editMaterialAction = m_contextMenu->addAction(
-                contextIcon(DesignerIcons::MaterialIcon),
-                tr("Edit Material"), [&] {
-        SelectionContext selCtx(m_view);
-        selCtx.setTargetNode(m_contextMenuTarget);
-        ModelNodeOperations::editMaterial(selCtx);
-    });
+    m_materialsAction = new Edit3DMaterialsAction(contextIcon(DesignerIcons::MaterialIcon), this);
+    m_contextMenu->addAction(m_materialsAction);
 
     m_contextMenu->addSeparator();
 
@@ -281,6 +293,104 @@ void Edit3DWidget::createContextMenu()
     m_toggleGroupAction->setChecked(defaultToggleGroupAction->isChecked());
 
     m_contextMenu->addSeparator();
+
+    auto overridesSubMenu = new QmlEditorMenu(tr("Viewport Shading"), m_contextMenu);
+    overridesSubMenu->setToolTipsVisible(true);
+    m_contextMenu->addMenu(overridesSubMenu);
+
+    m_wireFrameAction = overridesSubMenu->addAction(
+        tr("Wireframe"), this, &Edit3DWidget::onWireframeAction);
+    m_wireFrameAction->setCheckable(true);
+    m_wireFrameAction->setToolTip(tr("Show models as wireframe."));
+
+    overridesSubMenu->addSeparator();
+
+    // The type enum order must match QQuick3DDebugSettings::QQuick3DMaterialOverrides enums
+    enum class MaterialOverrideType {
+        None,
+        BaseColor,
+        Roughness,
+        Metalness,
+        Diffuse,
+        Specular,
+        ShadowOcclusion,
+        Emission,
+        AmbientOcclusion,
+        Normals,
+        Tangents,
+        Binormals,
+        F0
+    };
+
+    auto addOverrideMenuAction = [&](const QString &label, const QString &toolTip,
+                                     MaterialOverrideType type) {
+        QAction *action = overridesSubMenu->addAction(label);
+        connect(action, &QAction::triggered, this, [this, action] { onMatOverrideAction(action); });
+        action->setData(int(type));
+        action->setCheckable(true);
+        action->setToolTip(toolTip);
+        m_matOverrideActions.insert(int(type), action);
+    };
+
+    addOverrideMenuAction(tr("Default"),
+                          tr("Rendering occurs as normal."),
+                          MaterialOverrideType::None);
+    addOverrideMenuAction(tr("Base Color"),
+                          tr("The base or diffuse color of a material is passed through without any lighting."),
+                          MaterialOverrideType::BaseColor);
+    addOverrideMenuAction(tr("Roughness"),
+                          tr("The roughness of a material is passed through as an unlit greyscale value."),
+                          MaterialOverrideType::Roughness);
+    addOverrideMenuAction(tr("Metalness"),
+                          tr("The metalness of a material is passed through as an unlit greyscale value."),
+                          MaterialOverrideType::Metalness);
+    addOverrideMenuAction(tr("Normals"),
+                          tr("The interpolated world space normal value of the material mapped to an RGB color."),
+                          MaterialOverrideType::Normals);
+    addOverrideMenuAction(tr("Ambient Occlusion"),
+                          tr("Only the ambient occlusion of the material."),
+                          MaterialOverrideType::AmbientOcclusion);
+    addOverrideMenuAction(tr("Emission"),
+                          tr("Only the emissive contribution of the material."),
+                          MaterialOverrideType::Emission);
+    addOverrideMenuAction(tr("Shadow Occlusion"),
+                          tr("The occlusion caused by shadows as a greyscale value."),
+                          MaterialOverrideType::ShadowOcclusion);
+    addOverrideMenuAction(tr("Diffuse"),
+                          tr("Only the diffuse contribution of the material after all lighting."),
+                          MaterialOverrideType::Diffuse);
+    addOverrideMenuAction(tr("Specular"),
+                          tr("Only the specular contribution of the material after all lighting."),
+                          MaterialOverrideType::Specular);
+
+    overridesSubMenu->addSeparator();
+
+    QAction *resetAction = overridesSubMenu->addAction(
+        tr("Reset All Viewports"), this, &Edit3DWidget::onResetAllOverridesAction);
+    resetAction->setToolTip(tr("Reset all shading options for all viewports."));
+
+    m_contextMenu->addSeparator();
+
+    m_addToContentLibAction = m_contextMenu->addAction(
+        contextIcon(DesignerIcons::CreateIcon),  // TODO: placeholder icon
+        tr("Add to Content Library"), [&] {
+            QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("ContentLibrary");
+            view()->emitCustomNotification("add_3d_to_content_lib", {m_contextMenuTarget}); // To ContentLibrary
+        });
+
+    m_importBundleAction = m_contextMenu->addAction(
+        contextIcon(DesignerIcons::CreateIcon),  // TODO: placeholder icon
+        tr("Import Component"), [&] {
+            m_bundleHelper->importBundleToProject();
+        });
+
+    m_exportBundleAction = m_contextMenu->addAction(
+        contextIcon(DesignerIcons::CreateIcon),  // TODO: placeholder icon
+        tr("Export Component"), [&] {
+            m_bundleHelper->exportBundle(m_contextMenuTarget);
+        });
+
+    m_contextMenu->addSeparator();
 }
 
 bool Edit3DWidget::isPasteAvailable() const
@@ -324,7 +434,7 @@ void Edit3DWidget::showOnboardingLabel()
                    " in the"
                    " <b>Assets</b>"
                    " view.");
-            text = labelText.arg(Utils::creatorTheme()->color(Utils::Theme::TextColorLink).name());
+            text = labelText.arg(Utils::creatorColor(Utils::Theme::TextColorLink).name());
         } else {
             text = tr("3D view is not supported in Qt5 projects.");
         }
@@ -380,11 +490,8 @@ void Edit3DWidget::updateCreateSubMenu(const QList<ItemLibraryDetails> &entriesL
                 m_createSubMenu->addMenu(catMenu);
             }
 
-            QAction *action = catMenu->addAction(
-                        getEntryIcon(entry),
-                        entry.name(),
-                        this,
-                        &Edit3DWidget::onCreateAction);
+            QAction *action = catMenu->addAction(getEntryIcon(entry), entry.name());
+            connect(action, &QAction::triggered, this, [this, action] { onCreateAction(action); });
             action->setData(entry.name());
             m_nameToEntry.insert(entry.name(), entry);
         }
@@ -392,10 +499,9 @@ void Edit3DWidget::updateCreateSubMenu(const QList<ItemLibraryDetails> &entriesL
 }
 
 // Action triggered from the "create" sub-menu
-void Edit3DWidget::onCreateAction()
+void Edit3DWidget::onCreateAction(QAction *action)
 {
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action || !m_view || !m_view->model() || isSceneLocked())
+    if (!m_view || !m_view->model() || isSceneLocked())
         return;
 
     m_view->executeInTransaction(__FUNCTION__, [&] {
@@ -407,10 +513,7 @@ void Edit3DWidget::onCreateAction()
         if (!m_view->model()->hasImport(import, true, true))
             m_view->model()->changeImports({import}, {});
 
-        int activeScene = -1;
-        auto data = m_view->rootModelNode().auxiliaryData(active3dSceneProperty);
-        if (data)
-            activeScene = data->toInt();
+        int activeScene = Utils3D::active3DSceneId(m_view->model());
         auto modelNode = QmlVisualNode::createQml3DNode(m_view, entry,
                                                         activeScene, m_contextMenuPos3d).modelNode();
         QTC_ASSERT(modelNode.isValid(), return);
@@ -420,6 +523,67 @@ void Edit3DWidget::onCreateAction()
         if (modelNode.metaInfo().isQtQuick3DModel())
             MaterialUtils::assignMaterialTo3dModel(m_view, modelNode);
     });
+}
+
+void Edit3DWidget::onMatOverrideAction(QAction *action)
+{
+    if (!m_view || !m_view->model())
+        return;
+
+    QVariantList list;
+    for (int i = 0; i < m_view->splitToolStates().size(); ++i) {
+        Edit3DView::SplitToolState state = m_view->splitToolStates()[i];
+        if (i == m_view->activeSplit()) {
+            state.matOverride = action->data().toInt();
+            m_view->setSplitToolState(i, state);
+            list.append(action->data());
+        } else {
+            list.append(state.matOverride);
+        }
+    }
+
+    view()->emitView3DAction(View3DActionType::MaterialOverride, list);
+}
+
+void Edit3DWidget::onWireframeAction()
+{
+    if (!m_view || !m_view->model())
+        return;
+
+    QVariantList list;
+    for (int i = 0; i < m_view->splitToolStates().size(); ++i) {
+        Edit3DView::SplitToolState state = m_view->splitToolStates()[i];
+        if (i == m_view->activeSplit()) {
+            state.showWireframe = m_wireFrameAction->isChecked();
+            m_view->setSplitToolState(i, state);
+            list.append(m_wireFrameAction->isChecked());
+        } else {
+            list.append(state.showWireframe);
+        }
+    }
+
+    view()->emitView3DAction(View3DActionType::ShowWireframe, list);
+}
+
+void Edit3DWidget::onResetAllOverridesAction()
+{
+    if (!m_view || !m_view->model())
+        return;
+
+    QVariantList wList;
+    QVariantList mList;
+
+    for (int i = 0; i < m_view->splitToolStates().size(); ++i) {
+        Edit3DView::SplitToolState state;
+        state.showWireframe = false;
+        state.matOverride = 0;
+        m_view->setSplitToolState(i, state);
+        wList.append(state.showWireframe);
+        mList.append(state.matOverride);
+    }
+
+    view()->emitView3DAction(View3DActionType::ShowWireframe, wList);
+    view()->emitView3DAction(View3DActionType::MaterialOverride, mList);
 }
 
 void Edit3DWidget::contextHelp(const Core::IContext::HelpCallback &callback) const
@@ -476,20 +640,24 @@ void Edit3DWidget::showBackgroundColorMenu(bool show, const QPoint &pos)
 
 void Edit3DWidget::showContextMenu(const QPoint &pos, const ModelNode &modelNode, const QVector3D &pos3d)
 {
+    auto compUtils = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
+
     m_contextMenuTarget = modelNode;
     m_contextMenuPos3d = pos3d;
 
     const bool isModel = modelNode.metaInfo().isQtQuick3DModel();
+    const bool isNode = modelNode.metaInfo().isQtQuick3DNode();
     const bool allowAlign = view()->edit3DAction(View3DActionType::AlignCamerasToView)->action()->isEnabled();
     const bool isSingleComponent = view()->hasSingleSelectedModelNode() && modelNode.isComponent();
     const bool anyNodeSelected = view()->hasSelectedModelNodes();
     const bool selectionExcludingRoot = anyNodeSelected && !view()->rootModelNode().isSelected();
+    const bool isInBundle = modelNode.type().startsWith(compUtils.componentBundlesTypePrefix().toLatin1());
 
     if (m_createSubMenu)
         m_createSubMenu->setEnabled(!isSceneLocked());
 
     m_editComponentAction->setEnabled(isSingleComponent);
-    m_editMaterialAction->setEnabled(isModel);
+    m_materialsAction->setEnabled(isModel);
     m_duplicateAction->setEnabled(selectionExcludingRoot);
     m_copyAction->setEnabled(selectionExcludingRoot);
     m_pasteAction->setEnabled(isPasteAvailable());
@@ -501,6 +669,18 @@ void Edit3DWidget::showContextMenu(const QPoint &pos, const ModelNode &modelNode
     m_toggleGroupAction->setEnabled(true);
     m_bakeLightsAction->setVisible(view()->bakeLightsAction()->action()->isVisible());
     m_bakeLightsAction->setEnabled(view()->bakeLightsAction()->action()->isEnabled());
+    m_addToContentLibAction->setEnabled(isNode && !isInBundle);
+    m_exportBundleAction->setEnabled(isNode);
+    m_materialsAction->updateMenu(view()->selectedModelNodes());
+
+    if (m_view) {
+        int idx = m_view->activeSplit();
+        m_wireFrameAction->setChecked(m_view->splitToolStates()[idx].showWireframe);
+        for (QAction *a : std::as_const(m_matOverrideActions))
+            a->setChecked(false);
+        int type = m_view->splitToolStates()[idx].matOverride;
+        m_matOverrideActions[type]->setChecked(true);
+    }
 
     m_contextMenu->popup(mapToGlobal(pos));
 }
@@ -544,16 +724,16 @@ void Edit3DWidget::dragEnterEvent(QDragEnterEvent *dragEnterEvent)
     } else if (actionManager.externalDragHasSupportedAssets(dragEnterEvent->mimeData())
                || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_MATERIAL)
                || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_MATERIAL)
-               || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_EFFECT)
+               || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM)
                || dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_TEXTURE)) {
-        if (m_view->active3DSceneNode().isValid())
+        if (Utils3D::active3DSceneNode(m_view).isValid())
             dragEnterEvent->acceptProposedAction();
     } else if (dragEnterEvent->mimeData()->hasFormat(Constants::MIME_TYPE_ITEM_LIBRARY_INFO)) {
         QByteArray data = dragEnterEvent->mimeData()->data(Constants::MIME_TYPE_ITEM_LIBRARY_INFO);
         if (!data.isEmpty()) {
             QDataStream stream(data);
             stream >> m_draggedEntry;
-            if (NodeHints::fromItemLibraryEntry(m_draggedEntry).canBeDroppedInView3D())
+            if (NodeHints::fromItemLibraryEntry(m_draggedEntry, view()->model()).canBeDroppedInView3D())
                 dragEnterEvent->acceptProposedAction();
         }
     }
@@ -589,9 +769,9 @@ void Edit3DWidget::dropEvent(QDropEvent *dropEvent)
         return;
     }
 
-    // handle dropping bundle effects
-    if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_EFFECT)) {
-        m_view->dropBundleEffect(pos);
+    // handle dropping bundle items
+    if (dropEvent->mimeData()->hasFormat(Constants::MIME_TYPE_BUNDLE_ITEM)) {
+        m_view->dropBundleItem(pos);
         m_view->model()->endDrag();
         return;
     }
@@ -618,20 +798,46 @@ void Edit3DWidget::dropEvent(QDropEvent *dropEvent)
     QHash<QString, QStringList> addedAssets = actionManager.handleExternalAssetsDrop(dropEvent->mimeData());
 
     view()->executeInTransaction("Edit3DWidget::dropEvent", [&] {
-        // add 3D assets to 3d editor (QtQuick3D import will be added if missing)
-        ItemLibraryInfo *itemLibInfo = m_view->model()->metaInfo().itemLibraryInfo();
-
+    // add 3D assets to 3d editor (QtQuick3D import will be added if missing)
+#ifdef QDS_USE_PROJECTSTORAGE
         const QStringList added3DAssets = addedAssets.value(ComponentCoreConstants::add3DAssetsDisplayString);
         for (const QString &assetPath : added3DAssets) {
             QString fileName = QFileInfo(assetPath).baseName();
             fileName = fileName.at(0).toUpper() + fileName.mid(1); // capitalize first letter
-            QString type = QString("Quick3DAssets.%1.%1").arg(fileName);
-            QList<ItemLibraryEntry> entriesForType = itemLibInfo->entriesForType(type.toLatin1());
-            if (!entriesForType.isEmpty()) { // should always be true, but just in case
-                QmlVisualNode::createQml3DNode(view(), entriesForType.at(0),
-                                               m_canvas->activeScene(), {}, false).modelNode();
+            auto model = m_view->model();
+            Utils::PathString import3dTypePrefix = QmlDesignerPlugin::instance()
+                                                       ->documentManager()
+                                                       .generatedComponentUtils()
+                                                       .import3dTypePrefix();
+            auto moduleId = model->module(import3dTypePrefix, Storage::ModuleKind::QmlLibrary);
+            auto metaInfo = model->metaInfo(moduleId, fileName.toUtf8());
+            if (auto entries = metaInfo.itemLibrariesEntries(); entries.size()) {
+                auto entry = ItemLibraryEntry::create(entries.front());
+                QmlVisualNode::createQml3DNode(view(), entry, m_canvas->activeScene(), {}, false);
             }
         }
+#else
+        ItemLibraryInfo *itemLibInfo = m_view->model()->metaInfo().itemLibraryInfo();
+
+        const QStringList added3DAssets = addedAssets.value(
+            ComponentCoreConstants::add3DAssetsDisplayString);
+        for (const QString &assetPath : added3DAssets) {
+            QString fileName = QFileInfo(assetPath).baseName();
+            fileName = fileName.at(0).toUpper() + fileName.mid(1); // capitalize first letter
+            QString type = QString("%1.%2.%2").arg(QmlDesignerPlugin::instance()->documentManager()
+                                                       .generatedComponentUtils().import3dTypePrefix(),
+                                                   fileName);
+            QList<ItemLibraryEntry> entriesForType = itemLibInfo->entriesForType(type.toUtf8());
+            if (!entriesForType.isEmpty()) { // should always be true, but just in case
+                QmlVisualNode::createQml3DNode(view(),
+                                               entriesForType.at(0),
+                                               m_canvas->activeScene(),
+                                               {},
+                                               false)
+                    .modelNode();
+            }
+        }
+#endif
     });
 
     m_view->model()->endDrag();

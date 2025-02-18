@@ -3,10 +3,10 @@
 
 /*!
     \page creator-how-to-add-wizards.html
-    \previouspage creator-project-qmake-libraries.html
-    \nextpage creator-version-control.html
+    \previouspage creator-how-tos.html
 
     \ingroup creator-how-to-projects-create
+    \ingroup creator-how-to-projects-files
 
     \title Add wizards
 
@@ -45,5 +45,5 @@
             to specify the position of the wizard. For example, \c B.MyClass.
     \endlist
 
-\sa {Custom Wizards}, {Find settings files}
+    \sa {Run Qt Creator from the command line}, {Custom Wizards}
 */

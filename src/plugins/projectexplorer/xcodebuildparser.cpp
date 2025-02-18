@@ -57,7 +57,8 @@ OutputLineParser::Result XcodebuildParser::handleLine(const QString &line, Outpu
                                  absoluteFilePath(FilePath::fromString(
                                      lne.left(filePathEndPos))));
                 LinkSpecs linkSpecs;
-                addLinkSpecForAbsoluteFilePath(linkSpecs, task.file, task.line, 0, filePathEndPos);
+                addLinkSpecForAbsoluteFilePath(linkSpecs, task.file, task.line, task.column, 0,
+                                               filePathEndPos);
                 scheduleTask(task, 1);
                 return {Status::Done, linkSpecs};
             }
@@ -88,23 +89,31 @@ bool XcodebuildParser::hasDetectedRedirection() const
 #   include <QTest>
 
 #   include "outputparser_test.h"
-#   include "projectexplorer.h"
-
-using namespace ProjectExplorer;
+#   include "projectexplorer_test.h"
 
 Q_DECLARE_METATYPE(ProjectExplorer::XcodebuildParser::XcodebuildStatus)
 
-XcodebuildParserTester::XcodebuildParserTester(XcodebuildParser *p, QObject *parent) :
-    QObject(parent),
-    parser(p)
-{ }
+namespace ProjectExplorer::Internal {
 
-void XcodebuildParserTester::onAboutToDeleteParser()
+class XcodebuildParserTester : public QObject
 {
-    QCOMPARE(parser->m_xcodeBuildParserState, expectedFinalState);
-}
+public:
+    explicit XcodebuildParserTester(XcodebuildParser *p, QObject *parent = nullptr) :
+        QObject(parent),
+        parser(p)
+    { }
 
-void ProjectExplorerPlugin::testXcodebuildParserParsing_data()
+    XcodebuildParser *parser;
+    XcodebuildParser::XcodebuildStatus expectedFinalState = XcodebuildParser::OutsideXcodebuild;
+
+public:
+    void onAboutToDeleteParser()
+    {
+        QCOMPARE(parser->m_xcodeBuildParserState, expectedFinalState);
+    }
+};
+
+void ProjectExplorerTest::testXcodebuildParserParsing_data()
 {
     QTest::addColumn<ProjectExplorer::XcodebuildParser::XcodebuildStatus>("initialStatus");
     QTest::addColumn<QString>("input");
@@ -240,7 +249,7 @@ void ProjectExplorerPlugin::testXcodebuildParserParsing_data()
             << XcodebuildParser::OutsideXcodebuild;
 }
 
-void ProjectExplorerPlugin::testXcodebuildParserParsing()
+void ProjectExplorerTest::testXcodebuildParserParsing()
 {
     OutputParserTester testbench;
     auto *childParser = new XcodebuildParser;
@@ -268,5 +277,7 @@ void ProjectExplorerPlugin::testXcodebuildParserParsing()
     delete tester;
 }
 
-#endif
+} // ProjectExplorer::Internal
+
+#endif // WITH_TESTS
 

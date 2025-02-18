@@ -347,4 +347,13 @@ bool TabSettings::equals(const TabSettings &ts) const
         && m_continuationAlignBehavior == ts.m_continuationAlignBehavior;
 }
 
+static TabSettings::Retriever g_retriever = [](const FilePath &) { return TabSettings{}; };
+
+void TabSettings::setRetriever(const Retriever &retriever) { g_retriever = retriever; }
+
+TabSettings TabSettings::settingsForFile(const Utils::FilePath &filePath)
+{
+    return g_retriever(filePath);
+}
+
 } // namespace TextEditor

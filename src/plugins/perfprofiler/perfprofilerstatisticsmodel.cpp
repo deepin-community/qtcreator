@@ -136,7 +136,7 @@ void PerfProfilerStatisticsMainModel::finalize(PerfProfilerStatisticsData *data)
     resort();
 
     QTC_ASSERT(data->isEmpty(), data->clear());
-    QTC_CHECK(m_offlineData.isNull());
+    QTC_CHECK(!m_offlineData);
     m_offlineData.reset(data);
 }
 
@@ -150,7 +150,7 @@ QByteArray PerfProfilerStatisticsMainModel::metaInfo(
         int typeId, PerfProfilerStatisticsModel::Column column) const
 {
     // Need to look up stuff from tracemanager
-    PerfProfilerTraceManager *manager = static_cast<PerfProfilerTraceManager *>(QObject::parent());
+    PerfProfilerTraceManager *manager = &traceManager();
     switch (column) {
     case BinaryLocation:
     case Function: {
@@ -174,15 +174,13 @@ QByteArray PerfProfilerStatisticsMainModel::metaInfo(
 
 quint64 PerfProfilerStatisticsMainModel::address(int typeId) const
 {
-    PerfProfilerTraceManager *manager =
-            static_cast<PerfProfilerTraceManager *>(QObject::parent());
-    return manager->location(typeId).address;
+    return traceManager().location(typeId).address;
 }
 
 void PerfProfilerStatisticsMainModel::initialize()
 {
     // Make offline data unaccessible while we're loading events
-    PerfProfilerStatisticsData *offline = m_offlineData.take();
+    PerfProfilerStatisticsData *offline = m_offlineData.release();
     QTC_ASSERT(offline, return);
     QTC_ASSERT(offline->isEmpty(), offline->clear());
 }
@@ -292,12 +290,12 @@ void PerfProfilerStatisticsMainModel::sort(int column, Qt::SortOrder order)
 void PerfProfilerStatisticsMainModel::clear(PerfProfilerStatisticsData *data)
 {
     beginResetModel();
-    if (m_offlineData.isNull()) {
+    if (!m_offlineData) {
         // We didn't finalize
         data->clear();
         m_offlineData.reset(data);
     } else {
-        QTC_CHECK(data == m_offlineData.data());
+        QTC_CHECK(data == m_offlineData.get());
     }
     m_totalSamples = 0;
     m_data.clear();
@@ -318,14 +316,14 @@ int PerfProfilerStatisticsMainModel::rowForTypeId(int typeId) const
     return m_backwardIndex[static_cast<int>(it - m_data.begin())];
 }
 
-PerfProfilerStatisticsMainModel::PerfProfilerStatisticsMainModel(PerfProfilerTraceManager *parent) :
+PerfProfilerStatisticsMainModel::PerfProfilerStatisticsMainModel(QObject *parent) :
     PerfProfilerStatisticsModel(Main, parent), m_startTime(std::numeric_limits<qint64>::min()),
     m_endTime(std::numeric_limits<qint64>::max()), m_totalSamples(0)
 {
     m_children = new PerfProfilerStatisticsRelativesModel(Children, this);
     m_parents = new PerfProfilerStatisticsRelativesModel(Parents, this);
     PerfProfilerStatisticsData *data = new PerfProfilerStatisticsData;
-    parent->registerFeatures(PerfEventType::attributeFeatures(),
+    traceManager().registerFeatures(PerfEventType::attributeFeatures(),
                              std::bind(&PerfProfilerStatisticsData::loadEvent, data,
                                        std::placeholders::_1, std::placeholders::_2),
                              std::bind(&PerfProfilerStatisticsMainModel::initialize, this),
@@ -337,7 +335,7 @@ PerfProfilerStatisticsMainModel::PerfProfilerStatisticsMainModel(PerfProfilerTra
 PerfProfilerStatisticsMainModel::~PerfProfilerStatisticsMainModel()
 {
     // If the offline data isn't here, we're being deleted while loading something. That's unnice.
-    QTC_CHECK(!m_offlineData.isNull());
+    QTC_CHECK(m_offlineData);
 }
 
 PerfProfilerStatisticsRelativesModel::PerfProfilerStatisticsRelativesModel(

@@ -41,6 +41,11 @@ enum class Channel {
     Error
 };
 
+enum class DetachedChannelMode {
+    Forward,
+    Discard
+};
+
 enum class TextChannelMode {
                 // Keep | Emit | Emit
                 //  raw | text | content
@@ -58,15 +63,15 @@ enum class ProcessResult {
     // Finished unsuccessfully. Unless an ExitCodeInterpreter is set
     // this corresponds to a return code different from 0.
     FinishedWithError,
-    // Process terminated abnormally (kill)
+    // Process terminated abnormally (crash)
     TerminatedAbnormally,
     // Executable could not be started
     StartFailed,
-    // Hang, no output after time out
-    Hang
+    // Canceled due to a call to terminate() or kill(),
+    // This includes a call to stop() or timeout has triggered for runBlocking().
+    Canceled
 };
 
-using ExitCodeInterpreter = std::function<ProcessResult(int /*exitCode*/)>;
 using TextChannelCallback = std::function<void(const QString & /*text*/)>;
 
 } // namespace Utils

@@ -8,8 +8,6 @@
 #include "languageclientmanager.h"
 #include "languageclienttr.h"
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <utils/async.h>
 #include <utils/fuzzymatcher.h>
 
@@ -17,11 +15,12 @@
 
 using namespace Core;
 using namespace LanguageServerProtocol;
+using namespace Tasking;
 using namespace Utils;
 
 namespace LanguageClient {
 
-void filterResults(QPromise<void> &promise, const LocatorStorage &storage, Client *client,
+static void filterResults(QPromise<void> &promise, const LocatorStorage &storage, Client *client,
                    const QList<SymbolInformation> &results, const QList<SymbolKind> &filter)
 {
     const auto doFilter = [&](const SymbolInformation &info) {
@@ -43,18 +42,15 @@ void filterResults(QPromise<void> &promise, const LocatorStorage &storage, Clien
     storage.reportOutput(Utils::transform(filteredResults, generateEntry));
 }
 
-LocatorMatcherTask locatorMatcher(Client *client, int maxResultCount,
+static ExecutableItem locatorMatcher(Client *client, int maxResultCount,
                                   const QList<SymbolKind> &filter)
 {
-    using namespace Tasking;
+    Storage<QList<SymbolInformation>> resultStorage;
 
-    TreeStorage<LocatorStorage> storage;
-    TreeStorage<QList<SymbolInformation>> resultStorage;
-
-    const auto onQuerySetup = [storage, client, maxResultCount](ClientWorkspaceSymbolRequest &request) {
+    const auto onQuerySetup = [client, maxResultCount](ClientWorkspaceSymbolRequest &request) {
         request.setClient(client);
         WorkspaceSymbolParams params;
-        params.setQuery(storage->input());
+        params.setQuery(LocatorStorage::storage()->input());
         if (maxResultCount > 0)
             params.setLimit(maxResultCount);
         request.setParams(params);
@@ -66,34 +62,34 @@ LocatorMatcherTask locatorMatcher(Client *client, int maxResultCount,
             *resultStorage = result->toList();
     };
 
-    const auto onFilterSetup = [storage, resultStorage, client, filter](Async<void> &async) {
+    const auto onFilterSetup = [resultStorage, client, filter](Async<void> &async) {
         const QList<SymbolInformation> results = *resultStorage;
         if (results.isEmpty())
-            return SetupResult::StopWithDone;
-        async.setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
-        async.setConcurrentCallData(filterResults, *storage, client, results, filter);
+            return SetupResult::StopWithSuccess;
+        async.setConcurrentCallData(filterResults, *LocatorStorage::storage(), client, results,
+                                    filter);
         return SetupResult::Continue;
     };
 
     const Group root {
-        Tasking::Storage(resultStorage),
-        ClientWorkspaceSymbolRequestTask(onQuerySetup, onQueryDone),
+        resultStorage,
+        ClientWorkspaceSymbolRequestTask(onQuerySetup, onQueryDone, CallDoneIf::Success),
         AsyncTask<void>(onFilterSetup)
     };
-    return {root, storage};
+    return root;
 }
 
-LocatorMatcherTask allSymbolsMatcher(Client *client, int maxResultCount)
+static ExecutableItem allSymbolsMatcher(Client *client, int maxResultCount)
 {
     return locatorMatcher(client, maxResultCount, {});
 }
 
-LocatorMatcherTask classMatcher(Client *client, int maxResultCount)
+static ExecutableItem classMatcher(Client *client, int maxResultCount)
 {
     return locatorMatcher(client, maxResultCount, {SymbolKind::Class, SymbolKind::Struct});
 }
 
-LocatorMatcherTask functionMatcher(Client *client, int maxResultCount)
+static ExecutableItem functionMatcher(Client *client, int maxResultCount)
 {
     return locatorMatcher(client, maxResultCount,
                           {SymbolKind::Method, SymbolKind::Function, SymbolKind::Constructor});
@@ -115,34 +111,28 @@ static void filterCurrentResults(QPromise<void> &promise, const LocatorStorage &
                                                                 docSymbolModifier));
 }
 
-LocatorMatcherTask currentDocumentMatcher()
+static ExecutableItem currentDocumentMatcher()
 {
-    using namespace Tasking;
+    Storage<CurrentDocumentSymbolsData> resultStorage;
 
-    TreeStorage<LocatorStorage> storage;
-    TreeStorage<CurrentDocumentSymbolsData> resultStorage;
-
-    const auto onQuerySetup = [](CurrentDocumentSymbolsRequest &request) {
-        Q_UNUSED(request)
-    };
     const auto onQueryDone = [resultStorage](const CurrentDocumentSymbolsRequest &request) {
         *resultStorage = request.currentDocumentSymbolsData();
     };
 
-    const auto onFilterSetup = [storage, resultStorage](Async<void> &async) {
-        async.setFutureSynchronizer(ExtensionSystem::PluginManager::futureSynchronizer());
-        async.setConcurrentCallData(filterCurrentResults, *storage, *resultStorage);
+    const auto onFilterSetup = [resultStorage](Async<void> &async) {
+        async.setConcurrentCallData(filterCurrentResults, *LocatorStorage::storage(),
+                                    *resultStorage);
     };
 
     const Group root {
-        Tasking::Storage(resultStorage),
-        CurrentDocumentSymbolsRequestTask(onQuerySetup, onQueryDone),
+        resultStorage,
+        CurrentDocumentSymbolsRequestTask({}, onQueryDone, CallDoneIf::Success),
         AsyncTask<void>(onFilterSetup)
     };
-    return {root, storage};
+    return root;
 }
 
-using MatcherCreator = std::function<Core::LocatorMatcherTask(Client *, int)>;
+using MatcherCreator = std::function<ExecutableItem(Client *, int)>;
 
 static MatcherCreator creatorForType(MatcherType type)
 {

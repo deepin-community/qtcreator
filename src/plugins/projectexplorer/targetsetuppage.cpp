@@ -5,7 +5,6 @@
 
 #include "buildinfo.h"
 #include "importwidget.h"
-#include "ipotentialkit.h"
 #include "kit.h"
 #include "kitmanager.h"
 #include "project.h"
@@ -20,7 +19,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/fancylineedit.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/wizard.h>
 
@@ -34,20 +33,8 @@
 using namespace Utils;
 
 namespace ProjectExplorer {
-
-static QList<IPotentialKit *> g_potentialKits;
-
-IPotentialKit::IPotentialKit()
-{
-    g_potentialKits.append(this);
-}
-
-IPotentialKit::~IPotentialKit()
-{
-    g_potentialKits.removeOne(this);
-}
-
 namespace Internal {
+
 static FilePath importDirectory(const FilePath &projectPath)
 {
     // Setup import widget:
@@ -158,11 +145,6 @@ public:
         QObject::connect(kitFilterLineEdit, &FancyLineEdit::filterChanged,
                          this, &TargetSetupPagePrivate::kitFilterChanged);
 
-        for (IPotentialKit *pk : std::as_const(g_potentialKits)) {
-            if (pk->isEnabled())
-                m_potentialWidgets.append(pk->createWidget(q));
-        }
-
         setUseScrollArea(true);
 
         KitManager *km = KitManager::instance();
@@ -234,7 +216,6 @@ public:
 
     Internal::ImportWidget *m_importWidget = nullptr;
     QSpacerItem *m_spacer;
-    QList<QWidget *> m_potentialWidgets;
 
     bool m_widgetsWereSetUp = false;
 };
@@ -304,6 +285,8 @@ void TargetSetupPagePrivate::setupWidgets(const QString &filterText)
     for (Kit *k : KitManager::sortedKits()) {
         if (!filterText.isEmpty() && !k->displayName().contains(filterText, Qt::CaseInsensitive))
             continue;
+        if (m_importer && !m_importer->filter(k))
+            continue;
         const auto widget = new TargetSetupWidget(k, m_projectPath);
         connect(widget, &TargetSetupWidget::selectedToggled,
                 this, &TargetSetupPagePrivate::kitSelectionChanged);
@@ -368,8 +351,21 @@ void TargetSetupPage::setProjectImporter(ProjectImporter *importer)
     if (d->m_widgetsWereSetUp)
         d->reset(); // Reset before changing the importer!
 
+    if (d->m_importer) {
+        disconnect(d->m_importer, &ProjectImporter::cmakePresetsUpdated,
+                   this, &TargetSetupPage::initializePage);
+    }
+
+
     d->m_importer = importer;
     d->m_importWidget->setVisible(d->m_importer);
+
+    if (d->m_importer) {
+        // FIXME: Needed for the refresh of CMake preset kits created by
+        // CMakeProjectImporter
+        connect(d->m_importer, &ProjectImporter::cmakePresetsUpdated,
+                this, &TargetSetupPage::initializePage);
+    }
 
     if (d->m_widgetsWereSetUp)
         initializePage();
@@ -445,7 +441,7 @@ void TargetSetupPagePrivate::selectAtLeastOneEnabledKit()
 
     auto isPreferred = [this](const TargetSetupWidget *w) {
         const Tasks tasks = m_tasksGenerator(w->kit());
-        return w->isEnabled() && tasks.isEmpty();
+        return w->isValid() && tasks.isEmpty();
     };
 
     // Use default kit if that is preferred:
@@ -461,14 +457,14 @@ void TargetSetupPagePrivate::selectAtLeastOneEnabledKit()
     if (!toCheckWidget) {
         // Use default kit if it is enabled:
         toCheckWidget = findOrDefault(m_widgets, [defaultKit](const TargetSetupWidget *w) {
-            return w->isEnabled() && w->kit() == defaultKit;
+            return w->isValid() && w->kit() == defaultKit;
         });
     }
 
     if (!toCheckWidget) {
         // Use the first enabled widget:
         toCheckWidget = findOrDefault(m_widgets,
-                                      [](const TargetSetupWidget *w) { return w->isEnabled(); });
+                                      [](const TargetSetupWidget *w) { return w->isValid(); });
     }
 
     if (toCheckWidget) {
@@ -557,7 +553,6 @@ void TargetSetupPagePrivate::doInitializePage()
     setupImports();
 
     selectAtLeastOneEnabledKit();
-
     updateVisibility();
 }
 
@@ -572,8 +567,10 @@ void TargetSetupPage::changeAllKitsSelections()
     if (d->allKitsCheckBox->checkState() == Qt::PartiallyChecked)
         d->allKitsCheckBox->setCheckState(Qt::Checked);
     bool checked = d->allKitsCheckBox->isChecked();
-    for (TargetSetupWidget *widget : d->m_widgets)
-        widget->setKitSelected(checked);
+    for (TargetSetupWidget *widget : d->m_widgets) {
+        if (!checked || widget->isValid())
+            widget->setKitSelected(checked);
+    }
     emit completeChanged();
 }
 
@@ -646,16 +643,12 @@ TargetSetupWidget *TargetSetupPagePrivate::addWidget(Kit *k)
 void TargetSetupPagePrivate::addAdditionalWidgets()
 {
     m_baseLayout->addWidget(m_importWidget);
-    for (QWidget * const widget : std::as_const(m_potentialWidgets))
-        m_baseLayout->addWidget(widget);
     m_baseLayout->addItem(m_spacer);
 }
 
 void TargetSetupPagePrivate::removeAdditionalWidgets(QLayout *layout)
 {
     layout->removeWidget(m_importWidget);
-    for (QWidget * const potentialWidget : std::as_const(m_potentialWidgets))
-        layout->removeWidget(potentialWidget);
     layout->removeItem(m_spacer);
 }
 

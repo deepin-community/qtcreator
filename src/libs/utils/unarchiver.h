@@ -6,7 +6,7 @@
 #include "utils_global.h"
 
 #include "commandline.h"
-#include "process.h"
+#include "qtcprocess.h"
 
 #include <solutions/tasking/tasktree.h>
 
@@ -32,20 +32,24 @@ public:
 
     void setSourceAndCommand(const SourceAndCommand &data) { m_sourceAndCommand = data; }
     void setDestDir(const FilePath &destDir) { m_destDir = destDir; }
-
+    void setGZipFileDestName(const QString &gzipFileDestName)
+    {
+        m_gzipFileDestName = gzipFileDestName;
+    }
     void start();
 
 signals:
     void outputReceived(const QString &output);
-    void done(bool success);
+    void done(Tasking::DoneResult result);
 
 private:
     std::optional<SourceAndCommand> m_sourceAndCommand;
     FilePath m_destDir;
     std::unique_ptr<Process> m_process;
+    QString m_gzipFileDestName;
 };
 
-class QTCREATOR_UTILS_EXPORT UnarchiverTaskAdapter : public Tasking::TaskAdapter<Unarchiver>
+class QTCREATOR_UTILS_EXPORT UnarchiverTaskAdapter final : public Tasking::TaskAdapter<Unarchiver>
 {
 public:
     UnarchiverTaskAdapter();

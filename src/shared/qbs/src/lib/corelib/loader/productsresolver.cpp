@@ -43,6 +43,7 @@
 #include "loaderutils.h"
 #include "productresolver.h"
 
+#include <language/evaluator.h>
 #include <language/language.h>
 #include <language/scriptengine.h>
 #include <logging/categories.h>
@@ -205,6 +206,7 @@ void ProductsResolver::initializeLoaderStatePool()
     m_loaderStatePool.reserve(m_enginePool.size());
     m_availableLoaderStates.reserve(m_enginePool.size() + 1);
     m_availableLoaderStates.push_back(&m_loaderState);
+    m_loaderState.evaluator().engine()->setSetupProjectParameters(m_loaderState.parameters());
     for (std::size_t i = 0; i < m_enginePool.capacity(); ++i) {
         ScriptEngine &engine = *m_enginePool.emplace_back(
             ScriptEngine::create(m_loaderState.logger(), EvalContext::PropertyEvaluation));
@@ -213,6 +215,7 @@ void ProductsResolver::initializeLoaderStatePool()
         auto loaderState = std::make_unique<LoaderState>(
                     m_loaderState.parameters(), topLevelProject, itemPool, engine,
                     m_loaderState.logger());
+        loaderState->evaluator().engine()->setSetupProjectParameters(m_loaderState.parameters());
         m_loaderStatePool.push_back(std::move(loaderState));
         m_availableLoaderStates.push_back(m_loaderStatePool.back().get());
         if (topLevelProject.progressObserver())
@@ -541,8 +544,11 @@ void ProductsResolver::postProcess()
     const auto project = std::dynamic_pointer_cast<TopLevelProject>(
                 m_loaderState.topLevelProject().projects().front()->project);
     QBS_CHECK(project);
-    for (LoaderState * const loaderState : m_availableLoaderStates)
+    for (LoaderState * const loaderState : m_availableLoaderStates) {
         project->warningsEncountered << loaderState->logger().warnings();
+        if (loaderState == &m_loaderState)
+            project->warningsEncountered << loaderState->evaluator().engine()->logger().warnings();
+    }
 }
 
 void ProductsResolver::checkForMissedBulkDependencies(const ProductContext &product)

@@ -56,7 +56,9 @@ void ValgrindToolRunner::start()
         return;
     }
 
-    FutureProgress *fp = ProgressManager::addTimedTask(m_progress, progressTitle(), "valgrind", 100);
+    using namespace std::chrono_literals;
+    FutureProgress *fp
+        = ProgressManager::addTimedTask(m_progress, progressTitle(), "valgrind", 100s);
     connect(fp, &FutureProgress::canceled,
             this, &ValgrindToolRunner::handleProgressCanceled);
     connect(fp, &FutureProgress::finished,
@@ -71,7 +73,7 @@ void ValgrindToolRunner::start()
     m_runner.setValgrindCommand(valgrind);
     m_runner.setDebuggee(runControl()->runnable());
 
-    if (auto aspect = runControl()->aspect<TerminalAspect>())
+    if (auto aspect = runControl()->aspectData<TerminalAspect>())
         m_runner.setUseTerminal(aspect->useTerminal);
 
     if (!m_runner.start()) {
@@ -88,8 +90,6 @@ void ValgrindToolRunner::stop()
     m_isStopping = true;
     m_runner.stop();
     appendMessage(Tr::tr("Process terminated."), ErrorMessageFormat);
-    m_progress.reportFinished();
-    reportStopped();
 }
 
 QStringList ValgrindToolRunner::genericToolArguments() const

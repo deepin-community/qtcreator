@@ -8,7 +8,9 @@
 
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/buildtargetinfo.h>
+#include <projectexplorer/deployconfiguration.h>
 #include <projectexplorer/project.h>
+#include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/runconfigurationaspects.h>
 #include <projectexplorer/target.h>
 
@@ -27,10 +29,6 @@ public:
     {
         executable.setDeviceSelector(target, ExecutableAspect::RunDevice);
         executable.setPlaceHolderText(Tr::tr("Unknown"));
-
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
 
         setUpdater([this] {
             const BuildTargetInfo bti = buildTargetInfo();
@@ -58,12 +56,9 @@ public:
         executable.setHistoryCompleter("BareMetal.CustomRunConfig.History");
         executable.setExpectedKind(PathChooser::Any);
 
-        arguments.setMacroExpander(macroExpander());
-
-        workingDir.setMacroExpander(macroExpander());
-
         setDefaultDisplayName(RunConfigurationFactory::decoratedTargetName(
             Tr::tr("Custom Executable"), target));
+        setUsesEmptyBuildKeys();
     }
 
 public:
@@ -83,22 +78,51 @@ public:
 };
 
 
+// BareMetalDeployConfigurationFactory
+
+class BareMetalDeployConfigurationFactory : public DeployConfigurationFactory
+{
+public:
+    BareMetalDeployConfigurationFactory()
+    {
+        setConfigBaseId("BareMetal.DeployConfiguration");
+        setDefaultDisplayName(Tr::tr("Deploy to BareMetal Device"));
+        addSupportedTargetDeviceType(Constants::BareMetalOsType);
+    }
+};
+
 // BareMetalRunConfigurationFactory
 
-BareMetalRunConfigurationFactory::BareMetalRunConfigurationFactory()
+class BareMetalRunConfigurationFactory final : public RunConfigurationFactory
 {
-    registerRunConfiguration<BareMetalRunConfiguration>(Constants::BAREMETAL_RUNCONFIG_ID);
-    setDecorateDisplayNames(true);
-    addSupportedTargetDeviceType(BareMetal::Constants::BareMetalOsType);
-}
+public:
+    BareMetalRunConfigurationFactory()
+    {
+        registerRunConfiguration<BareMetalRunConfiguration>(Constants::BAREMETAL_RUNCONFIG_ID);
+        setDecorateDisplayNames(true);
+        addSupportedTargetDeviceType(BareMetal::Constants::BareMetalOsType);
+    }
+};
 
 // BaseMetalCustomRunConfigurationFactory
 
-BareMetalCustomRunConfigurationFactory::BareMetalCustomRunConfigurationFactory()
-    : FixedRunConfigurationFactory(Tr::tr("Custom Executable"), true)
+class BareMetalCustomRunConfigurationFactory final : public FixedRunConfigurationFactory
 {
-    registerRunConfiguration<BareMetalCustomRunConfiguration>(Constants::BAREMETAL_CUSTOMRUNCONFIG_ID);
-    addSupportedTargetDeviceType(BareMetal::Constants::BareMetalOsType);
+public:
+    BareMetalCustomRunConfigurationFactory()
+        : FixedRunConfigurationFactory(Tr::tr("Custom Executable"), true)
+    {
+        registerRunConfiguration<BareMetalCustomRunConfiguration>(Constants::BAREMETAL_CUSTOMRUNCONFIG_ID);
+        addSupportedTargetDeviceType(BareMetal::Constants::BareMetalOsType);
+    }
+};
+
+
+void setupBareMetalDeployAndRunConfigurations()
+{
+   static BareMetalDeployConfigurationFactory theBareMetalDeployConfigurationFactory;
+   static BareMetalRunConfigurationFactory theBareMetalRunConfigurationFactory;
+   static BareMetalCustomRunConfigurationFactory theBareMetalCustomRunConfigurationFactory;
 }
 
 } // BareMetal::Internal

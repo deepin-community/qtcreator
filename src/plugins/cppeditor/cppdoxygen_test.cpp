@@ -225,26 +225,30 @@ void DoxygenTest::testBasic_data()
 
     /// test cpp style doxygen comment when inside a indented scope
     QTest::newRow("cpp_styleA_indented") << _(
-         "    bool preventFolding;\n"
+         "void func() {\n"
          "    ///|\n"
          "    int a;\n"
+         "}\n"
         ) << _(
-         "    bool preventFolding;\n"
+         "void func() {\n"
          "    ///\n"
          "    /// \\brief a\n"
          "    ///\n"
-         "    int a;\n") << int(CommandPrefix::Auto);
+         "    int a;\n"
+         "}\n") << int(CommandPrefix::Auto);
 
     QTest::newRow("cpp_styleB_indented") << _(
-         "    bool preventFolding;\n"
+         "void func() {\n"
          "    //!|\n"
          "    int a;\n"
+         "}\n"
         ) << _(
-         "    bool preventFolding;\n"
+         "void func() {\n"
          "    //!\n"
          "    //! \\brief a\n"
          "    //!\n"
-         "    int a;\n") << int(CommandPrefix::Auto);
+         "    int a;\n"
+         "}\n") << int(CommandPrefix::Auto);
 
     QTest::newRow("cpp_styleA_indented_preserve_mixed_indention_continuation") << _(
          "\t bool preventFolding;\n"
@@ -383,6 +387,18 @@ void DoxygenTest::testBasic_data()
         " *  \n"
         " */\n"
         "int a;\n") << int(CommandPrefix::Auto);
+
+    QTest::newRow("continuation_on_asterisk") << _(
+        "bool preventFolding;\n"
+        "/* leading comment\n"
+        " * cont|*/\n"
+        "int a;\n"
+        ) << _(
+        "bool preventFolding;\n"
+        "/* leading comment\n"
+        " * cont\n"
+        " */\n"
+        "int a;\n") << int(CommandPrefix::Auto);
 }
 
 void DoxygenTest::testBasic()
@@ -484,13 +500,21 @@ void DoxygenTest::runTest(const QByteArray &original,
     //    testDocument.m_editorWidget->unfoldAll();
     testDocument.m_editor->setCursorPosition(testDocument.m_cursorPosition);
 
-    TestCase::waitForRehighlightedSemanticDocument(testDocument.m_editorWidget);
+    QVERIFY(TestCase::waitForRehighlightedSemanticDocument(testDocument.m_editorWidget));
 
     // Send 'ENTER' key press
     QKeyEvent event(QEvent::KeyPress, Qt::Key_Enter, Qt::NoModifier);
     QCoreApplication::sendEvent(testDocument.m_editorWidget, &event);
     const QByteArray result = testDocument.m_editorWidget->document()->toPlainText().toUtf8();
 
+    if (isClangFormatPresent()) {
+        QEXPECT_FAIL("noContinuationForExpressionAndComment1",
+                     "ClangFormat indents differently",
+                     Continue);
+        QEXPECT_FAIL("noContinuationForExpressionAndComment2",
+                     "ClangFormat indents differently",
+                     Continue);
+    }
     QCOMPARE(QLatin1String(result), QLatin1String(expected));
 
     testDocument.m_editorWidget->undo();

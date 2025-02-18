@@ -102,40 +102,47 @@ public:
 
     virtual ~MockClient() {}
 
-    virtual void macroAdded(const Macro & macro)
+    void macroAdded(const Macro &macro) override
     {
         m_definedMacros.append(macro.name());
         m_definedMacrosLine.append(macro.line());
     }
 
-    virtual void passedMacroDefinitionCheck(int /*bytesOffset*/,
-                                            int /*utf16charsOffset*/,
-                                            int line,
-                                            const Macro &macro)
+    void pragmaAdded(const Pragma &pragma) override
+    {
+        m_pragmas.append(pragma);
+    }
+
+    void passedMacroDefinitionCheck(int /*bytesOffset*/,
+                                    int /*utf16charsOffset*/,
+                                    int line,
+                                    const Macro &macro) override
     {
         m_definitionsResolvedFromLines[macro.name()].append(line);
     }
 
-    virtual void failedMacroDefinitionCheck(int /*offset*/,
-                                            int /*utf16charsOffset*/,
-                                            const ByteArrayRef &name)
+    void failedMacroDefinitionCheck(int /*offset*/,
+                                    int /*utf16charsOffset*/,
+                                    const ByteArrayRef &name) override
     {
         m_unresolvedDefines.insert(name.toByteArray());
     }
 
-    virtual void notifyMacroReference(int bytesOffset, int /*utf16charsOffset*/,
-                                      int line, const Macro &macro)
+    void notifyMacroReference(int bytesOffset,
+                              int /*utf16charsOffset*/,
+                              int line,
+                              const Macro &macro) override
     {
         m_macroUsesLine[macro.name()].append(line);
         m_expandedMacrosOffset.append(bytesOffset);
     }
 
-    virtual void startExpandingMacro(int bytesOffset,
-                                     int /*utf16charsOffset*/,
-                                     int line,
-                                     const Macro &macro,
-                                     const QVector<MacroArgumentReference> &actuals
-                                            = QVector<MacroArgumentReference>())
+    void startExpandingMacro(int bytesOffset,
+                             int /*utf16charsOffset*/,
+                             int line,
+                             const Macro &macro,
+                             const QVector<MacroArgumentReference> &actuals
+                                    = QVector<MacroArgumentReference>()) override
     {
         m_expandedMacros.append(macro.name());
         m_expandedMacrosOffset.append(bytesOffset);
@@ -144,16 +151,16 @@ public:
         m_usedMacros.insert(macro.name(), actuals);
     }
 
-    virtual void stopExpandingMacro(int /*offset*/, const Macro &/*macro*/) {}
+    void stopExpandingMacro(int /*offset*/, const Macro &/*macro*/) override {}
 
-    virtual void startSkippingBlocks(int utf16charsOffset)
+    void startSkippingBlocks(int utf16charsOffset) override
     { m_skippedBlocks.append(Block(utf16charsOffset)); }
 
-    virtual void stopSkippingBlocks(int utf16charsOffset)
+    void stopSkippingBlocks(int utf16charsOffset) override
     { m_skippedBlocks.last().end = utf16charsOffset; }
 
-    virtual void sourceNeeded(int line, const Utils::FilePath &includedFileName, IncludeType mode,
-                              const Utils::FilePaths &initialIncludes = {})
+    void sourceNeeded(int line, const Utils::FilePath &includedFileName, IncludeType mode,
+                      const Utils::FilePaths &initialIncludes = {}) override
     {
         Q_UNUSED(initialIncludes)
 #if 1
@@ -223,7 +230,7 @@ public:
         *m_output = m_pp.run(fileName, src, nolines, true);
     }
 
-    virtual void markAsIncludeGuard(const QByteArray &macroName)
+    void markAsIncludeGuard(const QByteArray &macroName) override
     { m_includeGuardMacro = macroName; }
 
     QByteArray includeGuard() const
@@ -262,6 +269,8 @@ public:
     const QMap<QByteArray, QVector<MacroArgumentReference >> usedMacros() const
     { return m_usedMacros; }
 
+    const QList<Pragma> &pragmas() const { return m_pragmas; }
+
 private:
     Environment *m_env;
     QByteArray *m_output;
@@ -280,6 +289,7 @@ private:
     QSet<QByteArray> m_unresolvedDefines;
     QList<int> m_macroArgsCount;
     QMap<QByteArray, QVector<MacroArgumentReference >> m_usedMacros;
+    QList<Pragma> m_pragmas;
 };
 
 QT_BEGIN_NAMESPACE
@@ -379,6 +389,7 @@ private slots:
     void trigraph();
     void nested_arguments_expansion();
     void preprocessorSymbolsAsMacroArguments();
+    void pragmas();
 };
 
 // Remove all #... lines, and 'simplify' string, to allow easily comparing the result
@@ -2086,6 +2097,31 @@ void tst_Preprocessor::preprocessorSymbolsAsMacroArguments()
             "return 0;\n"
             "}\n";
     QVERIFY(preprocess.run(QLatin1String("<stdin>"), input).startsWith("# 1 \"<stdin>\"\n"));
+}
+
+void tst_Preprocessor::pragmas()
+{
+    Environment env;
+    QByteArray output;
+    MockClient client(&env, &output);
+    Preprocessor preprocess(&client, &env);
+    preprocess.setKeepComments(true);
+    QByteArray input =
+        "#pragma once\n"
+        "#include <iostream>\n"
+        "#pragma pack(/*distraction*/push) // comment\n"
+        "#define THE_MACRO\n"
+        "struct S { bool b1; int i; short s; bool b2; };\n"
+        "#pragma pack(pop)\n";
+    preprocess.run(QLatin1String("<stdin>"), input);
+    QCOMPARE(client.pragmas().size(), 3);
+    QCOMPARE(client.pragmas().at(0).line, 1);
+    QCOMPARE(client.pragmas().at(0).tokens, QByteArrayList{"once"});
+    QCOMPARE(client.pragmas().at(1).line, 3);
+    QCOMPARE(client.pragmas().at(1).tokens, (QByteArrayList{"pack", "(", "push", ")"}));
+    QCOMPARE(client.pragmas().at(2).line, 6);
+    QCOMPARE(client.pragmas().at(2).tokens, (QByteArrayList{"pack", "(", "pop", ")"}));
+    QCOMPARE(client.definedMacrosLine(), QList<int>{4});
 }
 
 void tst_Preprocessor::excessive_nesting()

@@ -25,18 +25,16 @@
     You can add kits for the desktop and for the following types of devices:
 
     \list
-        \li \l{Connecting Android Devices}{Android}
-        \li \l{Connecting Bare Metal Devices}{Bare Metal}
-        \li \l{https://doc.qt.io/Boot2Qt/b2qt-installation-guides.html}
-            {Boot2Qt} (commercial only)
-        \li \l{Emulator}{Boot2Qt Emulator} (commercial only)
-        \li \l{Adding Docker Devices}{Docker} (experimental)
-        \li \l{Connecting iOS Devices}{iOS}
+        \li \l{Developing for Android}{Android}
+        \li \l{Developing for Bare Metal Devices}{Bare Metal}
+        \li \l{\B2Q: Documentation}{\B2Q} (commercial only)
+        \li \l{Add Docker devices}{Docker} (experimental)
+        \li \l{Developing for iOS}{iOS}
         \li iOS Simulator
-        \li \l{Connecting MCUs}{MCU} (commercial only)
-        \li \l{Connecting QNX Devices}{QNX}
-        \li \l{Connecting Remote Linux Devices}{Remote Linux}
-        \li \l{Building Applications for the Web}{WebAssembly Runtime}
+        \li \l{Developing for MCUs}{MCU} (commercial only)
+        \li \l{Add a QNX Neutrino device}{QNX}
+        \li \l{Developing for Remote Linux Devices}{Remote Linux}
+        \li \l{Build applications for the web}{WebAssembly Runtime}
     \endlist
 
     To add kits:
@@ -60,20 +58,20 @@
     choose the kit to use. To set the selected kit as the default kit,
     select \uicontrol {Make Default}.
 
-    \sa {Activate kits for a project}, {Add debuggers}, {Add Qt versions},
-    {Open projects}, {Compilers}, {Kits}
+    \sa {Manage Kits}{How To: Manage Kits}, {Compilers}, {Kits}
 */
 
 /*!
     \page creator-preferences-kits.html
     \previouspage creator-reference.html
 
-    \ingroup creator-reference-preferences
+    \ingroup creator-reference-preferences-kits
 
+    \target kits-tab
     \title Kits
 
-    \brief Sets kit preferences. A kit consists of a set of values that define
-    one environment, such as a \e {device}, tool chain, Qt version, and debugger
+    \brief Set kit preferences. A kit consists of a set of values that define
+    one environment, such as a \e {device}, toolchain, Qt version, and debugger
     command to use.
 
     Typically, only a subset of the kit preferences is relevant for a particular
@@ -104,9 +102,14 @@
         \li \uicontrol Name
         \li Name of the kit. You can use variables to generate the kit name
             based on the values you set in the other fields.
-    \row
-        \li \inlineimage icons/qtcreator-desktopdevice-button.png
-        \li Image to use as an icon for the kit.
+
+            Click the \inlineimage icons/qtcreator-desktopdevice-button.png icon next to the field,
+            and select the image that is displayed in the kit selector for this kit.
+            Select \uicontrol Browse to select an
+            image in a supported file format (for example, PNG). The image is
+            scaled to the size 64x64 pixels. For example, using the compiler
+            logo as an icon allows you to easily see, which compiler is used to
+            build the project for the selected kit.
     \row
         \li \uicontrol {File system name}
         \li Name for the kit to use as a part of directory names. This value is
@@ -115,13 +118,6 @@
     \row
         \li \uicontrol{Run device type}
         \li Type of the run device.
-
-            Double-click the icon next to the field to select the image that is
-            displayed in the kit selector for this kit. You can use any
-            image in a supported file format (for example, PNG). The image is
-            scaled to the size 64x64 pixels. For example, using the compiler
-            logo as an icon allows you to easily see, which compiler is used to
-            build the project for the selected kit.
     \row
         \li \uicontrol {Run device}
         \li The device to run applications on.
@@ -135,7 +131,7 @@
             cross-compiling, leave this field empty.
     \row
         \li \uicontrol {Emulator skin}
-        \li Skin to use for the \l {Emulator}{Boot2Qt Emulator Device}.
+        \li Skin to use for the \l {Emulator}{\B2Q Emulator Device}.
     \row
         \li \uicontrol {Compiler}
         \li C or C++ compiler that you use to build the project. You can add
@@ -146,12 +142,15 @@
             This setting is used to tell the code model which compiler is used.
             If your project type and build tool support it, \QC also tells the
             build tool to use this compiler for building the project.
+
+            \note qmake ignores the value of this field and fetches the compiler
+            information from \uicontrol {Qt mkspec}, which you can change.
     \row
         \li \uicontrol Environment
         \li Select \uicontrol Change to modify environment variable values for
             build environments in the \uicontrol {Edit Environment Changes}
             dialog. For more information about how to add and remove variable
-            values, see \l{Batch edit environment settings}.
+            values, see \l{Edit environment settings}.
     \row
         \li \uicontrol {Force UTF-8 MSVC compiler output}
         \li Either switches the language of MSVC to English or keeps the
@@ -212,7 +211,6 @@
             \uicontrol Manage to add installed Ninja tools to the list.
     \endtable
 
-    \sa {Activate kits for a project}, {Open projects}, {Add CMake Tools},
-    {Add compilers}, {Add debuggers}, {Add kits}, {Add Qt versions},
+    \sa {Manage Kits}{How To: Manage Kits}, {Add CMake Tools},
     {Edit Qbs profiles}
 */

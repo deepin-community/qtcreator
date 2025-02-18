@@ -7,7 +7,7 @@
 #include "buildinfo.h"
 #include "projectexplorerconstants.h"
 #include "projectexplorertr.h"
-#include "kitmanager.h"
+#include "kitaspect.h"
 #include "kitoptionspage.h"
 
 #include <coreplugin/icore.h>
@@ -99,10 +99,11 @@ bool TargetSetupWidget::isKitSelected() const
 
 void TargetSetupWidget::setKitSelected(bool b)
 {
-    // Only check target if there are build configurations possible
-    b &= hasSelectedBuildConfigurations();
     const GuardLocker locker(m_ignoreChanges);
     m_detailsWidget->setChecked(b);
+    m_detailsWidget->setState(
+        b && hasSelectableBuildConfigurations() ? DetailsWidget::Expanded
+                                                : DetailsWidget::Collapsed);
     m_detailsWidget->widget()->setEnabled(b);
 }
 
@@ -125,7 +126,7 @@ void TargetSetupWidget::addBuildInfo(const BuildInfo &info, bool isImport)
 
     BuildInfoStore store;
     store.buildInfo = info;
-    store.isEnabled = true;
+    store.isEnabled = info.enabledByDefault;
     ++m_selected;
 
     if (info.factory) {
@@ -138,6 +139,8 @@ void TargetSetupWidget::addBuildInfo(const BuildInfo &info, bool isImport)
         store.pathChooser = new PathChooser();
         store.pathChooser->setExpectedKind(PathChooser::Directory);
         store.pathChooser->setFilePath(info.buildDirectory);
+        if (!info.showBuildDirConfigWidget)
+            store.pathChooser->setVisible(false);
         store.pathChooser->setHistoryCompleter("TargetSetup.BuildDir.History");
         store.pathChooser->setReadOnly(isImport);
         m_newBuildsLayout->addWidget(store.pathChooser, pos * 2, 1);
@@ -166,12 +169,7 @@ void TargetSetupWidget::targetCheckBoxToggled(bool b)
     if (m_ignoreChanges.isLocked())
         return;
     m_detailsWidget->widget()->setEnabled(b);
-    if (b && (contains(m_infoStore, &BuildInfoStore::hasIssues)
-              || !contains(m_infoStore, &BuildInfoStore::isEnabled))) {
-        m_detailsWidget->setState(DetailsWidget::Expanded);
-    } else if (!b) {
-        m_detailsWidget->setState(DetailsWidget::Collapsed);
-    }
+    m_detailsWidget->setState(b ? DetailsWidget::Expanded : DetailsWidget::Collapsed);
     emit selectedToggled();
 }
 
@@ -180,8 +178,7 @@ void TargetSetupWidget::manageKit()
     if (!m_kit)
         return;
 
-    setSelectectKitId(m_kit->id());
-    Core::ICore::showOptionsDialog(Constants::KITS_SETTINGS_PAGE_ID, parentWidget());
+    Core::ICore::showOptionsDialog(Constants::KITS_SETTINGS_PAGE_ID, m_kit->id(), parentWidget());
 }
 
 void TargetSetupWidget::setProjectPath(const FilePath &projectPath)
@@ -206,20 +203,26 @@ void TargetSetupWidget::update(const TasksGenerator &generator)
     const Tasks tasks = generator(kit());
 
     m_detailsWidget->setSummaryText(kit()->displayName());
-    m_detailsWidget->setIcon(kit()->isValid() ? kit()->icon() : Icons::CRITICAL.icon());
+    if (!kit()->isValid())
+        m_detailsWidget->setIcon(Icons::CRITICAL.icon());
+    else if (kit()->hasWarning() || Utils::anyOf(tasks, Utils::equal(&Task::type, Task::Warning)))
+        m_detailsWidget->setIcon(Icons::WARNING.icon());
+    else
+        m_detailsWidget->setIcon(kit()->icon());
+
+    m_detailsWidget->setToolTip(kit()->toHtml(tasks, ""));
 
     const Task errorTask = Utils::findOrDefault(tasks, Utils::equal(&Task::type, Task::Error));
 
     // Kits that where the taskGenarator reports an error are not selectable, because we cannot
     // guarantee that we can handle the project sensibly (e.g. qmake project without Qt).
     if (!errorTask.isNull()) {
-        toggleEnabled(false);
-        m_detailsWidget->setToolTip(kit()->toHtml(tasks, ""));
+        setValid(false);
         m_infoStore.clear();
         return;
     }
 
-    toggleEnabled(true);
+    setValid(true);
     updateDefaultBuildDirectories();
 }
 
@@ -233,17 +236,18 @@ const QList<BuildInfo> TargetSetupWidget::buildInfoList(const Kit *k, const File
     return {info};
 }
 
-bool TargetSetupWidget::hasSelectedBuildConfigurations() const
+bool TargetSetupWidget::hasSelectableBuildConfigurations() const
 {
-    return !selectedBuildInfoList().isEmpty();
+    return !m_infoStore.empty();
 }
 
-void TargetSetupWidget::toggleEnabled(bool enabled)
+void TargetSetupWidget::setValid(bool valid)
 {
-    m_detailsWidget->widget()->setEnabled(enabled && hasSelectedBuildConfigurations());
-    m_detailsWidget->setCheckable(enabled);
-    m_detailsWidget->setExpandable(enabled);
-    if (!enabled) {
+    m_isValid = valid;
+    m_detailsWidget->widget()->setEnabled(valid);
+    m_detailsWidget->setCheckable(valid);
+    m_detailsWidget->setExpandable(valid && hasSelectableBuildConfigurations());
+    if (!valid) {
         m_detailsWidget->setState(DetailsWidget::Collapsed);
         m_detailsWidget->setChecked(false);
     }
@@ -251,6 +255,12 @@ void TargetSetupWidget::toggleEnabled(bool enabled)
 
 const QList<BuildInfo> TargetSetupWidget::selectedBuildInfoList() const
 {
+    if (m_infoStore.empty()) {
+        BuildInfo info;
+        info.kitId = m_kit->id();
+        return {info};
+    }
+
     QList<BuildInfo> result;
     for (const BuildInfoStore &store : m_infoStore) {
         if (store.isEnabled)
@@ -280,6 +290,7 @@ void TargetSetupWidget::updateDefaultBuildDirectories()
                 if (!buildInfoStore.customBuildDir) {
                     const GuardLocker locker(m_ignoreChanges);
                     buildInfoStore.pathChooser->setFilePath(buildInfo.buildDirectory);
+                    buildInfoStore.pathChooser->setVisible(buildInfo.showBuildDirConfigWidget);
                 }
                 found = true;
                 break;

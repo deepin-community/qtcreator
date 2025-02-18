@@ -5,7 +5,9 @@
 #include "stateseditorview.h"
 
 #include <bindingproperty.h>
+#include <designermcumanager.h>
 #include <modelnode.h>
+#include <modelnodeoperations.h>
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
 #include <rewriterview.h>
@@ -32,7 +34,7 @@ StatesEditorModel::StatesEditorModel(StatesEditorView *view)
     , m_hasExtend(false)
     , m_extendedStates()
 {
-    QObject::connect(this, &StatesEditorModel::dataChanged, [this]() { emit baseStateChanged(); });
+    QObject::connect(this, &StatesEditorModel::dataChanged, [this] { emit baseStateChanged(); });
 }
 
 int StatesEditorModel::count() const
@@ -73,6 +75,7 @@ void StatesEditorModel::reset()
 
     evaluateExtend();
     emit baseStateChanged();
+    emit isMCUsChanged();
 }
 
 QVariant StatesEditorModel::data(const QModelIndex &index, int role) const
@@ -246,6 +249,11 @@ bool StatesEditorModel::hasDefaultState() const
     return m_statesEditorView->hasDefaultState();
 }
 
+void StatesEditorModel::jumpToCode()
+{
+    ModelNodeOperations::jumpToCode(m_statesEditorView->currentState().modelNode());
+}
+
 void StatesEditorModel::setAnnotation(int internalNodeId)
 {
     m_statesEditorView->setAnnotation(internalNodeId);
@@ -269,7 +277,7 @@ QStringList StatesEditorModel::stateGroups() const
     const auto groupMetaInfo = m_statesEditorView->model()->qtQuickStateGroupMetaInfo();
 
     auto stateGroups = Utils::transform(m_statesEditorView->allModelNodesOfType(groupMetaInfo),
-                                        [](const ModelNode &node) { return node.displayName(); });
+                                        &ModelNode::displayName);
     stateGroups.prepend(tr("Default"));
     return stateGroups;
 }
@@ -335,6 +343,9 @@ bool StatesEditorModel::renameActiveStateGroup(const QString &name)
 void StatesEditorModel::addStateGroup(const QString &name)
 {
     m_statesEditorView->executeInTransaction("createStateGroup", [this, name]() {
+#ifdef QDS_USE_PROJECTSTORAGE
+        auto stateGroupNode = m_statesEditorView->createModelNode("StateGroup");
+#else
         const TypeName typeName = "QtQuick.StateGroup";
         auto metaInfo = m_statesEditorView->model()->metaInfo(typeName);
         int minorVersion = metaInfo.minorVersion();
@@ -342,6 +353,7 @@ void StatesEditorModel::addStateGroup(const QString &name)
         auto stateGroupNode = m_statesEditorView->createModelNode(typeName,
                                                                   majorVersion,
                                                                   minorVersion);
+#endif
         stateGroupNode.setIdWithoutRefactoring(m_statesEditorView->model()->generateNewId(name));
 
         m_statesEditorView->rootModelNode().defaultNodeAbstractProperty().reparentHere(
@@ -355,7 +367,7 @@ void StatesEditorModel::removeStateGroup()
     if (m_statesEditorView->activeStatesGroupNode().isRootNode())
         return;
 
-    m_statesEditorView->executeInTransaction("removeStateGroup", [this]() {
+    m_statesEditorView->executeInTransaction("removeStateGroup", [this] {
         m_statesEditorView->activeStatesGroupNode().destroy();
     });
 }
@@ -448,6 +460,26 @@ void StatesEditorModel::setCanAddNewStates(bool b)
     m_canAddNewStates = b;
 
     emit canAddNewStatesChanged();
+}
+
+QColor StatesEditorModel::backgroundColor() const
+{
+    return m_backgrounColor;
+}
+
+void StatesEditorModel::setBackgroundColor(const QColor &c)
+{
+    if (c == m_backgrounColor)
+        return;
+
+    m_backgrounColor = c;
+
+    emit backgroundColorChanged();
+}
+
+bool StatesEditorModel::isMCUs() const
+{
+    return DesignerMcuManager::instance().isMCUProject();
 }
 
 } // namespace QmlDesigner

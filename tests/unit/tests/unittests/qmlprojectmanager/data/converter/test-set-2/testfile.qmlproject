@@ -19,8 +19,11 @@ Project {
     }
 
     Files {
-        filter: "*.conf"
         files: ["qtquickcontrols2.conf"]
+    }
+
+    Files {
+        filter: "*.conf"
     }
 
     Files {
@@ -41,4 +44,6 @@ Project {
 
     /* Required for deployment */
     targetDirectory: "/opt/fileSelectors"
+
+    enableCMakeGeneration: false
 }

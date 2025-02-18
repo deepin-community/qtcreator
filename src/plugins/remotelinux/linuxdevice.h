@@ -13,8 +13,8 @@ namespace RemoteLinux {
 class REMOTELINUX_EXPORT LinuxDevice : public ProjectExplorer::IDevice
 {
 public:
-    using Ptr = QSharedPointer<LinuxDevice>;
-    using ConstPtr = QSharedPointer<const LinuxDevice>;
+    using Ptr = std::shared_ptr<LinuxDevice>;
+    using ConstPtr = std::shared_ptr<const LinuxDevice>;
 
     ~LinuxDevice();
 
@@ -24,7 +24,7 @@ public:
 
     bool canCreateProcessModel() const override { return true; }
     bool hasDeviceTester() const override { return true; }
-    ProjectExplorer::DeviceTester *createDeviceTester() const override;
+    ProjectExplorer::DeviceTester *createDeviceTester() override;
     ProjectExplorer::DeviceProcessSignalOperation::Ptr signalOperation() const override;
     bool usableAsBuildDevice() const override;
 
@@ -42,8 +42,16 @@ public:
     class LinuxDevicePrivate *connectionAccess() const;
     void checkOsType() override;
 
+    DeviceState deviceState() const override;
+    QString deviceStateToString() const override;
+
+    bool isDisconnected() const;
+    bool tryToConnect();
+
 protected:
     LinuxDevice();
+
+    Utils::BoolAspect disconnected{this};
 
     void _setOsType(Utils::OsType osType);
 
@@ -51,13 +59,6 @@ protected:
     friend class LinuxDevicePrivate;
 };
 
-namespace Internal {
+namespace Internal { void setupLinuxDevice(); }
 
-class LinuxDeviceFactory final : public ProjectExplorer::IDeviceFactory
-{
-public:
-    LinuxDeviceFactory();
-};
-
-} // namespace Internal
 } // namespace RemoteLinux

@@ -44,6 +44,7 @@ class NumberValue;
 class ModuleApiInfo;
 class ObjectValue;
 class QmlEnumValue;
+class UiEnumValue;
 class QmlPrototypeReference;
 class RealValue;
 class Reference;
@@ -115,6 +116,7 @@ public:
     virtual const CppComponentValue *asCppComponentValue() const;
     virtual const ASTObjectValue *asAstObjectValue() const;
     virtual const QmlEnumValue *asQmlEnumValue() const;
+    virtual const UiEnumValue *asUiEnumValue() const;
     virtual const QmlPrototypeReference *asQmlPrototypeReference() const;
     virtual const ASTPropertyReference *asAstPropertyReference() const;
     virtual const ASTVariableReference *asAstVariableReference() const;
@@ -243,6 +245,12 @@ template <> Q_INLINE_TEMPLATE const ASTObjectValue *value_cast(const Value *v)
 template <> Q_INLINE_TEMPLATE const QmlEnumValue *value_cast(const Value *v)
 {
     if (v) return v->asQmlEnumValue();
+    else   return nullptr;
+}
+
+template <> Q_INLINE_TEMPLATE const UiEnumValue *value_cast(const Value *v)
+{
+    if (v) return v->asUiEnumValue();
     else   return nullptr;
 }
 
@@ -559,6 +567,27 @@ private:
     int m_enumIndex;
 };
 
+class QMLJS_EXPORT UiEnumValue : public ObjectValue
+{
+public:
+    UiEnumValue(AST::UiEnumDeclaration *uiEnum, ValueOwner *valueOwner,
+                const QString &originId);
+    ~UiEnumValue();
+
+    const UiEnumValue *asUiEnumValue() const override;
+    bool getSourceLocation(Utils::FilePath *path, int *line, int *column) const override;
+    QString name() const;
+    QStringList keys() const;
+
+private:
+    const QString m_name;
+    Utils::FilePath m_path;
+    int m_line;
+    int m_column;
+    QStringList m_keys;
+    QList<int> m_values;
+};
+
 
 // A ObjectValue based on a FakeMetaObject.
 // May only have other CppComponentValue as ancestors.
@@ -572,6 +601,8 @@ public:
     ~CppComponentValue();
 
     const CppComponentValue *asCppComponentValue() const override;
+
+    bool getSourceLocation(Utils::FilePath *fileName, int *line, int *column) const override;
 
     void processMembers(MemberProcessor *processor) const override;
     const Value *valueForCppName(const QString &typeName) const;
@@ -1125,6 +1156,11 @@ public:
                               [[maybe_unused]] const Document *context,
                               [[maybe_unused]] ValueOwner *valueOwner,
                               [[maybe_unused]] Snapshot *snapshot) {}
+    virtual Utils::FilePaths prioritizeImportPaths([[maybe_unused]] const Document *context,
+                                                   const Utils::FilePaths &importPaths)
+    {
+        return importPaths;
+    }
 };
 
 } // namespace QmlJS

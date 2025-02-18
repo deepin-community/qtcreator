@@ -3,10 +3,10 @@
 
 #include "itemlibrarymodel.h"
 #include "itemlibrarycategoriesmodel.h"
-#include "itemlibraryimport.h"
 #include "itemlibrarycategory.h"
+#include "itemlibraryentry.h"
+#include "itemlibraryimport.h"
 #include "itemlibraryitem.h"
-#include "itemlibraryinfo.h"
 
 #include <designermcumanager.h>
 #include <model.h>
@@ -14,8 +14,9 @@
 #include <nodemetainfo.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
-#include "qmldesignerconstants.h"
-#include "qmldesignerplugin.h"
+#include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
+#include <qmldesignerutils/version.h>
 #include <utils/algorithm.h>
 #include <utils/qtcassert.h>
 
@@ -296,15 +297,16 @@ void ItemLibraryModel::setSearchText(const QString &searchText)
 
 Import ItemLibraryModel::entryToImport(const ItemLibraryEntry &entry)
 {
+#ifndef QDS_USE_PROJECTSTORAGE
     if (entry.majorVersion() == -1 && entry.minorVersion() == -1)
         return Import::createFileImport(entry.requiredImport());
-
+#endif
     return Import::createLibraryImport(entry.requiredImport(), QString::number(entry.majorVersion()) + QLatin1Char('.') +
                                                                QString::number(entry.minorVersion()));
 
 }
 
-void ItemLibraryModel::update(ItemLibraryInfo *itemLibraryInfo, Model *model)
+void ItemLibraryModel::update(Model *model)
 {
     if (!model)
         return;
@@ -312,50 +314,54 @@ void ItemLibraryModel::update(ItemLibraryInfo *itemLibraryInfo, Model *model)
     beginResetModel();
     clearSections();
 
-    DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
-    Utils::FilePath qmlFileName = document->fileName();
-    ProjectExplorer::Project *project = ProjectExplorer::ProjectManager::projectForFile(qmlFileName);
-    QString projectName = project ? project->displayName() : "";
+    const QString projectName = DocumentManager::currentProjectName();
+
+    auto compUtils = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
 
     QStringList excludedImports {
-        QLatin1String(Constants::COMPONENT_BUNDLES_FOLDER).mid(1) + ".MaterialBundle",
-        QLatin1String(Constants::COMPONENT_BUNDLES_FOLDER).mid(1) + ".EffectBundle"
+        projectName,
+        compUtils.materialsBundleType(),
+        compUtils.effectsBundleType(),
+        compUtils.userMaterialsBundleType(),
+        compUtils.user3DBundleType(),
+        compUtils.userEffectsBundleType()
     };
 
     // create import sections
     const Imports usedImports = model->usedImports();
     QHash<QString, ItemLibraryImport *> importHash;
     for (const Import &import : model->imports()) {
-        if (import.url() != projectName) {
-            if (excludedImports.contains(import.url()))
-                continue;
-            bool addNew = true;
-            bool isQuick3DAsset = import.url().startsWith("Quick3DAssets.");
-            QString importUrl = import.url();
-            if (isQuick3DAsset)
-                importUrl = ItemLibraryImport::quick3DAssetsTitle();
-            else if (import.isFileImport())
-                importUrl = import.toString(true, true).remove("\"");
+        if (excludedImports.contains(import.url())
+            || import.url().startsWith(compUtils.composedEffectsTypePrefix())) {
+            continue;
+        }
 
-            ItemLibraryImport *oldImport = importHash.value(importUrl);
-            if (oldImport && oldImport->sectionType() == ItemLibraryImport::SectionType::Quick3DAssets
-                && isQuick3DAsset) {
-                addNew = false; // add only 1 Quick3DAssets import section
-            } else if (oldImport && oldImport->importEntry().url() == import.url()) {
-                // Retain the higher version if multiples exist
-                if (oldImport->importEntry().toVersion() >= import.toVersion() || import.hasVersion())
-                    addNew = false;
-                else
-                    delete oldImport;
-            }
+        bool addNew = true;
+        bool isQuick3DAsset = import.url().startsWith(compUtils.import3dTypePrefix());
+        QString importUrl = import.url();
+        if (isQuick3DAsset)
+            importUrl = ItemLibraryImport::quick3DAssetsTitle();
+        else if (import.isFileImport())
+            importUrl = import.toString(true, true).remove("\"");
 
-            if (addNew) {
-                auto sectionType = isQuick3DAsset ? ItemLibraryImport::SectionType::Quick3DAssets
-                                                  : ItemLibraryImport::SectionType::Default;
-                ItemLibraryImport *itemLibImport = new ItemLibraryImport(import, this, sectionType);
-                itemLibImport->setImportUsed(usedImports.contains(import));
-                importHash.insert(importUrl, itemLibImport);
-            }
+        ItemLibraryImport *oldImport = importHash.value(importUrl);
+        if (oldImport && oldImport->sectionType() == ItemLibraryImport::SectionType::Quick3DAssets
+            && isQuick3DAsset) {
+            addNew = false; // add only 1 Quick3DAssets import section
+        } else if (oldImport && oldImport->importEntry().url() == import.url()) {
+            // Retain the higher version if multiples exist
+            if (oldImport->importEntry().toVersion() >= import.toVersion() || import.hasVersion())
+                addNew = false;
+            else
+                delete oldImport;
+        }
+
+        if (addNew) {
+            auto sectionType = isQuick3DAsset ? ItemLibraryImport::SectionType::Quick3DAssets
+                                              : ItemLibraryImport::SectionType::Default;
+            ItemLibraryImport *itemLibImport = new ItemLibraryImport(import, this, sectionType);
+            itemLibImport->setImportUsed(usedImports.contains(import));
+            importHash.insert(importUrl, itemLibImport);
         }
     }
 
@@ -364,17 +370,27 @@ void ItemLibraryModel::update(ItemLibraryInfo *itemLibraryInfo, Model *model)
         itemLibImport->setImportExpanded(loadExpandedState(itemLibImport->importUrl()));
     }
 
+    DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
     const bool blockNewImports = document->inFileComponentModelActive();
-    const QList<ItemLibraryEntry> itemLibEntries = itemLibraryInfo->entries();
+    const QList<ItemLibraryEntry> itemLibEntries = model->itemLibraryEntries();
     for (const ItemLibraryEntry &entry : itemLibEntries) {
-        NodeMetaInfo metaInfo = model->metaInfo(entry.typeName());
+        NodeMetaInfo metaInfo;
 
+        if constexpr (useProjectStorage())
+            metaInfo = NodeMetaInfo{entry.typeId(), model->projectStorage()};
+        else
+            metaInfo = model->metaInfo(entry.typeName());
+
+#ifdef QDS_USE_PROJECTSTORAGE
+        bool valid = metaInfo.isValid();
+#else
         bool valid = metaInfo.isValid()
                      && (metaInfo.majorVersion() >= entry.majorVersion()
                          || metaInfo.majorVersion() < 0);
-
+#endif
         bool isItem = valid && metaInfo.isQtQuickItem();
-        bool forceVisibility = valid && NodeHints::fromItemLibraryEntry(entry).visibleInLibrary();
+        bool forceVisibility = valid
+                               && NodeHints::fromItemLibraryEntry(entry, model).visibleInLibrary();
 
         if (m_flowMode) {
             isItem = metaInfo.isFlowViewItem();
@@ -470,9 +486,9 @@ void ItemLibraryModel::update(ItemLibraryInfo *itemLibraryInfo, Model *model)
     endResetModel();
 }
 
-QMimeData *ItemLibraryModel::getMimeData(const ItemLibraryEntry &itemLibraryEntry)
+std::unique_ptr<QMimeData> ItemLibraryModel::getMimeData(const ItemLibraryEntry &itemLibraryEntry)
 {
-    auto mimeData = new QMimeData();
+    auto mimeData = std::make_unique<QMimeData>();
 
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);

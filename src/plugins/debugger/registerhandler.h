@@ -8,6 +8,10 @@
 #include <QHash>
 #include <QSet>
 
+QT_BEGIN_NAMESPACE
+class QAbstractItemDelegate;
+QT_END_NAMESPACE
+
 namespace Utils { class ItemViewEvent; }
 
 namespace Debugger::Internal {
@@ -72,7 +76,7 @@ public:
     RegisterValue value;
     RegisterValue previousValue;
     QString description;
-    QSet<QString> groups;
+    QStringList groups;
     int size = 0;
     RegisterKind kind = UnknownRegister;
 };
@@ -110,5 +114,7 @@ private:
     QHash<QString, RegisterGroup *> m_registerGroups;
     DebuggerEngine * const m_engine;
 };
+
+QAbstractItemDelegate *createRegisterDelegate(int column);
 
 } // Debugger::Internal

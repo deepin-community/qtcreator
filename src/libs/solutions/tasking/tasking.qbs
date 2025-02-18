@@ -9,16 +9,27 @@ QtcLibrary {
         "barrier.cpp",
         "barrier.h",
         "concurrentcall.h",
+        "conditional.cpp",
+        "conditional.h",
         "networkquery.cpp",
         "networkquery.h",
+        "qprocesstask.cpp",
+        "qprocesstask.h",
         "tasking_global.h",
         "tasktree.cpp",
         "tasktree.h",
+        "tasktreerunner.cpp",
+        "tasktreerunner.h",
+        "tcpsocket.cpp",
+        "tcpsocket.h",
     ]
 
     Export {
         Depends { name: "cpp" }
-        cpp.includePaths: ["..", "../.."]
+        cpp.includePaths: [
+            exportingProduct.sourceDirectory + "/..",
+            exportingProduct.sourceDirectory + "/../.."
+        ]
     }
 }
 

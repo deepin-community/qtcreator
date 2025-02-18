@@ -10,7 +10,7 @@ add_qtc_plugin(CodePaster
     columnindicatortextedit.cpp columnindicatortextedit.h
     cpasterconstants.h
     cpaster.qrc
-    cpasterplugin.cpp cpasterplugin.h
+    cpasterplugin.cpp
     cpastertr.h
     dpastedotcomprotocol.cpp dpastedotcomprotocol.h
     fileshareprotocol.cpp fileshareprotocol.h
@@ -22,7 +22,6 @@ add_qtc_plugin(CodePaster
     pasteview.cpp pasteview.h
     protocol.cpp protocol.h
     settings.cpp settings.h
-    stickynotespasteprotocol.cpp stickynotespasteprotocol.h
     urlopenprotocol.cpp urlopenprotocol.h
 
     ../../shared/cpaster/cgi.cpp ../../shared/cpaster/cgi.h

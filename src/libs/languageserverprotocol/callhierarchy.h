@@ -15,8 +15,10 @@ public:
     QString name() const { return typedValue<QString>(nameKey); }
     void setName(const QString &name) { insert(nameKey, name); }
 
-    SymbolKind symbolKind() const { return SymbolKind(typedValue<int>(symbolKindKey)); }
-    void setSymbolKind(const SymbolKind &symbolKind) { insert(symbolKindKey, int(symbolKind)); }
+    SymbolKind symbolKind() const { return SymbolKind(typedValue<int>(kindKey)); }
+    void setSymbolKind(const SymbolKind &symbolKind) { insert(kindKey, int(symbolKind)); }
+
+    std::optional<QList<SymbolTag>> symbolTags() const;
 
     Range range() const { return typedValue<Range>(rangeKey); }
     void setRange(const Range &range) { insert(rangeKey, range); }

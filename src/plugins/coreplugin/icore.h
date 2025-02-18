@@ -55,6 +55,7 @@ public:
                                   const QVariantMap &extraVariables = {});
 
     static bool showOptionsDialog(const Utils::Id page, QWidget *parent = nullptr);
+    static bool showOptionsDialog(const Utils::Id page, Utils::Id item, QWidget *parent = nullptr);
     static QString msgShowOptionsDialog();
     static QString msgShowOptionsDialogToolTip();
 
@@ -81,12 +82,14 @@ public:
     static QWidget *dialogParent();
     static Utils::InfoBar *infoBar();
 
+    static bool askForRestart(const QString &text, const QString &altButtonText = {});
+
     static void raiseWindow(QWidget *widget);
     static void raiseMainWindow();
 
-    static IContext *currentContextObject();
+    static QList<IContext *> currentContextObjects();
     static QWidget *currentContextWidget();
-    static IContext *contextObject(QWidget *widget);
+    static QList<IContext *> contextObjects(QWidget *widget);
     static void updateAdditionalContexts(const Context &remove, const Context &add,
                                          ContextPriority priority = ContextPriority::Low);
     static void addAdditionalContext(const Context &context,
@@ -95,7 +98,9 @@ public:
     static void addContextObject(IContext *context);
     static void removeContextObject(IContext *context);
 
-    static void registerWindow(QWidget *window, const Context &context);
+    static void registerWindow(QWidget *window,
+                               const Context &context,
+                               const Context &actionContext = {});
     static void restartTrimmer();
 
     enum OpenFilesFlags {
@@ -133,20 +138,23 @@ signals:
 
 public:
     /* internal use */
+    static void setRelativePathToProjectFunction(const std::function<Utils::FilePath(const Utils::FilePath &)> &func);
+    static Utils::FilePath pathRelativeToActiveProject(const Utils::FilePath &path);
     static QStringList additionalAboutInformation();
     static void clearAboutInformation();
+    static void setPrependAboutInformation(const QString &line);
     static void appendAboutInformation(const QString &line);
+    static QString aboutInformationCompact();
+    static QString aboutInformationHtml();
     static QString systemInformation();
     static void setupScreenShooter(const QString &name, QWidget *w, const QRect &rc = QRect());
-    static QString pluginPath();
-    static QString userPluginPath();
-    static Utils::FilePath clangExecutable(const Utils::FilePath &clangBinDirectory);
-    static Utils::FilePath clangdExecutable(const Utils::FilePath &clangBinDirectory);
-    static Utils::FilePath clangTidyExecutable(const Utils::FilePath &clangBinDirectory);
-    static Utils::FilePath clazyStandaloneExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::expected_str<Utils::FilePath> clangExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::expected_str<Utils::FilePath> clangdExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::expected_str<Utils::FilePath> clangTidyExecutable(const Utils::FilePath &clangBinDirectory);
+    static Utils::expected_str<Utils::FilePath> clazyStandaloneExecutable(const Utils::FilePath &clangBinDirectory);
     static Utils::FilePath clangIncludeDirectory(const QString &clangVersion,
                                                  const Utils::FilePath &clangFallbackIncludeDir);
-    static QString buildCompatibilityString();
+    static Utils::expected_str<Utils::FilePath> lldbExecutable(const Utils::FilePath &lldbBinDirectory);
     static QStatusBar *statusBar();
 
     static void saveSettings(SaveSettingsReason reason);

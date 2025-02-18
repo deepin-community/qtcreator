@@ -15,8 +15,8 @@ QtcPlugin {
     Depends { name: "TextEditor" }
 
     files: [
-        "callhierarchy.cpp",
-        "callhierarchy.h",
+        "callandtypehierarchy.cpp",
+        "callandtypehierarchy.h",
         "client.cpp",
         "client.h",
         "clientrequest.cpp",
@@ -30,7 +30,8 @@ QtcPlugin {
         "dynamiccapabilities.cpp",
         "dynamiccapabilities.h",
         "languageclient.qrc",
-        "languageclient_global.h", "languageclienttr.h",
+        "languageclient_global.h",
+        "languageclienttr.h",
         "languageclientformatter.cpp",
         "languageclientformatter.h",
         "languageclienthoverhandler.cpp",
@@ -46,7 +47,6 @@ QtcPlugin {
         "languageclientoutline.cpp",
         "languageclientoutline.h",
         "languageclientplugin.cpp",
-        "languageclientplugin.h",
         "languageclientquickfix.cpp",
         "languageclientquickfix.h",
         "languageclientsettings.cpp",

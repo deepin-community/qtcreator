@@ -1,2 +1,5 @@
+add_subdirectory(assetdownloader)
+add_subdirectory(dataexchange)
 add_subdirectory(demo)
 add_subdirectory(imagescaling)
+add_subdirectory(trafficlight)

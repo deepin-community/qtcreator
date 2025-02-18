@@ -8,6 +8,8 @@
 
 #include <coreplugin/icontext.h>
 
+#include <utils/uniqueobjectptr.h>
+
 #include <QFrame>
 #include <QQmlPropertyMap>
 #include <QQuickWidget>
@@ -51,7 +53,7 @@ class AssetsLibraryWidget : public QFrame
 public:
     AssetsLibraryWidget(AsynchronousImageCache &asynchronousFontImageCache,
                         SynchronousImageCache &synchronousFontImageCache, AssetsLibraryView *view);
-    ~AssetsLibraryWidget() = default;
+    ~AssetsLibraryWidget();
 
     QList<QToolButton *> createToolBarWidgets();
     void contextHelp(const Core::IContext::HelpCallback &callback) const;
@@ -70,7 +72,8 @@ public:
     Q_INVOKABLE void startDragAsset(const QStringList &assetPaths, const QPointF &mousePos);
     Q_INVOKABLE void handleAddAsset();
     Q_INVOKABLE void handleSearchFilterChanged(const QString &filterText);
-
+    Q_INVOKABLE void invokeAssetsDrop(const QList<QUrl> &urls, const QString &targetDir);
+    Q_INVOKABLE void handleAssetsDrop(const QList<QUrl> &urls, const QString &targetDir);
     Q_INVOKABLE void handleExtFilesDrop(const QList<QUrl> &simpleFilePaths,
                                         const QList<QUrl> &complexFilePaths,
                                         const QString &targetDirPath);
@@ -78,26 +81,25 @@ public:
     Q_INVOKABLE void emitExtFilesDrop(const QList<QUrl> &simpleFilePaths,
                                       const QList<QUrl> &complexFilePaths,
                                       const QString &targetDirPath = {});
-
     Q_INVOKABLE QSet<QString> supportedAssetSuffixes(bool complex);
-    Q_INVOKABLE void openEffectMaker(const QString &filePath);
+    Q_INVOKABLE void openEffectComposer(const QString &filePath);
     Q_INVOKABLE int qtVersion() const;
     Q_INVOKABLE void invalidateThumbnail(const QString &id);
     Q_INVOKABLE QSize imageSize(const QString &id);
     Q_INVOKABLE QString assetFileSize(const QString &id);
     Q_INVOKABLE bool assetIsImageOrTexture(const QString &id);
-
     Q_INVOKABLE void addTextures(const QStringList &filePaths);
     Q_INVOKABLE void addLightProbe(const QString &filePaths);
     Q_INVOKABLE void updateContextMenuActionsEnableState();
 
     Q_INVOKABLE QString getUniqueEffectPath(const QString &parentFolder, const QString &effectName);
-    Q_INVOKABLE bool createNewEffect(const QString &effectPath, bool openEffectMaker = true);
+    Q_INVOKABLE bool createNewEffect(const QString &effectPath, bool openInEffectComposer = true);
 
     Q_INVOKABLE bool canCreateEffects() const;
 
     Q_INVOKABLE void showInGraphicalShell(const QString &path);
     Q_INVOKABLE QString showInGraphicalShellMsg() const;
+    Q_INVOKABLE void addAssetsToContentLibrary(const QStringList &assetPaths);
 
 signals:
     void itemActivated(const QString &itemName);
@@ -124,6 +126,8 @@ private:
     void setHasMaterialLibrary(bool enable);
     void setHasSceneEnv(bool b);
 
+    void handleDeleteEffects(const QStringList &effectNames);
+
     QSize m_itemIconSize;
 
     SynchronousImageCache &m_fontImageCache;
@@ -133,7 +137,7 @@ private:
     AssetsLibraryView *m_assetsView = nullptr;
     CreateTextures m_createTextures = nullptr;
 
-    QScopedPointer<StudioQuickWidget> m_assetsWidget;
+    Utils::UniqueObjectPtr<StudioQuickWidget> m_assetsWidget;
     std::unique_ptr<PreviewTooltipBackend> m_fontPreviewTooltipBackend;
 
     QShortcut *m_qmlSourceUpdateShortcut = nullptr;

@@ -62,9 +62,8 @@ bool LibrarySelectionAspect::guiToBuffer()
 QVariantMap toVariantMap(const QMap<QString, QString> &map)
 {
     QVariantMap variant;
-    for (const auto &key : map.keys())
-        variant.insert(key, map[key]);
-
+    for (auto it = map.begin(); it != map.end(); ++it)
+        variant.insert(it.key(), *it);
     return variant;
 }
 
@@ -78,17 +77,21 @@ QVariant LibrarySelectionAspect::volatileVariantValue() const
     return toVariantMap(m_buffer);
 }
 
+QVariant LibrarySelectionAspect::defaultVariantValue() const
+{
+    return toVariantMap(defaultValue());
+}
+
 void LibrarySelectionAspect::setVariantValue(const QVariant &value, Announcement howToAnnounce)
 {
     QMap<QString, QString> map;
-    Store store = storeFromVariant(value);
-    for (const auto &key : store.keys())
-        map[stringFromKey(key)] = store[key].toString();
-
+    const Store store = storeFromVariant(value);
+    for (auto it = store.begin(); it != store.end(); ++it)
+        map[stringFromKey(it.key())] = it->toString();
     setValue(map, howToAnnounce);
 }
 
-void LibrarySelectionAspect::addToLayout(Layouting::LayoutItem &parent)
+void LibrarySelectionAspect::addToLayoutImpl(Layouting::Layout &parent)
 {
     using namespace Layouting;
 
@@ -220,12 +223,12 @@ void LibrarySelectionAspect::addToLayout(Layouting::LayoutItem &parent)
     // clang-format off
     QStackedWidget *stack = static_cast<QStackedWidget*>(
         Stack {
-            noMargin,
             Row { noMargin, displayLabel, editBtn },
             Row { noMargin, nameCombo, versionCombo, clearBtn }
         }.emerge()
     );
     // clang-format on
+    stack->setContentsMargins({});
     connect(editBtn, &QPushButton::clicked, stack, [stack] { stack->setCurrentIndex(1); });
     connect(this, &LibrarySelectionAspect::returnToDisplay, stack, [stack] {
         stack->setCurrentIndex(0);

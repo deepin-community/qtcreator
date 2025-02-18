@@ -11,6 +11,8 @@
 #include <QSharedMemory>
 #include <QWidget>
 
+using namespace std::chrono;
+
 namespace SharedTools {
 
 static const int instancesSize = 1024;
@@ -179,23 +181,27 @@ public:
         : QtSingleApplication(id, argc, argv)
         , m_align(21, QChar::Space)
     {}
-    void setFreezeTreshold(std::chrono::milliseconds freezeAbove) { m_threshold = freezeAbove; }
+    void setFreezeTreshold(milliseconds freezeAbove) { m_threshold = freezeAbove; }
 
     bool notify(QObject *receiver, QEvent *event) override {
-        using namespace std::chrono;
+        if (m_inNotify)
+            return QtSingleApplication::notify(receiver, event);
         const auto start = system_clock::now();
         const QPointer<QObject> p(receiver);
         const QString className = QLatin1String(receiver->metaObject()->className());
         const QString name = receiver->objectName();
 
+        m_inNotify = true;
         const bool ret = QtSingleApplication::notify(receiver, event);
+        m_inNotify = false;
 
         const auto end = system_clock::now();
         const auto freeze = duration_cast<milliseconds>(end - start);
         if (freeze > m_threshold) {
+            m_total += freeze;
             const QString time = QTime::currentTime().toString(Qt::ISODateWithMs);
-            qDebug().noquote() << QString("FREEZE [%1]").arg(time)
-                               << "of" << freeze.count() << "ms, on:" << event;
+            qDebug().noquote() << QString("FREEZE [%1]").arg(time) << "of" << freeze.count()
+                               << "ms, total" << m_total.count() << "ms, on:" << event;
             const QString receiverMessage = name.isEmpty()
                 ? QString("receiver class: %1").arg(className)
                 : QString("receiver class: %1, object name: %2").arg(className, name);
@@ -207,8 +213,10 @@ public:
     }
 
 private:
+    bool m_inNotify = false;
     const QString m_align;
-    std::chrono::milliseconds m_threshold = std::chrono::milliseconds(100);
+    milliseconds m_threshold{100};
+    milliseconds m_total{0};
 };
 
 QtSingleApplication *createApplication(const QString &id, int &argc, char **argv)
@@ -222,7 +230,7 @@ QtSingleApplication *createApplication(const QString &id, int &argc, char **argv
     qDebug() << "Change the freeze detection threshold by setting the" << s_freezeDetector
              << "env var to a different numeric value (in ms).";
     ApplicationWithFreezerDetector *app = new ApplicationWithFreezerDetector(id, argc, argv);
-    app->setFreezeTreshold(std::chrono::milliseconds(*freezeDetector));
+    app->setFreezeTreshold(milliseconds(*freezeDetector));
     return app;
 }
 

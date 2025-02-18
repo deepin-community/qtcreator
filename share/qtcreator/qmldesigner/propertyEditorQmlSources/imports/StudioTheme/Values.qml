@@ -3,7 +3,7 @@
 
 pragma Singleton
 import QtQuick
-import QtQuickDesignerTheme 1.0
+import QtQuickDesignerTheme
 
 QtObject {
     id: values
@@ -118,10 +118,15 @@ QtObject {
     property real sectionHeadHeight: 21 // tab and section
     property real sectionHeadSpacerHeight: 10
 
+    property real sectionPadding: 10
+    property real sectionGridSpacing: 5
+
     property real controlLabelWidth: 15
     property real controlLabelGap: 5
 
     property real controlGap: 5 // TODO different name
+    property real splitterMargin: 5
+    property real splitterThickness: 6
     property real twoControlColumnGap: values.controlLabelGap
                                        + values.controlLabelWidth
                                        + values.controlGap
@@ -168,7 +173,7 @@ QtObject {
 
     property real controlColumnWithoutControlsWidth: 2 * (values.actionIndicatorWidth
                                                           + values.twoControlColumnGap)
-                                                    + values.linkControlWidth // there could be an issue here with the new style
+                                                     + values.iconAreaWidth // there could be an issue here with the new style
 
     property real controlColumnWidth: values.controlColumnWithoutControlsWidth
                                       + 2 * values.twoControlColumnWidth
@@ -189,18 +194,21 @@ QtObject {
     property real dialogScreenMargin: Math.round(160 * values.scaleFactor)
 
     function responsiveResize(width) {
+        // Subtract all layout gaps/spaces
         var tmpWidth = width - values.sectionColumnSpacing
                        - values.sectionLeftPadding - values.sectionLayoutRightPadding
         var labelColumnWidth = Math.round(tmpWidth * values.columnFactor)
         labelColumnWidth = Math.max(Math.min(values.propertyLabelWidthMax, labelColumnWidth),
                                     values.propertyLabelWidthMin)
-
+        // Rest width when label width is substracted
         var controlColumnWidth = tmpWidth - labelColumnWidth
-        var controlWidth = Math.round((controlColumnWidth - values.controlColumnWithoutControlsWidth) * 0.5)
+        var controlWidth = Math.floor((controlColumnWidth - values.controlColumnWithoutControlsWidth) * 0.5)
         controlWidth = Math.max(Math.min(values.twoControlColumnWidthMax, controlWidth),
                                 values.twoControlColumnWidthMin)
-
-        values.propertyLabelWidth = labelColumnWidth
+        // When both label and controls are at max width, calculate the remaining space
+        var rest = tmpWidth - (controlWidth * 2 + values.controlColumnWithoutControlsWidth + labelColumnWidth)
+        // Add the remaining space to the label width in order to improve readability of long labels
+        values.propertyLabelWidth = labelColumnWidth + rest
         values.twoControlColumnWidth = controlWidth
     }
 
@@ -259,10 +267,12 @@ QtObject {
     property color themeControlBackground_toolbarHover: Theme.color(Theme.DScontrolBackground_toolbarHover)
     property color themeControlBackground_topToolbarHover: Theme.color(Theme.DScontrolBackground_topToolbarHover)
     property color themeToolbarBackground: Theme.color(Theme.DStoolbarBackground)
+    property color themeConnectionEditorButtonBackground_hover: Theme.color(Theme.DSconnectionEditorButtonBackground_hover)
 
     //outlines
     property color controlOutline_toolbarIdle: Theme.color(Theme.DScontrolOutline_topToolbarIdle)
     property color controlOutline_toolbarHover: Theme.color(Theme.DScontrolOutline_topToolbarHover)
+    property color themeConnectionEditorButtonBorder_hover: Theme.color(Theme.DSconnectionEditorButtonBorder_hover)
 
     //icons
     property color themeToolbarIcon_blocked: Theme.color(Theme.DStoolbarIcon_blocked)
@@ -336,11 +346,13 @@ QtObject {
     property color themeControlOutline: Theme.color(Theme.DScontrolOutline)
     property color themeControlOutlineInteraction: Theme.color(Theme.DScontrolOutlineInteraction)
     property color themeControlOutlineDisabled: Theme.color(Theme.DScontrolOutlineDisabled)
+    property color themeControlOutlineHover: Theme.color(Theme.DScontrolOutline_topToolbarHover)
 
     // Panels & Panes
     property color themeBackgroundColorNormal: Theme.color(Theme.DSBackgroundColorNormal)
     property color themeBackgroundColorAlternate: Theme.color(Theme.DSBackgroundColorAlternate)
     property color themeConnectionCodeEditor: Theme.color(Theme.DSconnectionCodeEditor)
+    property color themeConnectionEditorMicroToolbar: Theme.color(Theme.DSconnectionEditorMicroToolbar)
 
     // Text colors
     property color themeTextColor: Theme.color(Theme.DStextColor)
@@ -466,6 +478,7 @@ QtObject {
     property ControlStyle toolbarStyle: ToolbarStyle {}
     property ControlStyle primaryToolbarStyle: PrimaryButtonStyle {}
     property ControlStyle toolbarButtonStyle: TopToolbarButtonStyle {}
+    property ControlStyle microToolbarButtonStyle: MicroToolbarButtonStyle {}
     property ControlStyle viewBarButtonStyle: ViewBarButtonStyle {}
     property ControlStyle viewBarControlStyle: ViewBarControlStyle {}
     property ControlStyle statusbarButtonStyle: StatusBarButtonStyle {}

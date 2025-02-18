@@ -71,16 +71,24 @@ def verifyEnabled(objectSpec, expectedState = True):
 # param itemName is the item to be selected in the combo box
 # returns True if selection was changed or False if the wanted value was already selected
 def selectFromCombo(objectSpec, itemName):
-    object = verifyEnabled(objectSpec)
-    if itemName == str(object.currentText):
+    comboObject = verifyEnabled(objectSpec)
+    if itemName == str(comboObject.currentText):
         return False
     else:
-        mouseClick(object)
+        mouseClick(comboObject)
         snooze(1)
         # params required here
-        mouseClick(waitForObjectItem(object, itemName.replace(".", "\\.")), 5, 5, 0, Qt.LeftButton)
-        test.verify(waitFor("str(object.currentText)==itemName", 5000),
+        mouseClick(waitForObjectItem(comboObject, itemName.replace(".", "\\.")))
+        test.verify(waitFor("str(comboObject.currentText)==itemName", 5000),
                     "Switched combo item to '%s'" % itemName)
+        def __collapsed__():
+            try:
+                waitForObject("{container='%s' type='QModelIndex'}" % objectSpec, 100)
+                return False
+            except:
+                return True
+
+        waitFor(__collapsed__, 1000)
         return True
 
 def selectFromLocator(filter, itemName = None):
@@ -110,7 +118,7 @@ def textUnderCursor(window, fromPos, toPos):
     cursor.movePosition(toPos, QTextCursor.KeepAnchor)
     returnValue = cursor.selectedText()
     cursor.setPosition(oldposition)
-    return returnValue
+    return str(returnValue)
 
 def which(program):
     # Don't use spawn.find_executable because it can't find .bat or
@@ -257,7 +265,6 @@ def selectFromFileDialog(fileName, waitForFile=False, ignoreFinalSnooze=False):
 def addHelpDocumentation(which):
     invokeMenuItem("Edit", "Preferences...")
     mouseClick(waitForObjectItem(":Options_QListView", "Help"))
-    waitForObject("{container=':Options.qt_tabwidget_tabbar_QTabBar' type='TabItem' text='Documentation'}")
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Documentation")
     # get rid of all docs already registered
     listWidget = waitForObject("{type='QListView' name='docsListView' visible='1'}")
@@ -269,6 +276,8 @@ def addHelpDocumentation(which):
         clickButton(waitForObject("{type='QPushButton' name='addButton' visible='1' text='Add...'}"))
         selectFromFileDialog(qch)
     clickButton(waitForObject(":Options.OK_QPushButton"))
+    progressBarWait(10000)  # Wait for "Update Documentation"
+
 
 def addCurrentCreatorDocumentation():
     currentCreatorPath = currentApplicationContext().cwd
@@ -283,7 +292,6 @@ def addCurrentCreatorDocumentation():
         return
     invokeMenuItem("Edit", "Preferences...")
     mouseClick(waitForObjectItem(":Options_QListView", "Help"))
-    waitForObject("{container=':Options.qt_tabwidget_tabbar_QTabBar' type='TabItem' text='Documentation'}")
     clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "Documentation")
     clickButton(waitForObject("{type='QPushButton' name='addButton' visible='1' text='Add...'}"))
     selectFromFileDialog(docPath)
@@ -297,6 +305,8 @@ def addCurrentCreatorDocumentation():
     except:
         test.fail("Added Qt Creator's documentation explicitly.")
     clickButton(waitForObject(":Options.OK_QPushButton"))
+    progressBarWait(10000)  # Wait for "Update Documentation"
+
 
 def verifyOutput(string, substring, outputFrom, outputIn):
     index = string.find(substring)
@@ -336,7 +346,10 @@ def __checkParentAccess__(filePath):
 def getConfiguredKits():
     def __setQtVersionForKit__(kit, kitName, kitsQtVersionName):
         mouseClick(waitForObjectItem(":BuildAndRun_QTreeView", kit))
-        qtVersionStr = str(waitForObjectExists(":Kits_QtVersion_QComboBox").currentText)
+        if "Python" in kitName:
+            qtVersionStr = __PYKIT__
+        else:
+            qtVersionStr = str(waitForObjectExists(":Kits_QtVersion_QComboBox").currentText)
         invalid = qtVersionStr.endswith(" (invalid)")
         if invalid:
             qtVersionStr = qtVersionStr[:-10]
@@ -353,7 +366,7 @@ def getConfiguredKits():
     for kit, qtVersion in kitsWithQtVersionName.items():
         if qtVersion in qtVersionNames:
             result.append(kit)
-        else:
+        elif qtVersion != __PYKIT__: # ignore e.g. Python kits
             test.fail("Qt version '%s' for kit '%s' can't be found in qtVersionNames."
                       % (qtVersion, kit))
     clickButton(waitForObject(":Options.Cancel_QPushButton"))
@@ -366,19 +379,6 @@ def enabledCheckBoxExists(text):
         return True
     except:
         return False
-
-# this function verifies if the text matches the given
-# regex inside expectedTexts
-# param text must be a single str
-# param expectedTexts can be str/list/tuple
-def regexVerify(text, expectedTexts):
-    if isString(expectedTexts):
-        expectedTexts = [expectedTexts]
-    for curr in expectedTexts:
-        pattern = re.compile(curr)
-        if pattern.match(text):
-            return True
-    return False
 
 
 # function that opens Options Dialog and parses the configured Qt versions
@@ -470,13 +470,6 @@ def setFixedHelpViewer(helpViewer):
     selectFromCombo(":Startup.contextHelpComboBox_QComboBox", mode)
     clickButton(waitForObject(":Options.OK_QPushButton"))
 
-def removePackagingDirectory(projectPath):
-    qtcPackaging = os.path.join(projectPath, "qtc_packaging")
-    if os.path.exists(qtcPackaging):
-        test.log("Removing old packaging directory '%s'" % qtcPackaging)
-        deleteDirIfExists(qtcPackaging)
-    else:
-        test.log("Couldn't remove packaging directory '%s' - did not exist." % qtcPackaging)
 
 # returns the indices from a QAbstractItemModel
 def dumpIndices(model, parent=None, column=0):
@@ -545,6 +538,7 @@ def clickOnTab(tabBarStr, tabText, timeout=5000):
         test.log("Using workaround for Mac and Windows.")
         setWindowState(tabBar, WindowState.Normal)
         tabBar = waitForObject(tabBarStr, 2000)
+    waitForObject("{container='%s' type='TabItem' text='%s'}" % (tabBarStr, tabText))
     clickTab(tabBar, tabText)
     waitFor("str(tabBar.tabText(tabBar.currentIndex)) == '%s'" % tabText, timeout)
 
@@ -601,15 +595,12 @@ def getHelpTitle():
 
 
 def isString(sth):
-    if sys.version_info.major > 2:
-        return isinstance(sth, str)
-    else:
-        return isinstance(sth, (str, unicode))
+    return isinstance(sth, str)
+
 
 # helper function to ensure we get str, converts bytes if necessary
 def stringify(obj):
-    stringTypes = (str, unicode) if sys.version_info.major == 2 else (str)
-    if isinstance(obj, stringTypes):
+    if isString(obj):
         return obj
     if isinstance(obj, bytes):
         if not platform.system() in ('Microsoft', 'Windows'):
@@ -639,3 +630,13 @@ class GitClone:
 
     def __exit__(self, exc_type, exc_value, traceback):
         deleteDirIfExists(self.localPath)
+
+
+def setReloadBehavior(to):
+    # QC 14 changed the default, so change the preferences
+    invokeMenuItem("Edit", "Preferences...")
+    mouseClick(waitForObjectItem(":Options_QListView", "Environment"))
+    clickOnTab(":Options.qt_tabwidget_tabbar_QTabBar", "System")
+    selectFromCombo("{type='QComboBox' unnamed='1' leftWidget={type='QLabel' "
+                    "text='When files are externally modified:'}}", to)
+    clickButton(":Options.OK_QPushButton")

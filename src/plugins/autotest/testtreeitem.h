@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 #include <utils/treemodel.h>
 
 #include <QList>
@@ -28,6 +28,8 @@ class ITestFramework;
 class ITestConfiguration;
 class TestParseResult;
 enum class TestRunMode;
+
+using TestParseResultPtr = std::shared_ptr<TestParseResult>;
 
 class ITestTreeItem : public Utils::TypedTreeItem<ITestTreeItem>
 {
@@ -55,9 +57,9 @@ public:
                            const Utils::FilePath &filePath = {},
                            Type type = Root);
 
-    virtual QVariant data(int column, int role) const override;
-    virtual bool setData(int column, const QVariant &data, int role) override;
-    virtual Qt::ItemFlags flags(int column) const override;
+    QVariant data(int column, int role) const override;
+    bool setData(int column, const QVariant &data, int role) override;
+    Qt::ItemFlags flags(int column) const override;
 
     virtual Qt::CheckState checked() const;
     virtual bool canProvideTestConfiguration() const { return false; }
@@ -78,7 +80,7 @@ public:
     ITestBase *testBase() const { return m_testBase; }
 
     virtual bool lessThan(const ITestTreeItem *other, SortMode mode) const;
-    QString cacheName() const { return m_filePath.toString() + ':' + m_name; }
+    QString cacheName() const { return m_filePath.path() + ':' + m_name; }
 
 protected:
     void setType(Type type) { m_type = type; }
@@ -102,7 +104,7 @@ public:
                           Type type = Root);
 
     virtual TestTreeItem *copyWithoutChildren() = 0;
-    virtual QVariant data(int column, int role) const override;
+    QVariant data(int column, int role) const override;
     bool modifyTestCaseOrSuiteContent(const TestParseResult *result);
     bool modifyTestFunctionContent(const TestParseResult *result);
     bool modifyDataTagContent(const TestParseResult *result);

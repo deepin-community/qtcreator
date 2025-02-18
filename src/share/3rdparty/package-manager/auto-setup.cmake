@@ -7,6 +7,13 @@ foreach(qtcreator_var
   set(__just_reference_${qtcreator_var} ${${qtcreator_var}})
 endforeach()
 
+option(QT_CREATOR_SOURCE_GROUPS "Qt Creator source groups extensions" ON)
+if (QT_CREATOR_SOURCE_GROUPS)
+  source_group("Resources" REGULAR_EXPRESSION "\\.(pdf|plist|png|jpeg|jpg|storyboard|xcassets|qrc|svg|gif|ico|webp)$")
+  source_group("Forms" REGULAR_EXPRESSION "\\.(ui)$")
+  source_group("State charts" REGULAR_EXPRESSION "\\.(scxml)$")
+endif()
+
 if (EXISTS "${CMAKE_SOURCE_DIR}/QtCreatorPackageManager.cmake")
   include("${CMAKE_SOURCE_DIR}/QtCreatorPackageManager.cmake")
 endif()
@@ -31,6 +38,14 @@ macro(qtc_auto_setup_compiler_standard toolchainFile)
       endif()
     endforeach()
   endforeach()
+
+  # Forward important CMake variables to the package manager in the toolchain file
+  foreach(fwd_var CMAKE_MSVC_RUNTIME_LIBRARY CMAKE_SYSROOT CMAKE_OSX_SYSROOT CMAKE_OSX_ARCHITECTURES)
+    if (${fwd_var})
+      file(APPEND "${toolchainFile}"
+          "set(${fwd_var} ${${fwd_var}})\n")
+    endif()
+  endforeach()
 endmacro()
 
 #
@@ -47,6 +62,11 @@ macro(qtc_auto_setup_conan)
   if (conanfile_txt AND NOT QT_CREATOR_SKIP_CONAN_SETUP)
     option(QT_CREATOR_SKIP_CONAN_SETUP "Skip Qt Creator's conan package manager auto-setup" OFF)
     set(QT_CREATOR_CONAN_BUILD_POLICY "missing" CACHE STRING "Qt Creator's conan package manager auto-setup build policy. This is used for the BUILD property of cmake_conan_run")
+
+    set_property(
+      DIRECTORY "${CMAKE_SOURCE_DIR}"
+      APPEND
+      PROPERTY CMAKE_CONFIGURE_DEPENDS "${conanfile_txt}")
 
     find_program(conan_program conan)
     if (NOT conan_program)
@@ -90,6 +110,14 @@ macro(qtc_auto_setup_conan)
 
       file(COPY "${conanfile_txt}" DESTINATION "${CMAKE_BINARY_DIR}/conan-dependencies/")
 
+      # conanfile should have a generator specified, when both file and conan_install
+      # specifcy the CMakeDeps generator, conan_install will issue an error
+      file(READ "${conanfile_txt}" conanfile_text_content)
+      unset(conan_generator)
+      if (NOT "${conanfile_text_content}" MATCHES ".*CMakeDeps.*")
+        set(conan_generator "-g CMakeDeps")
+      endif()
+
       file(WRITE "${CMAKE_BINARY_DIR}/conan-dependencies/toolchain.cmake" "
         set(CMAKE_C_COMPILER \"${CMAKE_C_COMPILER}\")
         set(CMAKE_CXX_COMPILER \"${CMAKE_CXX_COMPILER}\")
@@ -101,47 +129,62 @@ macro(qtc_auto_setup_conan)
           "include(\"${CMAKE_TOOLCHAIN_FILE}\")\n")
       endif()
 
-       file(WRITE "${CMAKE_BINARY_DIR}/conan-dependencies/CMakeLists.txt" "
-          cmake_minimum_required(VERSION 3.15)
+      file(WRITE "${CMAKE_BINARY_DIR}/conan-dependencies/CMakeLists.txt" "
+        cmake_minimum_required(VERSION 3.15)
 
-          unset(CMAKE_PROJECT_INCLUDE_BEFORE CACHE)
-          project(conan-setup)
+        unset(CMAKE_PROJECT_INCLUDE_BEFORE CACHE)
+        project(conan-setup)
 
-          if (${conan_version} VERSION_GREATER_EQUAL 2.0)
-            set(CONAN_COMMAND \"${conan_program}\")
-            include(\"${CMAKE_CURRENT_LIST_DIR}/conan_provider.cmake\")
-            conan_profile_detect_default()
-            detect_host_profile(\"${CMAKE_BINARY_DIR}/conan-dependencies/conan_host_profile\")
+        if (${conan_version} VERSION_GREATER_EQUAL 2.0)
+          set(CONAN_COMMAND \"${conan_program}\")
+          include(\"${CMAKE_CURRENT_LIST_DIR}/conan_provider.cmake\")
+          conan_profile_detect_default()
+          detect_host_profile(\"${CMAKE_BINARY_DIR}/conan-dependencies/conan_host_profile\")
 
+          set(build_types \${CMAKE_BUILD_TYPE})
+          if (CMAKE_CONFIGURATION_TYPES)
+            set(build_types \${CMAKE_CONFIGURATION_TYPES})
+          endif()
+
+          foreach(type \${build_types})
             conan_install(
               -pr \"${CMAKE_BINARY_DIR}/conan-dependencies/conan_host_profile\"
               --build=${QT_CREATOR_CONAN_BUILD_POLICY}
-              -s build_type=${CMAKE_BUILD_TYPE}
-              -g CMakeDeps)
+              -s build_type=\${type}
+              ${conan_generator})
+          endforeach()
 
-            get_property(CONAN_INSTALL_SUCCESS GLOBAL PROPERTY CONAN_INSTALL_SUCCESS)
-            if (CONAN_INSTALL_SUCCESS)
-              get_property(CONAN_GENERATORS_FOLDER GLOBAL PROPERTY CONAN_GENERATORS_FOLDER)
-              file(WRITE \"${CMAKE_BINARY_DIR}/conan-dependencies/conan_paths.cmake\" \"
-                list(PREPEND CMAKE_PREFIX_PATH \\\"\${CONAN_GENERATORS_FOLDER}\\\")
-                list(PREPEND CMAKE_MODULE_PATH \\\"\${CONAN_GENERATORS_FOLDER}\\\")
-                list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
-                list(REMOVE_DUPLICATES CMAKE_MODULE_PATH)
-                set(CMAKE_PREFIX_PATH \\\"\\\${CMAKE_PREFIX_PATH}\\\" CACHE STRING \\\"\\\" FORCE)
-                set(CMAKE_MODULE_PATH \\\"\\\${CMAKE_MODULE_PATH}\\\" CACHE STRING \\\"\\\" FORCE)
-              \")
-            endif()
-          else()
-            include(\"${CMAKE_CURRENT_LIST_DIR}/conan.cmake\")
-            conan_cmake_run(
-              CONANFILE \"${conanfile_txt}\"
-              INSTALL_FOLDER \"${CMAKE_BINARY_DIR}/conan-dependencies\"
-              GENERATORS cmake_paths cmake_find_package json
-              BUILD ${QT_CREATOR_CONAN_BUILD_POLICY}
-              ENV CONAN_CMAKE_TOOLCHAIN_FILE=\"${CMAKE_BINARY_DIR}/conan-dependencies/toolchain.cmake\"
-            )
+          get_property(CONAN_INSTALL_SUCCESS GLOBAL PROPERTY CONAN_INSTALL_SUCCESS)
+          if (CONAN_INSTALL_SUCCESS)
+            get_property(CONAN_GENERATORS_FOLDER GLOBAL PROPERTY CONAN_GENERATORS_FOLDER)
+            file(TO_CMAKE_PATH \"\${CONAN_GENERATORS_FOLDER}\" CONAN_GENERATORS_FOLDER)
+            file(WRITE \"${CMAKE_BINARY_DIR}/conan-dependencies/conan_paths.cmake\" \"
+              list(PREPEND CMAKE_PREFIX_PATH \\\"\${CONAN_GENERATORS_FOLDER}\\\")
+              list(PREPEND CMAKE_MODULE_PATH \\\"\${CONAN_GENERATORS_FOLDER}\\\")
+              list(PREPEND CMAKE_FIND_ROOT_PATH \\\"\${CONAN_GENERATORS_FOLDER}\\\")
+              list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
+              list(REMOVE_DUPLICATES CMAKE_MODULE_PATH)
+              list(REMOVE_DUPLICATES CMAKE_FIND_ROOT_PATH)
+              set(CMAKE_PREFIX_PATH \\\"\\\${CMAKE_PREFIX_PATH}\\\" CACHE STRING \\\"\\\" FORCE)
+              set(CMAKE_MODULE_PATH \\\"\\\${CMAKE_MODULE_PATH}\\\" CACHE STRING \\\"\\\" FORCE)
+              set(CMAKE_FIND_ROOT_PATH \\\"\\\${CMAKE_FIND_ROOT_PATH}\\\" CACHE STRING \\\"\\\" FORCE)
+            \")
           endif()
-        ")
+        else()
+          include(\"${CMAKE_CURRENT_LIST_DIR}/conan.cmake\")
+          conan_cmake_run(
+            CONANFILE \"${conanfile_txt}\"
+            INSTALL_FOLDER \"${CMAKE_BINARY_DIR}/conan-dependencies\"
+            GENERATORS cmake_paths cmake_find_package json
+            BUILD ${QT_CREATOR_CONAN_BUILD_POLICY}
+            ENV CONAN_CMAKE_TOOLCHAIN_FILE=\"${CMAKE_BINARY_DIR}/conan-dependencies/toolchain.cmake\"
+          )
+        endif()
+      ")
+
+      if (NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED CMAKE_CONFIGURATION_TYPES)
+          set(CMAKE_CONFIGURATION_TYPES "Debug;Release")
+      endif()
 
       execute_process(COMMAND ${CMAKE_COMMAND}
         -S "${CMAKE_BINARY_DIR}/conan-dependencies/"
@@ -150,6 +193,7 @@ macro(qtc_auto_setup_conan)
         -D "CMAKE_TOOLCHAIN_FILE=${CMAKE_BINARY_DIR}/conan-dependencies/toolchain.cmake"
         -G ${CMAKE_GENERATOR}
         -D CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -D "CMAKE_CONFIGURATION_TYPES=${CMAKE_CONFIGURATION_TYPES}"
         RESULT_VARIABLE result
       )
       if (result EQUAL 0)
@@ -175,7 +219,15 @@ macro(qtc_auto_setup_vcpkg)
   if (EXISTS "${CMAKE_SOURCE_DIR}/vcpkg.json" AND NOT QT_CREATOR_SKIP_VCPKG_SETUP)
     option(QT_CREATOR_SKIP_VCPKG_SETUP "Skip Qt Creator's vcpkg package manager auto-setup" OFF)
 
-    find_program(vcpkg_program vcpkg $ENV{VCPKG_ROOT} ${CMAKE_SOURCE_DIR}/vcpkg)
+    set_property(
+      DIRECTORY "${CMAKE_SOURCE_DIR}"
+      APPEND
+      PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/vcpkg.json")
+
+    find_program(vcpkg_program vcpkg
+      PATHS $ENV{VCPKG_ROOT} ${CMAKE_SOURCE_DIR}/vcpkg ${CMAKE_SOURCE_DIR}/3rdparty/vcpkg
+      NO_DEFAULT_PATH
+    )
     if (NOT vcpkg_program)
       message(WARNING "Qt Creator: vcpkg executable not found. "
                       "Package manager auto-setup will be skipped. "
@@ -213,13 +265,38 @@ macro(qtc_auto_setup_vcpkg)
       if (VCPKG_TARGET_TRIPLET)
         set(vcpkg_triplet ${VCPKG_TARGET_TRIPLET})
       else()
-        if (WIN32)
+        if (ANDROID_ABI)
+          if (ANDROID_ABI STREQUAL "armeabi-v7a")
+            set(vcpkg_triplet arm-neon-android)
+          elseif (ANDROID_ABI STREQUAL "arm64-v8a")
+            set(vcpkg_triplet arm64-android)
+          elseif (ANDROID_ABI STREQUAL "x86")
+              set(vcpkg_triplet x86-android)
+          elseif (ANDROID_ABI STREQUAL "x86_64")
+              set(vcpkg_triplet x64-android)
+          else()
+              message(FATAL_ERROR "Unsupported Android ABI: ${ANDROID_ABI}")
+          endif()
+          # Needed by vcpkg/scripts/toolchains/android.cmake
+          file(APPEND "${CMAKE_BINARY_DIR}/vcpkg-dependencies/toolchain.cmake" "
+            set(ENV{ANDROID_NDK_HOME} \"${ANDROID_NDK}\")
+          ")
+        elseif (WIN32)
           set(vcpkg_triplet x64-mingw-static)
           if (CMAKE_CXX_COMPILER MATCHES ".*/(.*)/cl.exe")
             set(vcpkg_triplet ${CMAKE_MATCH_1}-windows)
           endif()
         elseif(APPLE)
-          set(vcpkg_triplet x64-osx)
+          # We're too early to use CMAKE_HOST_SYSTEM_PROCESSOR
+          execute_process(
+            COMMAND uname -m
+            OUTPUT_VARIABLE __apple_host_system_processor
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+          if (__apple_host_system_processor MATCHES "arm64")
+            set(vcpkg_triplet arm64-osx)
+          else()
+            set(vcpkg_triplet x64-osx)
+          endif()
         else()
           set(vcpkg_triplet x64-linux)
         endif()

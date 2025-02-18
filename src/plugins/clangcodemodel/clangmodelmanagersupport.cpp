@@ -19,7 +19,7 @@
 #include <coreplugin/session.h>
 #include <coreplugin/vcsmanager.h>
 
-#include <cppeditor/cppcodemodelsettings.h>
+#include <cppeditor/clangdsettings.h>
 #include <cppeditor/cppeditorconstants.h>
 #include <cppeditor/cppeditorwidget.h>
 #include <cppeditor/cppfollowsymbolundercursor.h>
@@ -45,11 +45,16 @@
 #include <utils/algorithm.h>
 #include <utils/async.h>
 #include <utils/infobar.h>
+#include <utils/macroexpander.h>
 #include <utils/qtcassert.h>
 
 #include <QApplication>
+#include <QDateTime>
+#include <QHash>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QMenu>
+#include <QPointer>
 #include <QTextBlock>
 #include <QTimer>
 #include <QtDebug>
@@ -61,6 +66,41 @@ using namespace ProjectExplorer;
 using namespace Utils;
 
 namespace ClangCodeModel::Internal {
+namespace {
+class IndexFiles
+{
+public:
+    QList<Utils::FilePath> files;
+    QDateTime minLastModifiedTime;
+};
+} // namespace
+
+static Q_LOGGING_CATEGORY(clangdIndexLog, "qtc.clangcodemodel.clangd.index", QtWarningMsg);
+
+static QHash<QString, IndexFiles> collectIndexedFiles(const Utils::FilePath &indexFolder)
+{
+    QHash<QString, IndexFiles> result;
+    QDirIterator dirIt(indexFolder.toFSPathString(), QDir::Files);
+    while (dirIt.hasNext()) {
+        dirIt.next();
+        FilePath path = FilePath::fromString(dirIt.filePath());
+        if (path.suffix() != "idx")
+            continue;
+
+        QString baseName = path.completeBaseName();
+        const int dotPos = baseName.lastIndexOf('.');
+        if (dotPos <= 0)
+            continue;
+
+        baseName = baseName.left(dotPos);
+        IndexFiles &indexFiles = result[baseName];
+        indexFiles.files.push_back(path);
+        QDateTime time = path.lastModified();
+        if (indexFiles.minLastModifiedTime.isNull() || time < indexFiles.minLastModifiedTime)
+            indexFiles.minLastModifiedTime = time;
+    }
+    return result;
+}
 
 static Project *fallbackProject()
 {
@@ -247,31 +287,38 @@ ClangModelManagerSupport::ClangModelManagerSupport()
             onClangdSettingsChanged();
     });
 
-    ClangdSettings::setDefaultClangdPath(ICore::clangdExecutable(CLANG_BINDIR));
+    ClangdSettings::setDefaultClangdPath(ICore::clangdExecutable(CLANG_BINDIR).value_or(FilePath{}));
     connect(&ClangdSettings::instance(), &ClangdSettings::changed,
             this, &ClangModelManagerSupport::onClangdSettingsChanged);
 
     new ClangdQuickFixFactory(); // memory managed by CppEditor::g_cppQuickFixFactories
 }
 
-ClangModelManagerSupport::~ClangModelManagerSupport()
-{
-    m_generatorSynchronizer.waitForFinished();
-}
+ClangModelManagerSupport::~ClangModelManagerSupport() = default;
 
 void ClangModelManagerSupport::followSymbol(const CursorInEditor &data,
                                             const LinkHandler &processLinkCallback,
+                                            FollowSymbolMode mode,
                                             bool resolveTarget, bool inNextSplit)
 {
     if (ClangdClient * const client = clientForFile(data.filePath());
             client && client->isFullyIndexed()) {
+        LinkHandler extendedCallback = [editor = QPointer(data.editorWidget()), data,
+                                        processLinkCallback, mode, resolveTarget, inNextSplit]
+            (const Link &link) {
+            if (link.hasValidTarget() || mode == FollowSymbolMode::Exact || !editor)
+                return processLinkCallback(link);
+            CppModelManager::followSymbol(data, processLinkCallback, resolveTarget, inNextSplit,
+                                          mode, CppModelManager::Backend::Builtin);
+
+        };
         client->followSymbol(data.textDocument(), data.cursor(), data.editorWidget(),
-                             processLinkCallback, resolveTarget, FollowTo::SymbolDef, inNextSplit);
+                             extendedCallback, resolveTarget, FollowTo::SymbolDef, inNextSplit);
         return;
     }
 
     CppModelManager::followSymbol(data, processLinkCallback, resolveTarget, inNextSplit,
-                                  CppModelManager::Backend::Builtin);
+                                  mode, CppModelManager::Backend::Builtin);
 }
 
 void ClangModelManagerSupport::followSymbolToType(const CursorInEditor &data,
@@ -378,9 +425,12 @@ void ClangModelManagerSupport::checkUnused(const Link &link, SearchResult *searc
                 CppModelManager::Backend::Builtin)->checkUnused(link, search, callback);
 }
 
-bool ClangModelManagerSupport::usesClangd(const TextEditor::TextDocument *document) const
+std::optional<QVersionNumber> ClangModelManagerSupport::usesClangd(
+    const TextEditor::TextDocument *document) const
 {
-    return clientForFile(document->filePath());
+    if (const auto client = clientForFile(document->filePath()))
+        return client->versionNumber();
+    return {};
 }
 
 BaseEditorDocumentProcessor *ClangModelManagerSupport::createEditorDocumentProcessor(
@@ -407,10 +457,8 @@ void ClangModelManagerSupport::onCurrentEditorChanged(IEditor *editor)
     const FilePath filePath = editor->document()->filePath();
     if (auto processor = ClangEditorDocumentProcessor::get(filePath)) {
         processor->semanticRehighlight();
-        if (const auto client = clientForFile(filePath)) {
+        if (const auto client = clientForFile(filePath))
             client->updateParserConfig(filePath, processor->parserConfig());
-            client->switchIssuePaneEntries(filePath);
-        }
     }
 }
 
@@ -423,17 +471,15 @@ void ClangModelManagerSupport::connectToWidgetsMarkContextMenuRequested(QWidget 
     }
 }
 
-static FilePath getJsonDbDir(const Project *project)
+static FilePath getJsonDbDir(Project *project)
 {
-    static const QString dirName(".qtc_clangd");
-    if (!project) {
-        const QString sessionDirName = FileUtils::fileSystemFriendlyName(
-                    SessionManager::activeSession());
-        return ICore::userResourcePath() / dirName / sessionDirName; // TODO: Make configurable?
-    }
-    if (const Target * const target = project->activeTarget()) {
-        if (const BuildConfiguration * const bc = target->activeBuildConfiguration())
-            return bc->buildDirectory() / dirName;
+    if (!project)
+        return ClangdSettings::instance().sessionIndexPath(*globalMacroExpander());
+    if (const Target *const target = project->activeTarget()) {
+        if (const BuildConfiguration *const bc = target->activeBuildConfiguration()) {
+            return ClangdSettings(ClangdProjectSettings(project).settings())
+                .projectIndexPath(*bc->macroExpander());
+        }
     }
     return {};
 }
@@ -494,11 +540,15 @@ void ClangModelManagerSupport::updateLanguageClient(Project *project)
         generatorWatcher->deleteLater();
         if (!isProjectDataUpToDate(project, projectInfo, jsonDbDir))
             return;
-        const GenerateCompilationDbResult result = generatorWatcher->result();
-        if (!result.error.isEmpty()) {
+        if (generatorWatcher->future().resultCount() == 0) {
             MessageManager::writeDisrupting(
-                        Tr::tr("Cannot use clangd: Failed to generate compilation database:\n%1")
-                        .arg(result.error));
+                Tr::tr("Cannot use clangd: Generating compilation database canceled."));
+            return;
+        }
+        const GenerateCompilationDbResult result = generatorWatcher->result();
+        if (!result) {
+            MessageManager::writeDisrupting(Tr::tr("Cannot use clangd: "
+                "Failed to generate compilation database:\n%1").arg(result.error()));
             return;
         }
         Id previousId;
@@ -644,6 +694,73 @@ ClangdClient *ClangModelManagerSupport::clientWithProject(const Project *project
     return clients.empty() ? nullptr : qobject_cast<ClangdClient *>(clients.first());
 }
 
+void ClangModelManagerSupport::updateStaleIndexEntries()
+{
+    QHash<FilePath, QDateTime> lastModifiedCache;
+    for (Project * const project : ProjectManager::projects()) {
+        const FilePath jsonDbDir = getJsonDbDir(project);
+        if (jsonDbDir.isEmpty())
+            continue;
+
+        const FilePath indexFolder = jsonDbDir / ".cache" / "clangd" / "index";
+        if (!indexFolder.exists())
+            continue;
+
+        const QHash<QString, IndexFiles> indexedFiles = collectIndexedFiles(indexFolder);
+        bool restartCodeModel = false;
+        const CPlusPlus::Snapshot snapshot = CppModelManager::snapshot();
+        for (const CPlusPlus::Document::Ptr &document : snapshot) {
+            const FilePath sourceFile = document->filePath();
+            if (sourceFile.fileName() == "<configuration>")
+                continue;
+
+            if (!project->isKnownFile(sourceFile)) {
+                qCDebug(clangdIndexLog) << "Not in project:" << sourceFile.fileName();
+                continue;
+            }
+
+            const auto indexFilesIt = indexedFiles.find(sourceFile.fileName());
+            if (indexFilesIt == indexedFiles.end()) {
+                qCDebug(clangdIndexLog) << "No index files for:" << sourceFile.fileName();
+                continue;
+            }
+
+            const QDateTime sourceIndexedTime = indexFilesIt->minLastModifiedTime;
+
+            bool rescan = false;
+            const QSet<FilePath> allIncludes = snapshot.allIncludesForDocument(sourceFile);
+            for (const FilePath &includeFile : allIncludes) {
+                auto includeFileTimeIt = lastModifiedCache.find(includeFile);
+                if (includeFileTimeIt == lastModifiedCache.end()) {
+                    includeFileTimeIt = lastModifiedCache.insert(includeFile,
+                                                                 includeFile.lastModified());
+                }
+                if (sourceIndexedTime < includeFileTimeIt.value()) {
+                    qCDebug(clangdIndexLog) << "Rescan file:" << sourceFile.fileName()
+                                            << "indexed at" << sourceIndexedTime
+                                            << "changed include:" << includeFile.fileName()
+                                            << "last modified at" << includeFileTimeIt.value();
+                    rescan = true;
+                    break;
+                }
+            }
+            if (rescan) {
+                for (const FilePath &indexFile : indexFilesIt->files)
+                    indexFile.removeFile();
+                restartCodeModel = true;
+            }
+        }
+        if (restartCodeModel) {
+            if (ClangdClient * const client = clientForProject(project)) {
+                const auto instance = dynamic_cast<ClangModelManagerSupport *>(
+                    CppModelManager::modelManagerSupport(CppModelManager::Backend::Best));
+                QTC_ASSERT(instance, return);
+                instance->scheduleClientRestart(client);
+            }
+        }
+    }
+}
+
 ClangdClient *ClangModelManagerSupport::clientForFile(const FilePath &file)
 {
     return qobject_cast<ClangdClient *>(LanguageClientManager::clientForFilePath(file));
@@ -683,12 +800,7 @@ void ClangModelManagerSupport::watchForExternalChanges()
         if (!LanguageClientManager::hasClients<ClangdClient>())
             return;
         for (const FilePath &file : files) {
-            if (TextEditor::TextDocument::textDocumentForFilePath(file)) {
-                // if we have a document for that file we should receive the content
-                // change via the document signals
-                continue;
-            }
-            const ProjectFile::Kind kind = ProjectFile::classify(file.toString());
+            const ProjectFile::Kind kind = ProjectFile::classify(file);
             if (!ProjectFile::isSource(kind) && !ProjectFile::isHeader(kind))
                 continue;
             Project * const project = ProjectManager::projectForFile(file);
@@ -730,7 +842,7 @@ void ClangModelManagerSupport::watchForInternalChanges()
     connect(DocumentManager::instance(), &DocumentManager::filesChangedInternally,
             this, [this](const FilePaths &filePaths) {
         for (const FilePath &fp : filePaths) {
-            const ProjectFile::Kind kind = ProjectFile::classify(fp.toString());
+            const ProjectFile::Kind kind = ProjectFile::classify(fp);
             if (!ProjectFile::isSource(kind) && !ProjectFile::isHeader(kind))
                 continue;
             Project * const project = ProjectManager::projectForFile(fp);

@@ -5,16 +5,15 @@
 #include "qmldesignertr.h"
 
 #include "coreplugin/iwizardfactory.h"
-#include "designmodecontext.h"
 #include "designmodewidget.h"
 #include "dynamiclicensecheck.h"
 #include "exception.h"
-#include "generateresource.h"
 #include "openuiqmlfiledialog.h"
 #include "qmldesignerconstants.h"
 #include "qmldesignerexternaldependencies.h"
 #include "qmldesignerprojectmanager.h"
 #include "quick2propertyeditorview.h"
+#include "resourcegenerator.h"
 #include "settingspage.h"
 #include "shortcutmanager.h"
 #include "toolbar.h"
@@ -25,7 +24,11 @@
 #include <designeractionmanager.h>
 #include <eventlist/eventlistpluginview.h>
 #include <formeditor/transitiontool.h>
-#include <metainfo.h>
+#include <formeditor/view3dtool.h>
+#include <studioquickwidget.h>
+#ifndef QDS_USE_PROJECTSTORAGE
+#  include <metainfo.h>
+#endif
 #include <pathtool/pathtool.h>
 #include <sourcetool/sourcetool.h>
 #include <texttool/texttool.h>
@@ -57,35 +60,53 @@
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectmanager.h>
 #include <projectexplorer/target.h>
-#include <sqlitelibraryinitializer.h>
 #include <qmldesignerbase/qmldesignerbaseplugin.h>
 #include <qmljs/qmljsmodelmanagerinterface.h>
+#include <sqlite/sqlitelibraryinitializer.h>
 
 #include <utils/algorithm.h>
+#include <utils/guard.h>
 #include <utils/hostosinfo.h>
+#include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 #include <utils/uniqueobjectptr.h>
 
+#include <qplugin.h>
 #include <QAction>
 #include <QApplication>
 #include <QDebug>
+#include <QMessageBox>
 #include <QProcessEnvironment>
 #include <QQuickItem>
 #include <QScreen>
 #include <QTimer>
 #include <QWindow>
-#include <qplugin.h>
 
-#include "nanotrace/nanotrace.h"
 #include <modelnodecontextmenu_helper.h>
+
+#include <mutex>
 
 static Q_LOGGING_CATEGORY(qmldesignerLog, "qtc.qmldesigner", QtWarningMsg)
 
+using namespace Core;
 using namespace QmlDesigner::Internal;
 
 namespace QmlDesigner {
 
 namespace Internal {
+
+class FullQDSFeatureProvider : public Core::IFeatureProvider
+{
+public:
+    QSet<Utils::Id> availableFeatures(Utils::Id) const override
+    {
+        return {"QmlDesigner.Wizards.FullQDS"};
+    }
+
+    QSet<Utils::Id> availablePlatforms() const override { return {}; }
+
+    QString displayNameForPlatform(Utils::Id) const override { return {}; }
+};
 
 class EnterpriseFeatureProvider : public Core::IFeatureProvider
 {
@@ -119,7 +140,7 @@ QtQuickDesignerFactory::QtQuickDesignerFactory()
 {
     setDisplayName(::Core::Tr::tr("Qt Quick Designer"));
 
-    addMimeType(QmlJSTools::Constants::QMLUI_MIMETYPE);
+    addMimeType(Utils::Constants::QMLUI_MIMETYPE);
     setDocumentCreator([this]() {
         auto document = new QmlJSEditor::QmlJSEditorDocument(id());
         document->setIsDesignModePreferred(
@@ -156,7 +177,6 @@ public:
     SettingsPage settingsPage{externalDependencies};
     DesignModeWidget mainWidget;
     QtQuickDesignerFactory m_qtQuickDesignerFactory;
-    bool blockEditorChange = false;
     Utils::UniqueObjectPtr<QToolBar> toolBar;
     Utils::UniqueObjectPtr<QWidget> statusBar;
     QHash<QString, TraceIdentifierData> m_traceIdentifierDataHash;
@@ -249,8 +269,17 @@ QmlDesignerPlugin::~QmlDesignerPlugin()
 // INHERITED FROM ExtensionSystem::Plugin
 //
 ////////////////////////////////////////////////////
-bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *errorMessage/* = 0*/)
+bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString * /*errorMessage*/)
 {
+    if constexpr (isUsingQmlDesignerLite()) {
+        if (!QmlDesignerBasePlugin::isLiteModeEnabled()) {
+            QMessageBox::warning(Core::ICore::dialogParent(),
+                                 tr("Qml Designer Lite"),
+                                 tr("The Qml Designer Lite plugin is not enabled."));
+            return false;
+        }
+    }
+
     Sqlite::LibraryInitializer::initialize();
     QDir{}.mkpath(Core::ICore::cacheResourcePath().toString());
 
@@ -263,12 +292,10 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
         lauchFeedbackPopupInternal(QGuiApplication::applicationDisplayName());
     });
 
-    if (!Utils::HostOsInfo::canCreateOpenGLContext(errorMessage))
-        return false;
     d = new QmlDesignerPluginPrivate;
     d->timer.start();
     if (Core::ICore::isQtDesignStudio())
-        GenerateResource::generateMenuEntry(this);
+        ResourceGenerator::generateMenuEntry(this);
 
     const QString fontPath
         = Core::ICore::resourcePath(
@@ -279,9 +306,8 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
 
     //TODO Move registering those types out of the property editor, since they are used also in the states editor
     Quick2PropertyEditorView::registerQmlTypes();
+    StudioQuickWidget::registerDeclarativeType();
 
-    if (checkEnterpriseLicense())
-        Core::IWizardFactory::registerFeatureProvider(new EnterpriseFeatureProvider);
     Exception::setWarnAboutException(!QmlDesignerPlugin::instance()
                                           ->settings()
                                           .value(DesignerSettingsKey::ENABLE_MODEL_EXCEPTION_OUTPUT)
@@ -295,6 +321,14 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString *e
     if (Core::ICore::isQtDesignStudio()) {
         d->toolBar = ToolBar::create();
         d->statusBar = ToolBar::createStatusBar();
+
+        // uses simplified Telemetry settings page in case of Qt Design Studio
+        ExtensionSystem::PluginSpec *usageStatistic = Utils::findOrDefault(ExtensionSystem::PluginManager::plugins(), [](ExtensionSystem::PluginSpec *p) {
+            return p->name() == "UsageStatistic";
+        });
+
+        if (usageStatistic && usageStatistic->plugin())
+            QMetaObject::invokeMethod(usageStatistic->plugin(), "useSimpleUi", true);
     }
 
     return true;
@@ -323,6 +357,12 @@ void QmlDesignerPlugin::extensionsInitialized()
     registerCombinedTracedPoints(Constants::EVENT_STATE_ADDED,
                                  Constants::EVENT_STATE_CLONED,
                                  Constants::EVENT_STATE_ADDED_AND_CLONED);
+
+    if (checkEnterpriseLicense())
+        Core::IWizardFactory::registerFeatureProvider(new EnterpriseFeatureProvider);
+
+    if (!QmlDesignerBasePlugin::isLiteModeEnabled())
+        Core::IWizardFactory::registerFeatureProvider(new FullQDSFeatureProvider);
 }
 
 ExtensionSystem::IPlugin::ShutdownFlag QmlDesignerPlugin::aboutToShutdown()
@@ -360,32 +400,27 @@ static QString projectPath(const Utils::FilePath &fileName)
     return path;
 }
 
-void QmlDesignerPlugin::integrateIntoQtCreator(QWidget *modeWidget)
+void QmlDesignerPlugin::integrateIntoQtCreator(DesignModeWidget *modeWidget)
 {
-    auto context = new Internal::DesignModeContext(modeWidget);
-    Core::ICore::addContextObject(context);
-    Core::Context qmlDesignerMainContext(Constants::C_QMLDESIGNER);
-    Core::Context qmlDesignerFormEditorContext(Constants::C_QMLFORMEDITOR);
-    Core::Context qmlDesignerEditor3dContext(Constants::C_QMLEDITOR3D);
-    Core::Context qmlDesignerNavigatorContext(Constants::C_QMLNAVIGATOR);
-    Core::Context qmlDesignerMaterialBrowserContext(Constants::C_QMLMATERIALBROWSER);
-    Core::Context qmlDesignerAssetsLibraryContext(Constants::C_QMLASSETSLIBRARY);
+    const Context context(Constants::qmlDesignerContextId, Constants::qtQuickToolsMenuContextId);
+    IContext::attach(modeWidget, context, [modeWidget](const IContext::HelpCallback &callback) {
+        modeWidget->contextHelp(callback);
+    });
 
-    context->context().add(qmlDesignerMainContext);
-    context->context().add(qmlDesignerFormEditorContext);
-    context->context().add(qmlDesignerEditor3dContext);
-    context->context().add(qmlDesignerNavigatorContext);
-    context->context().add(qmlDesignerMaterialBrowserContext);
-    context->context().add(qmlDesignerAssetsLibraryContext);
-    context->context().add(ProjectExplorer::Constants::QMLJS_LANGUAGE_ID);
+    Core::Context qmlDesignerMainContext(Constants::qmlDesignerContextId);
+    Core::Context qmlDesignerFormEditorContext(Constants::qmlFormEditorContextId);
+    Core::Context qmlDesignerEditor3dContext(Constants::qml3DEditorContextId);
+    Core::Context qmlDesignerNavigatorContext(Constants::qmlNavigatorContextId);
+    Core::Context qmlDesignerMaterialBrowserContext(Constants::qmlMaterialBrowserContextId);
+    Core::Context qmlDesignerAssetsLibraryContext(Constants::qmlAssetsLibraryContextId);
 
     d->shortCutManager.registerActions(qmlDesignerMainContext, qmlDesignerFormEditorContext,
                                        qmlDesignerEditor3dContext, qmlDesignerNavigatorContext);
 
-    const QStringList mimeTypes = { QmlJSTools::Constants::QML_MIMETYPE,
-                                    QmlJSTools::Constants::QMLUI_MIMETYPE };
+    const QStringList mimeTypes = { Utils::Constants::QML_MIMETYPE,
+                                    Utils::Constants::QMLUI_MIMETYPE };
 
-    Core::DesignMode::registerDesignWidget(modeWidget, mimeTypes, context->context());
+    Core::DesignMode::registerDesignWidget(modeWidget, mimeTypes, context);
 
     connect(Core::DesignMode::instance(), &Core::DesignMode::actionsUpdated,
         &d->shortCutManager, &ShortCutManager::updateActions);
@@ -488,9 +523,6 @@ void QmlDesignerPlugin::hideDesigner()
 
 void QmlDesignerPlugin::changeEditor()
 {
-    if (d->blockEditorChange)
-        return;
-
     clearDesigner();
     setupDesigner();
 }
@@ -527,6 +559,9 @@ void QmlDesignerPlugin::selectModelNodeUnderTextCursor()
 
 void QmlDesignerPlugin::activateAutoSynchronization()
 {
+    viewManager().detachViewsExceptRewriterAndComponetView();
+    viewManager().detachComponentView();
+
     // text editor -> visual editor
     if (!currentDesignDocument()->isDocumentLoaded())
         currentDesignDocument()->loadDocument(currentDesignDocument()->plainTextEdit());
@@ -544,7 +579,9 @@ void QmlDesignerPlugin::activateAutoSynchronization()
 
     d->mainWidget.setupNavigatorHistory(currentDesignDocument()->textEditor());
 
+#ifndef QDS_USE_PROJECTSTORAGE
     currentDesignDocument()->updateSubcomponentManager();
+#endif
 }
 
 void QmlDesignerPlugin::deactivateAutoSynchronization()
@@ -599,14 +636,18 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
         return;
 
     // adding default path to item library plugins
-    const QString postfix = Utils::HostOsInfo::isMacHost() ? QString("/QmlDesigner")
-                                                           : QString("/qmldesigner");
-    const QStringList pluginPaths = Utils::transform(ExtensionSystem::PluginManager::pluginPaths(),
-                                                     [postfix](const QString &p) {
-                                                         return QString(p + postfix);
-                                                     });
+    const QString postfix = Utils::HostOsInfo::isMacHost()
+                                ? QString("QmlDesigner")
+                                : QString("qmldesigner");
+    const QStringList pluginPaths =
+        Utils::transform(ExtensionSystem::PluginManager::pluginPaths(),
+                         [postfix](const Utils::FilePath &p) {
+                           return (p / postfix).toFSPathString();
+                         });
 
+#ifndef QDS_USE_PROJECTSTORAGE
     MetaInfo::initializeGlobal(pluginPaths, d->externalDependencies);
+#endif
 
     d->viewManager.registerView(std::make_unique<ConnectionView>(d->externalDependencies));
 
@@ -629,6 +670,7 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
     d->viewManager.registerFormEditorTool(std::make_unique<TextTool>());
     d->viewManager.registerFormEditorTool(std::make_unique<PathTool>(d->externalDependencies));
     d->viewManager.registerFormEditorTool(std::make_unique<TransitionTool>());
+    d->viewManager.registerFormEditorTool(std::make_unique<View3DTool>());
 
     if (Core::ICore::isQtDesignStudio()) {
         d->mainWidget.initialize();
@@ -640,12 +682,11 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
 
         FoundLicense license = checkLicense();
         if (license == FoundLicense::enterprise)
-            Core::ICore::appendAboutInformation(tr("License: Enterprise"));
+            Core::ICore::setPrependAboutInformation("License: Enterprise");
         else if (license == FoundLicense::professional)
-            Core::ICore::appendAboutInformation(tr("License: Professional"));
-
-        if (!licensee().isEmpty())
-            Core::ICore::appendAboutInformation(tr("Licensee: %1").arg(licensee()));
+            Core::ICore::setPrependAboutInformation("License: Professional");
+        else if (license == FoundLicense::community)
+            Core::ICore::setPrependAboutInformation("License: Community");
     }
 
     m_delayedInitialized = true;
@@ -653,18 +694,12 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
 
 DesignDocument *QmlDesignerPlugin::currentDesignDocument() const
 {
-    if (d)
-        return d->documentManager.currentDesignDocument();
-
-    return nullptr;
+    return d ? d->documentManager.currentDesignDocument() : nullptr;
 }
 
 Internal::DesignModeWidget *QmlDesignerPlugin::mainWidget() const
 {
-    if (d)
-        return &d->mainWidget;
-
-    return nullptr;
+    return d ? &d->mainWidget : nullptr;
 }
 
 QWidget *QmlDesignerPlugin::createProjectExplorerWidget(QWidget *parent) const
@@ -674,21 +709,9 @@ QWidget *QmlDesignerPlugin::createProjectExplorerWidget(QWidget *parent) const
 
 void QmlDesignerPlugin::switchToTextModeDeferred()
 {
-    QTimer::singleShot(0, this, [] () {
+    QTimer::singleShot(0, this, [] {
         Core::ModeManager::activateMode(Core::Constants::MODE_EDIT);
     });
-}
-
-void QmlDesignerPlugin::emitCurrentTextEditorChanged(Core::IEditor *editor)
-{
-    d->blockEditorChange = true;
-    emit Core::EditorManager::instance()->currentEditorChanged(editor);
-    d->blockEditorChange = false;
-}
-
-void QmlDesignerPlugin::emitAssetChanged(const QString &assetPath)
-{
-    emit assetChanged(assetPath);
 }
 
 double QmlDesignerPlugin::formEditorDevicePixelRatio()
@@ -704,7 +727,7 @@ double QmlDesignerPlugin::formEditorDevicePixelRatio()
 
 void QmlDesignerPlugin::contextHelp(const Core::IContext::HelpCallback &callback, const QString &id)
 {
-    emitUsageStatisticsHelpRequested(id);
+    emitUsageStatistics(Constants::EVENT_HELP_REQUESTED + id);
     QmlDesignerPlugin::instance()->viewManager().qmlJSEditorContextHelp(callback);
 }
 
@@ -720,7 +743,7 @@ void QmlDesignerPlugin::emitUsageStatistics(const QString &identifier)
         const int currentTime = privateInstance()->timer.elapsed();
         const int currentDuration = (currentTime - activeData.time);
         if (currentDuration < activeData.maxDuration)
-            instance()->emitUsageStatisticsUsageDuration(activeData.newIdentifer, currentDuration);
+            emit instance()->usageStatisticsUsageDuration(activeData.newIdentifer, currentDuration);
 
         privateInstance()->m_activeTraceIdentifierDataHash.remove(identifier);
     }
@@ -748,11 +771,6 @@ void QmlDesignerPlugin::emitUsageStatisticsContextAction(const QString &identifi
     emitUsageStatistics(Constants::EVENT_ACTION_EXECUTED + identifier);
 }
 
-void QmlDesignerPlugin::emitUsageStatisticsHelpRequested(const QString &identifier)
-{
-    emitUsageStatistics(Constants::EVENT_HELP_REQUESTED + identifier);
-}
-
 AsynchronousImageCache &QmlDesignerPlugin::imageCache()
 {
     return m_instance->d->projectManager.asynchronousImageCache();
@@ -763,36 +781,22 @@ void QmlDesignerPlugin::registerPreviewImageProvider(QQmlEngine *engine)
     m_instance->d->projectManager.registerPreviewImageProvider(engine);
 }
 
-
-bool isParent(QWidget *parent, QWidget *widget)
-{
-    if (!widget)
-        return false;
-
-    if (widget == parent)
-        return true;
-
-    return isParent(parent, widget->parentWidget());
-}
-
 void QmlDesignerPlugin::trackWidgetFocusTime(QWidget *widget, const QString &identifier)
 {
-    connect(qApp,
-            &QApplication::focusChanged,
-            widget,
-            [widget, identifier](QWidget *from, QWidget *to) {
-                static QElapsedTimer widgetUsageTimer;
-                static QString lastIdentifier;
-                if (isParent(widget, to)) {
-                    if (!lastIdentifier.isEmpty())
-                        emitUsageStatisticsTime(lastIdentifier, widgetUsageTimer.elapsed());
-                    widgetUsageTimer.restart();
-                    lastIdentifier = identifier;
-                } else if (isParent(widget, from) && lastIdentifier == identifier) {
-                    emitUsageStatisticsTime(identifier, widgetUsageTimer.elapsed());
-                    lastIdentifier.clear();
-                }
-            });
+    connect(qApp, &QApplication::focusChanged,
+            widget, [widget, identifier](QWidget *from, QWidget *to) {
+        static QElapsedTimer widgetUsageTimer;
+        static QString lastIdentifier;
+        if (widget->isAncestorOf(to)) {
+            if (!lastIdentifier.isEmpty())
+                emitUsageStatisticsTime(lastIdentifier, widgetUsageTimer.elapsed());
+            widgetUsageTimer.restart();
+            lastIdentifier = identifier;
+        } else if (widget->isAncestorOf(from) && lastIdentifier == identifier) {
+            emitUsageStatisticsTime(identifier, widgetUsageTimer.elapsed());
+            lastIdentifier.clear();
+        }
+    });
 }
 
 void QmlDesignerPlugin::registerCombinedTracedPoints(const QString &identifierFirst,
@@ -867,14 +871,13 @@ void QmlDesignerPlugin::closeFeedbackPopup()
 
 void QmlDesignerPlugin::emitUsageStatisticsTime(const QString &identifier, int elapsed)
 {
-
     QTC_ASSERT(instance(), return);
     emit instance()->usageStatisticsUsageTimer(normalizeIdentifier(identifier), elapsed);
 }
 
 void QmlDesignerPlugin::emitUsageStatisticsUsageDuration(const QString &identifier, int elapsed)
 {
-    QTC_ASSERT(instance(), return );
+    QTC_ASSERT(instance(), return);
     emit instance()->usageStatisticsUsageDuration(identifier, elapsed);
 }
 

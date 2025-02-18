@@ -117,9 +117,9 @@ QString GitEditorWidget::changeUnderCursor(const QTextCursor &c) const
     return {};
 }
 
-BaseAnnotationHighlighter *GitEditorWidget::createAnnotationHighlighter(const QSet<QString> &changes) const
+VcsBase::BaseAnnotationHighlighterCreator GitEditorWidget::annotationHighlighterCreator() const
 {
-    return new GitAnnotationHighlighter(changes);
+    return VcsBase::getAnnotationHighlighterCreator<GitAnnotationHighlighter>();
 }
 
 /* Remove the date specification from annotation, which is tabular:
@@ -186,17 +186,7 @@ void GitEditorWidget::setPlainText(const QString &text)
     switch (contentType())
     {
     case LogOutput: {
-        AnsiEscapeCodeHandler handler;
-        const QList<FormattedText> formattedTextList = handler.parseText(FormattedText(text));
-
-        clear();
-        QTextCursor cursor = textCursor();
-        cursor.beginEditBlock();
-        for (const auto &formattedChunk : formattedTextList)
-            cursor.insertText(formattedChunk.text, formattedChunk.format);
-        cursor.endEditBlock();
-        document()->setModified(false);
-
+        AnsiEscapeCodeHandler::setTextInEditor(this, text);
         return;
     }
     case AnnotateOutput:
@@ -246,9 +236,11 @@ void GitEditorWidget::init()
         return;
     const QChar commentChar = gitClient().commentChar(source());
     if (isCommitEditor)
-        textDocument()->setSyntaxHighlighter(new GitSubmitHighlighter(commentChar));
+        textDocument()->resetSyntaxHighlighter(
+            [commentChar] { return new GitSubmitHighlighter(commentChar); });
     else if (isRebaseEditor)
-        textDocument()->setSyntaxHighlighter(new GitRebaseHighlighter(commentChar));
+        textDocument()->resetSyntaxHighlighter(
+            [commentChar] { return new GitRebaseHighlighter(commentChar); });
 }
 
 void GitEditorWidget::addDiffActions(QMenu *menu, const DiffChunk &chunk)
@@ -280,7 +272,7 @@ void GitEditorWidget::aboutToOpen(const FilePath &filePath, const FilePath &real
 
 QString GitEditorWidget::decorateVersion(const QString &revision) const
 {
-    // Format verbose, SHA1 being first token
+    // Format verbose, hash being first token
     return gitClient().synchronousShortDescription(sourceWorkingDirectory(), revision);
 }
 
@@ -288,7 +280,7 @@ QStringList GitEditorWidget::annotationPreviousVersions(const QString &revision)
 {
     QStringList revisions;
     QString errorMessage;
-    // Get the SHA1's of the file.
+    // Get the hashes of the file.
     if (!gitClient().synchronousParentRevisions(
                 sourceWorkingDirectory(), revision, &revisions, &errorMessage)) {
         VcsOutputWindow::appendSilently(errorMessage);

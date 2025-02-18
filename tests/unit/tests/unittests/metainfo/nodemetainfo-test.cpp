@@ -4,6 +4,7 @@
 #include "../utils/googletest.h"
 
 #include <matchers/info_exportedtypenames-matcher.h>
+#include <matchers/projectstorage-matcher.h>
 #include <mocks/projectstoragemock.h>
 #include <mocks/sourcepathcachemock.h>
 
@@ -13,8 +14,12 @@
 
 namespace {
 
+using QmlDesigner::FlagIs;
 using QmlDesigner::ModelNode;
 using QmlDesigner::ModelNodes;
+using QmlDesigner::Storage::ModuleKind;
+using QmlDesigner::Storage::TypeTraits;
+using QmlDesigner::Storage::TypeTraitsKind;
 
 template<typename Matcher>
 auto PropertyId(const Matcher &matcher)
@@ -64,9 +69,10 @@ protected:
     }
 
     QmlDesigner::NodeMetaInfo createDerivedDummyMetaInfo(Utils::SmallStringView moduleName,
+                                                         ModuleKind moduleKind,
                                                          Utils::SmallStringView typeName)
     {
-        auto moduleId = projectStorageMock.createModule(moduleName);
+        auto moduleId = projectStorageMock.createModule(moduleName, moduleKind);
         auto typeId = projectStorageMock.createType(moduleId, typeName, {});
 
         return createDerivedDummyMetaInfo(typeId);
@@ -82,10 +88,11 @@ protected:
     }
 
     QmlDesigner::NodeMetaInfo createMetaInfo(Utils::SmallStringView moduleName,
+                                             ModuleKind moduleKind,
                                              Utils::SmallStringView typeName,
                                              QmlDesigner::Storage::TypeTraits typeTraits = {})
     {
-        auto moduleId = projectStorageMock.createModule(moduleName);
+        auto moduleId = projectStorageMock.createModule(moduleName, moduleKind);
         auto typeId = projectStorageMock.createType(moduleId, typeName, typeTraits);
 
         return QmlDesigner::NodeMetaInfo{typeId, &projectStorageMock};
@@ -93,7 +100,7 @@ protected:
 
 protected:
     NiceMock<SourcePathCacheMockWithPaths> pathCache{"/path/foo.qml"};
-    NiceMock<ProjectStorageMockWithQtQtuick> projectStorageMock{pathCache.sourceId};
+    NiceMock<ProjectStorageMockWithQtQuick> projectStorageMock{pathCache.sourceId, "/path"};
     QmlDesigner::Model model{{projectStorageMock, pathCache},
                              "Item",
                              {QmlDesigner::Import::createLibraryImport("QML"),
@@ -105,8 +112,9 @@ protected:
     ModelNode object = model.createModelNode("QtObject");
     QmlDesigner::NodeMetaInfo itemMetaInfo = item.metaInfo();
     QmlDesigner::NodeMetaInfo objectMetaInfo = object.metaInfo();
-    QmlDesigner::ModuleId qmlModuleId = projectStorageMock.createModule("QML");
-    QmlDesigner::ModuleId qtQuickModuleId = projectStorageMock.createModule("QtQuick");
+    QmlDesigner::ModuleId qmlModuleId = projectStorageMock.createModule("QML", ModuleKind::QmlLibrary);
+    QmlDesigner::ModuleId qtQuickModuleId = projectStorageMock.createModule("QtQuick",
+                                                                            ModuleKind::QmlLibrary);
     QmlDesigner::TypeId intTypeId = projectStorageMock.typeId(qmlModuleId,
                                                               "int",
                                                               QmlDesigner::Storage::Version{});
@@ -211,82 +219,15 @@ TEST_F(NodeMetaInfo, invalid_is_not_file_component)
 
 TEST_F(NodeMetaInfo, component_is_file_component)
 {
-    using QmlDesigner::Storage::TypeTraits;
-    auto moduleId = projectStorageMock.createModule("/path/to/project");
-    auto typeId = projectStorageMock.createType(moduleId,
-                                                "Foo",
-                                                TypeTraits::IsFileComponent | TypeTraits::Reference);
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.isFileComponent = true;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
     QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
 
     bool isFileComponent = metaInfo.isFileComponent();
 
     ASSERT_TRUE(isFileComponent);
-}
-
-TEST_F(NodeMetaInfo, is_project_component)
-{
-    using QmlDesigner::Storage::TypeTraits;
-    auto moduleId = projectStorageMock.createModule("/path/to/project");
-    auto typeId = projectStorageMock.createType(moduleId, "Foo", TypeTraits::IsProjectComponent);
-    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
-
-    bool isProjectComponent = metaInfo.isProjectComponent();
-
-    ASSERT_TRUE(isProjectComponent);
-}
-
-TEST_F(NodeMetaInfo, is_not_project_component)
-{
-    using QmlDesigner::Storage::TypeTraits;
-    auto moduleId = projectStorageMock.createModule("/path/to/project");
-    auto typeId = projectStorageMock.createType(moduleId, "Foo", {});
-    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
-
-    bool isProjectComponent = metaInfo.isProjectComponent();
-
-    ASSERT_FALSE(isProjectComponent);
-}
-
-TEST_F(NodeMetaInfo, invalid_is_not_project_component)
-{
-    QmlDesigner::NodeMetaInfo metaInfo;
-
-    bool isProjectComponent = metaInfo.isProjectComponent();
-
-    ASSERT_FALSE(isProjectComponent);
-}
-
-TEST_F(NodeMetaInfo, is_in_project_module)
-{
-    using QmlDesigner::Storage::TypeTraits;
-    auto moduleId = projectStorageMock.createModule("/path/to/project");
-    auto typeId = projectStorageMock.createType(moduleId, "Foo", TypeTraits::IsInProjectModule);
-    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
-
-    bool isInProjectModule = metaInfo.isInProjectModule();
-
-    ASSERT_TRUE(isInProjectModule);
-}
-
-TEST_F(NodeMetaInfo, is_not_in_project_module)
-{
-    using QmlDesigner::Storage::TypeTraits;
-    auto moduleId = projectStorageMock.createModule("/path/to/project");
-    auto typeId = projectStorageMock.createType(moduleId, "Foo", {});
-    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
-
-    bool isInProjectModule = metaInfo.isInProjectModule();
-
-    ASSERT_FALSE(isInProjectModule);
-}
-
-TEST_F(NodeMetaInfo, invalid_is_not_in_project_module)
-{
-    QmlDesigner::NodeMetaInfo metaInfo;
-
-    bool isInProjectModule = metaInfo.isInProjectModule();
-
-    ASSERT_FALSE(isInProjectModule);
 }
 
 TEST_F(NodeMetaInfo, has_property)
@@ -793,6 +734,25 @@ TEST_F(NodeMetaInfo, prototypes_returns_empty_container_for_default)
     ASSERT_THAT(prototypes, IsEmpty());
 }
 
+TEST_F(NodeMetaInfo, heirs)
+{
+    auto metaInfo = model.qmlQtObjectMetaInfo();
+    projectStorageMock.setHeirs(metaInfo.id(), {model.qtQuickItemMetaInfo().id()});
+
+    auto heirs = metaInfo.heirs();
+
+    ASSERT_THAT(heirs, ElementsAre(model.qtQuickItemMetaInfo()));
+}
+
+TEST_F(NodeMetaInfo, heirs_returns_empty_container_for_default)
+{
+    auto metaInfo = QmlDesigner::NodeMetaInfo();
+
+    auto heirs = metaInfo.heirs();
+
+    ASSERT_THAT(heirs, IsEmpty());
+}
+
 TEST_F(NodeMetaInfo, common_base_is_root)
 {
     auto metaInfo = model.flowViewFlowActionAreaMetaInfo();
@@ -849,7 +809,7 @@ TEST_F(NodeMetaInfo, second_input_is_invalid_for_common_base_returns_invalid)
 
 TEST_F(NodeMetaInfo, source_id)
 {
-    auto moduleId = projectStorageMock.createModule("/path/to/project");
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
     auto typeSourceId = QmlDesigner::SourceId::create(999);
     auto typeId = projectStorageMock.createType(moduleId, "Foo", {}, {}, typeSourceId);
     QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
@@ -906,7 +866,7 @@ TEST_F(NodeMetaInfo, default_is_not_color)
 
 TEST_F(NodeMetaInfo, float_is_a_floating_type)
 {
-    auto metaInfo = createMetaInfo("QML-cppnative", "float");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::CppLibrary, "float");
 
     bool isType = metaInfo.isFloat();
 
@@ -933,7 +893,7 @@ TEST_F(NodeMetaInfo, default_is_not_float)
 
 TEST_F(NodeMetaInfo, is_FlowView_FlowActionArea)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowActionArea");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowActionArea");
 
     bool isType = metaInfo.isFlowViewFlowActionArea();
 
@@ -951,7 +911,7 @@ TEST_F(NodeMetaInfo, default_is_not_FlowView_FlowActionArea)
 
 TEST_F(NodeMetaInfo, is_FlowView_FlowDecision)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowDecision");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowDecision");
 
     bool isType = metaInfo.isFlowViewFlowDecision();
 
@@ -969,7 +929,7 @@ TEST_F(NodeMetaInfo, default_is_not_FlowView_FlowDecision)
 
 TEST_F(NodeMetaInfo, is_FlowView_FlowItem)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowItem");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowItem");
 
     bool isType = metaInfo.isFlowViewFlowItem();
 
@@ -987,7 +947,7 @@ TEST_F(NodeMetaInfo, default_is_not_FlowView_FlowItem)
 
 TEST_F(NodeMetaInfo, is_FlowView_FlowTransition)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowTransition");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowTransition");
 
     bool isType = metaInfo.isFlowViewFlowTransition();
 
@@ -1005,7 +965,7 @@ TEST_F(NodeMetaInfo, default_is_not_FlowView_FlowTransition)
 
 TEST_F(NodeMetaInfo, is_FlowView_FlowView)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowView");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowView");
 
     bool isType = metaInfo.isFlowViewFlowView();
 
@@ -1023,7 +983,7 @@ TEST_F(NodeMetaInfo, default_is_not_FlowView_FlowView)
 
 TEST_F(NodeMetaInfo, is_FlowView_FlowWildcard)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowWildcard");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowWildcard");
 
     bool isType = metaInfo.isFlowViewFlowWildcard();
 
@@ -1041,7 +1001,7 @@ TEST_F(NodeMetaInfo, default_is_not_FlowView_FlowWildcard)
 
 TEST_F(NodeMetaInfo, FlowItem_is_FlowView_item)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowItem");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowItem");
 
     bool isType = metaInfo.isFlowViewItem();
 
@@ -1050,7 +1010,7 @@ TEST_F(NodeMetaInfo, FlowItem_is_FlowView_item)
 
 TEST_F(NodeMetaInfo, FlowWildcard_is_FlowView_item)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowWildcard");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowWildcard");
 
     bool isType = metaInfo.isFlowViewItem();
 
@@ -1059,7 +1019,7 @@ TEST_F(NodeMetaInfo, FlowWildcard_is_FlowView_item)
 
 TEST_F(NodeMetaInfo, FlowDecision_is_FlowView_item)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("FlowView", "FlowDecision");
+    auto metaInfo = createDerivedDummyMetaInfo("FlowView", ModuleKind::QmlLibrary, "FlowDecision");
 
     bool isType = metaInfo.isFlowViewItem();
 
@@ -1104,7 +1064,7 @@ TEST_F(NodeMetaInfo, QtQuick_Item_is_graphical_item)
 
 TEST_F(NodeMetaInfo, QtQuickWindow_Window_is_graphical_item)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Window", "Window");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Window", ModuleKind::QmlLibrary, "Window");
 
     bool isType = metaInfo.isGraphicalItem();
 
@@ -1113,7 +1073,7 @@ TEST_F(NodeMetaInfo, QtQuickWindow_Window_is_graphical_item)
 
 TEST_F(NodeMetaInfo, QtQuickDialogs_Dialogs_is_graphical_item)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Dialogs", "Dialog");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Dialogs", ModuleKind::QmlLibrary, "Dialog");
 
     bool isType = metaInfo.isGraphicalItem();
 
@@ -1122,7 +1082,7 @@ TEST_F(NodeMetaInfo, QtQuickDialogs_Dialogs_is_graphical_item)
 
 TEST_F(NodeMetaInfo, QtQuickControls_Popup_is_graphical_item)
 {
-    auto metaInfo = createMetaInfo("QtQuick.Controls", "Popup");
+    auto metaInfo = createMetaInfo("QtQuick.Controls", ModuleKind::QmlLibrary, "Popup");
 
     bool isType = metaInfo.isGraphicalItem();
 
@@ -1167,7 +1127,7 @@ TEST_F(NodeMetaInfo, QtQuick_Positioner_is_layoutable)
 
 TEST_F(NodeMetaInfo, QtQuick_Layouts_Layout_is_layoutable)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Layouts", "Layout");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Layouts", ModuleKind::QmlLibrary, "Layout");
 
     bool isType = metaInfo.isLayoutable();
 
@@ -1176,7 +1136,7 @@ TEST_F(NodeMetaInfo, QtQuick_Layouts_Layout_is_layoutable)
 
 TEST_F(NodeMetaInfo, QtQuick_Controls_SplitView_is_layoutable)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", "SplitView");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", ModuleKind::QmlLibrary, "SplitView");
 
     bool isType = metaInfo.isLayoutable();
 
@@ -1239,7 +1199,8 @@ TEST_F(NodeMetaInfo, default_is_not_qml_component)
 
 TEST_F(NodeMetaInfo, is_QtMultimedia_SoundEffect)
 {
-    auto qtMultimediaModuleId = projectStorageMock.createModule("QtMultimedia");
+    auto qtMultimediaModuleId = projectStorageMock.createModule("QtMultimedia",
+                                                                ModuleKind::QmlLibrary);
     auto metaInfo = createDerivedDummyMetaInfo(qtMultimediaModuleId, "SoundEffect");
 
     bool isType = metaInfo.isQtMultimediaSoundEffect();
@@ -1276,7 +1237,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtObject)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_BakedLightmap)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "BakedLightmap");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "BakedLightmap");
 
     bool isType = metaInfo.isQtQuick3DBakedLightmap();
 
@@ -1294,7 +1255,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_BakedLightmap)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Camera)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Camera");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Camera");
 
     bool isType = metaInfo.isQtQuick3DCamera();
 
@@ -1312,7 +1273,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Camera)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Command)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Command");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Command");
 
     bool isType = metaInfo.isQtQuick3DCommand();
 
@@ -1330,7 +1291,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Command)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_DefaultMaterial)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "DefaultMaterial");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "DefaultMaterial");
 
     bool isType = metaInfo.isQtQuick3DDefaultMaterial();
 
@@ -1348,7 +1309,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_DefaultMaterial)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Effect)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Effect");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Effect");
 
     bool isType = metaInfo.isQtQuick3DEffect();
 
@@ -1366,7 +1327,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Effect)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_InstanceList)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "InstanceList");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "InstanceList");
 
     bool isType = metaInfo.isQtQuick3DInstanceList();
 
@@ -1384,7 +1345,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_InstanceList)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_InstanceListEntry)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "InstanceListEntry");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "InstanceListEntry");
 
     bool isType = metaInfo.isQtQuick3DInstanceListEntry();
 
@@ -1402,7 +1363,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_InstanceListEntry)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Light)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Light");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Light");
 
     bool isType = metaInfo.isQtQuick3DLight();
 
@@ -1420,7 +1381,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Light)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Material)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Material");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Material");
 
     bool isType = metaInfo.isQtQuick3DMaterial();
 
@@ -1438,7 +1399,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Material)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Model)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Model");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Model");
 
     bool isType = metaInfo.isQtQuick3DModel();
 
@@ -1456,7 +1417,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Model)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Node)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Node");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Node");
 
     bool isType = metaInfo.isQtQuick3DNode();
 
@@ -1474,7 +1435,8 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Node)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Particles3D_cppnative_QQuick3DParticleAbstractShape)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D-cppnative",
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D",
+                                               ModuleKind::CppLibrary,
                                                "QQuick3DParticleAbstractShape");
 
     bool isType = metaInfo.isQtQuick3DParticlesAbstractShape();
@@ -1493,7 +1455,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Particles3D_cppnative_QQuick3DPart
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Particles3D_Affector3D)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D", "Affector3D");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D",
+                                               ModuleKind::QmlLibrary,
+                                               "Affector3D");
 
     bool isType = metaInfo.isQtQuick3DParticles3DAffector3D();
 
@@ -1511,7 +1475,9 @@ TEST_F(NodeMetaInfo, QtQuick3D_Particles3D_Affector3D)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Particles3D_Attractor3D)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D", "Attractor3D");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D",
+                                               ModuleKind::QmlLibrary,
+                                               "Attractor3D");
 
     bool isType = metaInfo.isQtQuick3DParticles3DAttractor3D();
 
@@ -1529,7 +1495,9 @@ TEST_F(NodeMetaInfo, QtQuick3D_Particles3D_Attractor3D)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Particles3D_Particle3D)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D", "Particle3D");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D",
+                                               ModuleKind::QmlLibrary,
+                                               "Particle3D");
 
     bool isType = metaInfo.isQtQuick3DParticles3DParticle3D();
 
@@ -1547,7 +1515,9 @@ TEST_F(NodeMetaInfo, QtQuick3D_Particles3D_Particle3D)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Particles3D_ParticleEmitter3D)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D", "ParticleEmitter3D");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D",
+                                               ModuleKind::QmlLibrary,
+                                               "ParticleEmitter3D");
 
     bool isType = metaInfo.isQtQuick3DParticles3DParticleEmitter3D();
 
@@ -1565,7 +1535,9 @@ TEST_F(NodeMetaInfo, QtQuick3D_Particles3D_ParticleEmitter3D)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Particles3D_SpriteParticle3D)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D", "SpriteParticle3D");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D.Particles3D",
+                                               ModuleKind::QmlLibrary,
+                                               "SpriteParticle3D");
 
     bool isType = metaInfo.isQtQuick3DParticles3DSpriteParticle3D();
 
@@ -1583,7 +1555,7 @@ TEST_F(NodeMetaInfo, QtQuick3D_Particles3D_SpriteParticle3D)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Pass)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Pass");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Pass");
 
     bool isType = metaInfo.isQtQuick3DPass();
 
@@ -1601,7 +1573,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Pass)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_PrincipledMaterial)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "PrincipledMaterial");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D",
+                                               ModuleKind::QmlLibrary,
+                                               "PrincipledMaterial");
 
     bool isType = metaInfo.isQtQuick3DPrincipledMaterial();
 
@@ -1619,7 +1593,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_PrincipledMaterial)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_SpecularGlossyMaterial)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "SpecularGlossyMaterial");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D",
+                                               ModuleKind::QmlLibrary,
+                                               "SpecularGlossyMaterial");
 
     bool isType = metaInfo.isQtQuick3DSpecularGlossyMaterial();
 
@@ -1637,7 +1613,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_SpecularGlossyMaterial)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_SceneEnvironment)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "SceneEnvironment");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "SceneEnvironment");
 
     bool isType = metaInfo.isQtQuick3DSceneEnvironment();
 
@@ -1655,7 +1631,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_SceneEnvironment)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Shader)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Shader");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Shader");
 
     bool isType = metaInfo.isQtQuick3DShader();
 
@@ -1673,7 +1649,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Shader)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_Texture)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "Texture");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "Texture");
 
     bool isType = metaInfo.isQtQuick3DTexture();
 
@@ -1691,7 +1667,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_Texture)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_TextureInput)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "TextureInput");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "TextureInput");
 
     bool isType = metaInfo.isQtQuick3DTextureInput();
 
@@ -1709,7 +1685,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_TextureInput)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_CubeMapTexture)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "CubeMapTexture");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "CubeMapTexture");
 
     bool isType = metaInfo.isQtQuick3DCubeMapTexture();
 
@@ -1727,7 +1703,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_CubeMapTexture)
 
 TEST_F(NodeMetaInfo, is_QtQuick3D_View3D)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", "View3D");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick3D", ModuleKind::QmlLibrary, "View3D");
 
     bool isType = metaInfo.isQtQuick3DView3D();
 
@@ -1745,7 +1721,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick3D_View3D)
 
 TEST_F(NodeMetaInfo, is_QtQuick_BorderImage)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "BorderImage");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "BorderImage");
 
     bool isType = metaInfo.isQtQuickBorderImage();
 
@@ -1763,7 +1739,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_BorderImage)
 
 TEST_F(NodeMetaInfo, is_QtQuickControls_SwipeView)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", "SwipeView");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", ModuleKind::QmlLibrary, "SwipeView");
 
     bool isType = metaInfo.isQtQuickControlsSwipeView();
 
@@ -1781,7 +1757,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickControls_SwipeView)
 
 TEST_F(NodeMetaInfo, is_QtQuickControls_TabBar)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", "TabBar");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", ModuleKind::QmlLibrary, "TabBar");
 
     bool isType = metaInfo.isQtQuickControlsTabBar();
 
@@ -1799,7 +1775,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickControls_TabBar)
 
 TEST_F(NodeMetaInfo, is_QtQuickExtras_Picture)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Extras", "Picture");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Extras", ModuleKind::QmlLibrary, "Picture");
 
     bool isType = metaInfo.isQtQuickExtrasPicture();
 
@@ -1817,7 +1793,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickExtras_Picture)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Image)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Image");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Image");
 
     bool isType = metaInfo.isQtQuickImage();
 
@@ -1835,7 +1811,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Image)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Item)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Item");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Item");
 
     bool isType = metaInfo.isQtQuickItem();
 
@@ -1853,7 +1829,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Item)
 
 TEST_F(NodeMetaInfo, is_QtQuickLayouts_BorderImage)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Layouts", "Layout");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Layouts", ModuleKind::QmlLibrary, "Layout");
 
     bool isType = metaInfo.isQtQuickLayoutsLayout();
 
@@ -1871,7 +1847,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickLayouts_Layout)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Loader)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Loader");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Loader");
 
     bool isType = metaInfo.isQtQuickLoader();
 
@@ -1889,7 +1865,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Loader)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Path)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Path");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Path");
 
     bool isType = metaInfo.isQtQuickPath();
 
@@ -1907,7 +1883,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Path)
 
 TEST_F(NodeMetaInfo, is_QtQuick_PauseAnimation)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "PauseAnimation");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "PauseAnimation");
 
     bool isType = metaInfo.isQtQuickPauseAnimation();
 
@@ -1925,7 +1901,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_PauseAnimation)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Positioner)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Positioner");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Positioner");
 
     bool isType = metaInfo.isQtQuickPositioner();
 
@@ -1943,7 +1919,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Positioner)
 
 TEST_F(NodeMetaInfo, is_QtQuick_PropertyAnimation)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "PropertyAnimation");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "PropertyAnimation");
 
     bool isType = metaInfo.isQtQuickPropertyAnimation();
 
@@ -1961,7 +1937,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_PropertyAnimation)
 
 TEST_F(NodeMetaInfo, is_QtQuick_PropertyChanges)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "PropertyChanges");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "PropertyChanges");
 
     bool isType = metaInfo.isQtQuickPropertyChanges();
 
@@ -1979,7 +1955,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_PropertyChanges)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Repeater)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Repeater");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Repeater");
 
     bool isType = metaInfo.isQtQuickRepeater();
 
@@ -1997,7 +1973,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Repeater)
 
 TEST_F(NodeMetaInfo, is_QtQuick_State)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "State");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "State");
 
     bool isType = metaInfo.isQtQuickState();
 
@@ -2015,7 +1991,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_State)
 
 TEST_F(NodeMetaInfo, is_QtQuickNative_StateOperation)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick-cppnative", "QQuickStateOperation");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick",
+                                               ModuleKind::CppLibrary,
+                                               "QQuickStateOperation");
 
     bool isType = metaInfo.isQtQuickStateOperation();
 
@@ -2033,7 +2011,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickNative_StateOperation)
 
 TEST_F(NodeMetaInfo, is_QtQuickStudioComponents_GroupItem)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Studio.Components", "GroupItem");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Studio.Components",
+                                               ModuleKind::QmlLibrary,
+                                               "GroupItem");
 
     bool isType = metaInfo.isQtQuickStudioComponentsGroupItem();
 
@@ -2051,7 +2031,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickStudioComponents_GroupItem)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Text)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Text");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Text");
 
     bool isType = metaInfo.isQtQuickText();
 
@@ -2069,7 +2049,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Text)
 
 TEST_F(NodeMetaInfo, is_QtQuickTimeline_Keyframe)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline", "Keyframe");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline", ModuleKind::QmlLibrary, "Keyframe");
 
     bool isType = metaInfo.isQtQuickTimelineKeyframe();
 
@@ -2087,7 +2067,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Keyframe)
 
 TEST_F(NodeMetaInfo, is_QtQuickTimeline_KeyframeGroup)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline", "KeyframeGroup");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline",
+                                               ModuleKind::QmlLibrary,
+                                               "KeyframeGroup");
 
     bool isType = metaInfo.isQtQuickTimelineKeyframeGroup();
 
@@ -2105,7 +2087,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_KeyframeGroup)
 
 TEST_F(NodeMetaInfo, is_QtQuickTimeline_Timeline)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline", "Timeline");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline", ModuleKind::QmlLibrary, "Timeline");
 
     bool isType = metaInfo.isQtQuickTimelineTimeline();
 
@@ -2123,7 +2105,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Timeline)
 
 TEST_F(NodeMetaInfo, is_QtQuickTimeline_TimelineAnimation)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline", "TimelineAnimation");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Timeline",
+                                               ModuleKind::QmlLibrary,
+                                               "TimelineAnimation");
 
     bool isType = metaInfo.isQtQuickTimelineTimelineAnimation();
 
@@ -2141,7 +2125,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_TimelineAnimation)
 
 TEST_F(NodeMetaInfo, is_QtQuick_Transition)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Transition");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Transition");
 
     bool isType = metaInfo.isQtQuickTransition();
 
@@ -2159,7 +2143,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuick_Transition)
 
 TEST_F(NodeMetaInfo, is_QtQuickWindow_Window)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Window", "Window");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Window", ModuleKind::QmlLibrary, "Window");
 
     bool isType = metaInfo.isQtQuickWindowWindow();
 
@@ -2177,7 +2161,9 @@ TEST_F(NodeMetaInfo, default_is_not_QtQuickWindow_Window)
 
 TEST_F(NodeMetaInfo, is_QtSafeRenderer_SafeRendererPicture)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("Qt.SafeRenderer", "SafeRendererPicture");
+    auto metaInfo = createDerivedDummyMetaInfo("Qt.SafeRenderer",
+                                               ModuleKind::QmlLibrary,
+                                               "SafeRendererPicture");
 
     bool isType = metaInfo.isQtSafeRendererSafeRendererPicture();
 
@@ -2195,7 +2181,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtSafeRenderer_SafeRendererPicture)
 
 TEST_F(NodeMetaInfo, is_QtSafeRenderer_SafePicture)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("Qt.SafeRenderer", "SafePicture");
+    auto metaInfo = createDerivedDummyMetaInfo("Qt.SafeRenderer", ModuleKind::QmlLibrary, "SafePicture");
 
     bool isType = metaInfo.isQtSafeRendererSafePicture();
 
@@ -2213,7 +2199,7 @@ TEST_F(NodeMetaInfo, default_is_not_QtSafeRenderer_SafePicture)
 
 TEST_F(NodeMetaInfo, is_string)
 {
-    auto metaInfo = createMetaInfo("QML", "string");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "string");
 
     bool isType = metaInfo.isString();
 
@@ -2231,7 +2217,7 @@ TEST_F(NodeMetaInfo, default_is_not_string)
 
 TEST_F(NodeMetaInfo, QtQuick_Item_is_suitable_for_MouseArea_fill)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "Item");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Item");
 
     bool isType = metaInfo.isSuitableForMouseAreaFill();
 
@@ -2240,7 +2226,7 @@ TEST_F(NodeMetaInfo, QtQuick_Item_is_suitable_for_MouseArea_fill)
 
 TEST_F(NodeMetaInfo, QtQuick_MouseArea_is_suitable_for_MouseArea_fill)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "MouseArea");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "MouseArea");
 
     bool isType = metaInfo.isSuitableForMouseAreaFill();
 
@@ -2249,7 +2235,7 @@ TEST_F(NodeMetaInfo, QtQuick_MouseArea_is_suitable_for_MouseArea_fill)
 
 TEST_F(NodeMetaInfo, QtQuickControls_Control_is_suitable_for_MouseArea_fill)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", "Control");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Controls", ModuleKind::QmlLibrary, "Control");
 
     bool isType = metaInfo.isSuitableForMouseAreaFill();
 
@@ -2258,7 +2244,7 @@ TEST_F(NodeMetaInfo, QtQuickControls_Control_is_suitable_for_MouseArea_fill)
 
 TEST_F(NodeMetaInfo, QtQuickTemplates_Control_is_suitable_for_MouseArea_fill)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Templates", "Control");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick.Templates", ModuleKind::QmlLibrary, "Control");
 
     bool isType = metaInfo.isSuitableForMouseAreaFill();
 
@@ -2276,7 +2262,7 @@ TEST_F(NodeMetaInfo, default_is_not_suitable_for_MouseArea_fill)
 
 TEST_F(NodeMetaInfo, is_url)
 {
-    auto metaInfo = createMetaInfo("QML", "url");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "url");
 
     bool isType = metaInfo.isUrl();
 
@@ -2294,7 +2280,7 @@ TEST_F(NodeMetaInfo, default_is_not_url)
 
 TEST_F(NodeMetaInfo, is_variant)
 {
-    auto metaInfo = createMetaInfo("QML", "var");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "var");
 
     bool isType = metaInfo.isVariant();
 
@@ -2312,7 +2298,7 @@ TEST_F(NodeMetaInfo, default_is_not_variant)
 
 TEST_F(NodeMetaInfo, is_vector2d)
 {
-    auto metaInfo = createMetaInfo("QtQuick", "vector2d");
+    auto metaInfo = createMetaInfo("QtQuick", ModuleKind::QmlLibrary, "vector2d");
 
     bool isType = metaInfo.isVector2D();
 
@@ -2330,7 +2316,7 @@ TEST_F(NodeMetaInfo, default_is_not_vector2d)
 
 TEST_F(NodeMetaInfo, is_vector3d)
 {
-    auto metaInfo = createMetaInfo("QtQuick", "vector3d");
+    auto metaInfo = createMetaInfo("QtQuick", ModuleKind::QmlLibrary, "vector3d");
 
     bool isType = metaInfo.isVector3D();
 
@@ -2348,7 +2334,7 @@ TEST_F(NodeMetaInfo, default_is_not_vector3d)
 
 TEST_F(NodeMetaInfo, is_vector4d)
 {
-    auto metaInfo = createMetaInfo("QtQuick", "vector4d");
+    auto metaInfo = createMetaInfo("QtQuick", ModuleKind::QmlLibrary, "vector4d");
 
     bool isType = metaInfo.isVector4D();
 
@@ -2366,7 +2352,7 @@ TEST_F(NodeMetaInfo, default_is_not_vector4d)
 
 TEST_F(NodeMetaInfo, QtQuick_ListView_is_view)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "ListView");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "ListView");
 
     bool isType = metaInfo.isView();
 
@@ -2375,7 +2361,7 @@ TEST_F(NodeMetaInfo, QtQuick_ListView_is_view)
 
 TEST_F(NodeMetaInfo, QtQuick_GridView_is_view)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "GridView");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "GridView");
 
     bool isType = metaInfo.isView();
 
@@ -2384,7 +2370,7 @@ TEST_F(NodeMetaInfo, QtQuick_GridView_is_view)
 
 TEST_F(NodeMetaInfo, QtQuick_PathView_is_view)
 {
-    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", "PathView");
+    auto metaInfo = createDerivedDummyMetaInfo("QtQuick", ModuleKind::QmlLibrary, "PathView");
 
     bool isType = metaInfo.isView();
 
@@ -2402,7 +2388,9 @@ TEST_F(NodeMetaInfo, default_is_not_view)
 
 TEST_F(NodeMetaInfo, is_enumeration)
 {
-    auto metaInfo = createMetaInfo("QML", "Foo", QmlDesigner::Storage::TypeTraits::IsEnum);
+    TypeTraits traits;
+    traits.isEnum = true;
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "Foo", traits);
 
     bool isType = metaInfo.isEnumeration();
 
@@ -2411,7 +2399,7 @@ TEST_F(NodeMetaInfo, is_enumeration)
 
 TEST_F(NodeMetaInfo, is_not_enumeration)
 {
-    auto metaInfo = createMetaInfo("QML", "Foo", {});
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "Foo", {});
 
     bool isType = metaInfo.isEnumeration();
 
@@ -2431,7 +2419,7 @@ TEST_F(NodeMetaInfo, all_external_type_names)
 {
     QmlDesigner::Storage::Info::ExportedTypeNames names{{qmlModuleId, "Object", 2, -1},
                                                         {qmlModuleId, "Obj", 2, 1}};
-    auto metaInfo = createMetaInfo("QML", "Foo");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "Foo");
     ON_CALL(projectStorageMock, exportedTypeNames(metaInfo.id())).WillByDefault(Return(names));
 
     auto exportedTypeNames = metaInfo.allExportedTypeNames();
@@ -2457,7 +2445,7 @@ TEST_F(NodeMetaInfo, external_type_names_for_source_id)
 {
     QmlDesigner::Storage::Info::ExportedTypeNames names{{qmlModuleId, "Object", 2, -1},
                                                         {qmlModuleId, "Obj", 2, 1}};
-    auto metaInfo = createMetaInfo("QML", "Foo");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "Foo");
     ON_CALL(projectStorageMock, exportedTypeNames(metaInfo.id(), model.fileUrlSourceId()))
         .WillByDefault(Return(names));
 
@@ -2485,7 +2473,7 @@ TEST_F(NodeMetaInfo, invalid_source_id_has_no_external_type_names_for_source_id)
 {
     QmlDesigner::Storage::Info::ExportedTypeNames names{{qmlModuleId, "Object", 2, -1},
                                                         {qmlModuleId, "Obj", 2, 1}};
-    auto metaInfo = createMetaInfo("QML", "Foo");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "Foo");
     ON_CALL(projectStorageMock, exportedTypeNames(metaInfo.id(), model.fileUrlSourceId()))
         .WillByDefault(Return(names));
     QmlDesigner::SourceId sourceId;
@@ -2497,7 +2485,7 @@ TEST_F(NodeMetaInfo, invalid_source_id_has_no_external_type_names_for_source_id)
 
 TEST_F(NodeMetaInfo, float_is_a_number)
 {
-    auto metaInfo = createMetaInfo("QML-cppnative", "float");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::CppLibrary, "float");
 
     bool isType = metaInfo.isNumber();
 
@@ -2524,7 +2512,7 @@ TEST_F(NodeMetaInfo, int_is_a_number)
 
 TEST_F(NodeMetaInfo, uint_is_a_number)
 {
-    auto metaInfo = createMetaInfo("QML-cppnative", "uint");
+    auto metaInfo = createMetaInfo("QML", ModuleKind::CppLibrary, "uint");
 
     bool isType = metaInfo.isNumber();
 
@@ -2542,7 +2530,7 @@ TEST_F(NodeMetaInfo, default_is_not_number)
 
 TEST_F(NodeMetaInfo, property_editor_specifics_path)
 {
-    auto metaInfo = createMetaInfo("QtQuick", "Item");
+    auto metaInfo = createMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Item");
     auto pathId = QmlDesigner::SourceId::create(45);
     ON_CALL(projectStorageMock, propertyEditorPathId(metaInfo.id())).WillByDefault(Return(pathId));
 
@@ -2562,7 +2550,7 @@ TEST_F(NodeMetaInfo, default_property_editor_specifics_path_is_empty)
 
 TEST_F(NodeMetaInfo, is_reference)
 {
-    auto metaInfo = createMetaInfo("QtQuick", "Item", QmlDesigner::Storage::TypeTraits::Reference);
+    auto metaInfo = createMetaInfo("QtQuick", ModuleKind::QmlLibrary, "Item", TypeTraitsKind::Reference);
 
     auto type = metaInfo.type();
 
@@ -2571,7 +2559,7 @@ TEST_F(NodeMetaInfo, is_reference)
 
 TEST_F(NodeMetaInfo, is_value)
 {
-    auto metaInfo = createMetaInfo("QML", "bool", QmlDesigner::Storage::TypeTraits::Value);
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "bool", TypeTraitsKind::Value);
 
     auto type = metaInfo.type();
 
@@ -2580,7 +2568,7 @@ TEST_F(NodeMetaInfo, is_value)
 
 TEST_F(NodeMetaInfo, is_sequence)
 {
-    auto metaInfo = createMetaInfo("QML", "QObjectList", QmlDesigner::Storage::TypeTraits::Sequence);
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "QObjectList", TypeTraitsKind::Sequence);
 
     auto type = metaInfo.type();
 
@@ -2589,7 +2577,7 @@ TEST_F(NodeMetaInfo, is_sequence)
 
 TEST_F(NodeMetaInfo, is_none)
 {
-    auto metaInfo = createMetaInfo("QML", "void", QmlDesigner::Storage::TypeTraits::None);
+    auto metaInfo = createMetaInfo("QML", ModuleKind::QmlLibrary, "void", TypeTraitsKind::None);
 
     auto type = metaInfo.type();
 
@@ -2603,6 +2591,559 @@ TEST_F(NodeMetaInfo, default_is_none)
     auto type = metaInfo.type();
 
     ASSERT_THAT(type, QmlDesigner::MetaInfoType::None);
+}
+
+TEST_F(NodeMetaInfo, object_can_not_be_container)
+{
+    auto canBeContainer = objectMetaInfo.canBeContainer();
+
+    ASSERT_THAT(canBeContainer, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_can_not_be_container)
+{
+    auto canBeContainer = QmlDesigner::NodeMetaInfo{}.canBeContainer();
+
+    ASSERT_THAT(canBeContainer, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_can_not_be_container)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto canBeContainer = metaInfo.canBeContainer();
+
+    ASSERT_THAT(canBeContainer, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_can_be_container)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.canBeContainer = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto canBeContainer = metaInfo.canBeContainer();
+
+    ASSERT_THAT(canBeContainer, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_do_no_forces_clipping)
+{
+    auto forceClip = objectMetaInfo.forceClip();
+
+    ASSERT_THAT(forceClip, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_do_no_forces_clipping)
+{
+    auto forceClip = QmlDesigner::NodeMetaInfo{}.forceClip();
+
+    ASSERT_THAT(forceClip, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_do_no_forces_clipping)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto forceClip = metaInfo.forceClip();
+
+    ASSERT_THAT(forceClip, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_forces_clipping)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.forceClip = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto forceClip = metaInfo.forceClip();
+
+    ASSERT_THAT(forceClip, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_does_not_layout_children)
+{
+    auto doesLayoutChildren = objectMetaInfo.doesLayoutChildren();
+
+    ASSERT_THAT(doesLayoutChildren, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_does_not_layout_children)
+{
+    auto doesLayoutChildren = QmlDesigner::NodeMetaInfo{}.doesLayoutChildren();
+
+    ASSERT_THAT(doesLayoutChildren, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_does_not_layout_children)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto doesLayoutChildren = metaInfo.doesLayoutChildren();
+
+    ASSERT_THAT(doesLayoutChildren, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_layouts_children)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.doesLayoutChildren = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto doesLayoutChildren = metaInfo.doesLayoutChildren();
+
+    ASSERT_THAT(doesLayoutChildren, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_cannot_be_dropped_in_form_editor)
+{
+    auto canBeDroppedInFormEditor = objectMetaInfo.canBeDroppedInFormEditor();
+
+    ASSERT_THAT(canBeDroppedInFormEditor, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_cannot_be_dropped_in_form_editor)
+{
+    auto canBeDroppedInFormEditor = QmlDesigner::NodeMetaInfo{}.canBeDroppedInFormEditor();
+
+    ASSERT_THAT(canBeDroppedInFormEditor, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_cannot_be_dropped_in_form_editor)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto canBeDroppedInFormEditor = metaInfo.canBeDroppedInFormEditor();
+
+    ASSERT_THAT(canBeDroppedInFormEditor, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_can_be_dropped_in_form_editor)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.canBeDroppedInFormEditor = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto canBeDroppedInFormEditor = metaInfo.canBeDroppedInFormEditor();
+
+    ASSERT_THAT(canBeDroppedInFormEditor, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_cannot_be_dropped_in_navigator)
+{
+    auto canBeDroppedInNavigator = objectMetaInfo.canBeDroppedInNavigator();
+
+    ASSERT_THAT(canBeDroppedInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_cannot_be_dropped_in_navigator)
+{
+    auto canBeDroppedInNavigator = QmlDesigner::NodeMetaInfo{}.canBeDroppedInNavigator();
+
+    ASSERT_THAT(canBeDroppedInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_cannot_be_dropped_in_navigator)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto canBeDroppedInNavigator = metaInfo.canBeDroppedInNavigator();
+
+    ASSERT_THAT(canBeDroppedInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_can_be_dropped_in_navigator)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.canBeDroppedInNavigator = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto canBeDroppedInNavigator = metaInfo.canBeDroppedInNavigator();
+
+    ASSERT_THAT(canBeDroppedInNavigator, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_cannot_be_dropped_in_3d_view)
+{
+    auto canBeDroppedInView3D = objectMetaInfo.canBeDroppedInView3D();
+
+    ASSERT_THAT(canBeDroppedInView3D, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_cannot_be_dropped_in_3d_view)
+{
+    auto canBeDroppedInView3D = QmlDesigner::NodeMetaInfo{}.canBeDroppedInView3D();
+
+    ASSERT_THAT(canBeDroppedInView3D, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_cannot_be_dropped_in_3d_view)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto canBeDroppedInView3D = metaInfo.canBeDroppedInView3D();
+
+    ASSERT_THAT(canBeDroppedInView3D, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_can_be_dropped_in_3d_view)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.canBeDroppedInView3D = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto canBeDroppedInView3D = metaInfo.canBeDroppedInView3D();
+
+    ASSERT_THAT(canBeDroppedInView3D, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_is_not_movable)
+{
+    auto isMovable = objectMetaInfo.isMovable();
+
+    ASSERT_THAT(isMovable, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_is_not_movable)
+{
+    auto isMovable = QmlDesigner::NodeMetaInfo{}.isMovable();
+
+    ASSERT_THAT(isMovable, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_is_not_movable)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto isMovable = metaInfo.isMovable();
+
+    ASSERT_THAT(isMovable, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_is_movable)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.isMovable = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto isMovable = metaInfo.isMovable();
+
+    ASSERT_THAT(isMovable, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_is_not_resizable)
+{
+    auto isResizable = objectMetaInfo.isResizable();
+
+    ASSERT_THAT(isResizable, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_is_not_resizable)
+{
+    auto isResizable = QmlDesigner::NodeMetaInfo{}.isResizable();
+
+    ASSERT_THAT(isResizable, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_is_not_resizable)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto isResizable = metaInfo.isResizable();
+
+    ASSERT_THAT(isResizable, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_is_resizable)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.isResizable = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto isResizable = metaInfo.isResizable();
+
+    ASSERT_THAT(isResizable, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_has_not_form_editor_item)
+{
+    auto hasFormEditorItem = objectMetaInfo.hasFormEditorItem();
+
+    ASSERT_THAT(hasFormEditorItem, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_has_not_form_editor_item)
+{
+    auto hasFormEditorItem = QmlDesigner::NodeMetaInfo{}.hasFormEditorItem();
+
+    ASSERT_THAT(hasFormEditorItem, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_has_not_form_editor_item)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto hasFormEditorItem = metaInfo.hasFormEditorItem();
+
+    ASSERT_THAT(hasFormEditorItem, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_has_form_editor_item)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.hasFormEditorItem = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto hasFormEditorItem = metaInfo.hasFormEditorItem();
+
+    ASSERT_THAT(hasFormEditorItem, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_is_not_stacked_container)
+{
+    auto isStackedContainer = objectMetaInfo.isStackedContainer();
+
+    ASSERT_THAT(isStackedContainer, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_is_not_stacked_container)
+{
+    auto isStackedContainer = QmlDesigner::NodeMetaInfo{}.isStackedContainer();
+
+    ASSERT_THAT(isStackedContainer, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_is_not_stacked_container)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto isStackedContainer = metaInfo.isStackedContainer();
+
+    ASSERT_THAT(isStackedContainer, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_is_stacked_container)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.isStackedContainer = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto isStackedContainer = metaInfo.isStackedContainer();
+
+    ASSERT_THAT(isStackedContainer, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_dont_takes_over_rendering_of_children)
+{
+    auto takesOverRenderingOfChildren = objectMetaInfo.takesOverRenderingOfChildren();
+
+    ASSERT_THAT(takesOverRenderingOfChildren, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_dont_takes_over_rendering_of_children)
+{
+    auto takesOverRenderingOfChildren = QmlDesigner::NodeMetaInfo{}.takesOverRenderingOfChildren();
+
+    ASSERT_THAT(takesOverRenderingOfChildren, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_dont_takes_over_rendering_of_children)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto takesOverRenderingOfChildren = metaInfo.takesOverRenderingOfChildren();
+
+    ASSERT_THAT(takesOverRenderingOfChildren, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_takes_over_rendering_of_children)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.takesOverRenderingOfChildren = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto takesOverRenderingOfChildren = metaInfo.takesOverRenderingOfChildren();
+
+    ASSERT_THAT(takesOverRenderingOfChildren, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_is_not_visible_in_navigator)
+{
+    auto visibleInNavigator = objectMetaInfo.visibleInNavigator();
+
+    ASSERT_THAT(visibleInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_is_not_visible_in_navigator)
+{
+    auto visibleInNavigator = QmlDesigner::NodeMetaInfo{}.visibleInNavigator();
+
+    ASSERT_THAT(visibleInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_is_not_visible_in_navigator)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto visibleInNavigator = metaInfo.visibleInNavigator();
+
+    ASSERT_THAT(visibleInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_is_visible_in_navigator)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.visibleInNavigator = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto visibleInNavigator = metaInfo.visibleInNavigator();
+
+    ASSERT_THAT(visibleInNavigator, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, object_is_not_visible_in_library)
+{
+    auto visibleInLibrary = objectMetaInfo.visibleInLibrary();
+
+    ASSERT_THAT(visibleInLibrary, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_is_not_visible_in_library)
+{
+    auto visibleInLibrary = QmlDesigner::NodeMetaInfo{}.visibleInLibrary();
+
+    ASSERT_THAT(visibleInLibrary, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_is_not_visible_in_library)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto visibleInLibrary = metaInfo.visibleInLibrary();
+
+    ASSERT_THAT(visibleInLibrary, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_is_visible_in_library)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.visibleInLibrary = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto visibleInLibrary = metaInfo.visibleInLibrary();
+
+    ASSERT_THAT(visibleInLibrary, FlagIs::True);
+}
+
+TEST_F(NodeMetaInfo, type_hints)
+{
+    projectStorageMock.setTypeHints(objectMetaInfo.id(), {{"inContainer", "true"}});
+
+    auto typeHints = objectMetaInfo.typeHints();
+
+    ASSERT_THAT(typeHints, ElementsAre(IsTypeHint("inContainer", "true")));
+}
+
+TEST_F(NodeMetaInfo, no_type_hints_for_default)
+{
+    QmlDesigner::NodeMetaInfo metaInfo;
+
+    auto typeHints = metaInfo.typeHints();
+
+    ASSERT_THAT(typeHints, IsEmpty());
+}
+
+TEST_F(NodeMetaInfo, icon_path)
+{
+    projectStorageMock.setTypeIconPath(objectMetaInfo.id(), "/icon/path");
+
+    auto path = objectMetaInfo.iconPath();
+
+    ASSERT_THAT(path, Eq("/icon/path"));
+}
+
+TEST_F(NodeMetaInfo, no_icon_path_for_default)
+{
+    QmlDesigner::NodeMetaInfo metaInfo;
+
+    auto path = metaInfo.iconPath();
+
+    ASSERT_THAT(path, IsEmpty());
+}
+
+TEST_F(NodeMetaInfo, item_library_entries)
+{
+    projectStorageMock.setItemLibraryEntries(objectMetaInfo.id(),
+                                             {{objectMetaInfo.id(),
+                                               "QtObject",
+                                               "Object",
+                                               "/icon/path",
+                                               "Basic",
+                                               "QtQuick",
+                                               "An object",
+                                               {{"x", "double", Sqlite::ValueView::create(1)}}}});
+
+    auto entries = objectMetaInfo.itemLibrariesEntries();
+
+    ASSERT_THAT(entries,
+                ElementsAre(IsItemLibraryEntry(objectMetaInfo.id(),
+                                               "QtObject",
+                                               "Object",
+                                               "/icon/path",
+                                               "Basic",
+                                               "QtQuick",
+                                               "An object",
+                                               "",
+                                               ElementsAre(IsItemLibraryProperty("x", "double", 1)),
+                                               IsEmpty())));
+}
+
+TEST_F(NodeMetaInfo, no_item_library_entries_for_default)
+{
+    QmlDesigner::NodeMetaInfo metaInfo;
+
+    auto entries = metaInfo.itemLibrariesEntries();
+
+    ASSERT_THAT(entries, IsEmpty());
 }
 
 } // namespace

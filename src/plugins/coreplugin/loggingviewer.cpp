@@ -92,6 +92,7 @@ signals:
 
 private:
     LogCategoryRegistry() = default;
+    ~LogCategoryRegistry() { QLoggingCategory::installFilter(s_oldFilter); }
 
     void onFilter(QLoggingCategory *category)
     {
@@ -559,10 +560,16 @@ private:
 
         const QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
 
-        if (rowCount() >= 1000000) // limit log to 1000000 items
-            destroyItem(itemForIndex(index(0, 0)));
+        auto append = [this, timestamp, type, category, msg] {
+            if (rowCount() >= 1000000) // limit log to 1000000 items
+                destroyItem(itemForIndex(index(0, 0)));
+            appendItem(LogEntry{timestamp, messageTypeToString(type), category, msg});
+        };
 
-        appendItem(LogEntry{timestamp, messageTypeToString(type), category, msg});
+        if (QThread::currentThread() != thread())
+            QMetaObject::invokeMethod(this, append, Qt::QueuedConnection);
+        else
+            append();
     }
 
 private:
@@ -709,7 +716,7 @@ LoggingViewManagerWidget::LoggingViewManagerWidget(QWidget *parent)
         Splitter {
             bindTo(&splitter),
             Column {
-                noMargin(),
+                noMargin,
                 Row {
                     spacing(0),
                     save,
@@ -723,7 +730,7 @@ LoggingViewManagerWidget::LoggingViewManagerWidget(QWidget *parent)
                 m_logView
             },
             Column {
-                noMargin(),
+                noMargin,
                 Row {
                     qtInternal,
                     filterEdit,

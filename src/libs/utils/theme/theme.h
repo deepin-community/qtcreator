@@ -5,6 +5,8 @@
 
 #include "../utils_global.h"
 
+#include <utils/expected.h>
+
 #include <QBrush> // QGradientStops
 #include <QObject>
 
@@ -16,6 +18,10 @@ QT_END_NAMESPACE
 
 namespace Utils {
 
+namespace StyleHelper {
+enum class ToolbarStyle;
+}
+
 class ThemePrivate;
 
 class QTCREATOR_UTILS_EXPORT Theme : public QObject
@@ -26,7 +32,6 @@ public:
     ~Theme() override;
 
     enum Color {
-        BackgroundColorAlternate,
         BackgroundColorDark,
         BackgroundColorHover,
         BackgroundColorNormal,
@@ -36,23 +41,11 @@ public:
         BadgeLabelBackgroundColorUnchecked,
         BadgeLabelTextColorChecked,
         BadgeLabelTextColorUnchecked,
-        ComboBoxArrowColor,
-        ComboBoxArrowColorDisabled,
         ComboBoxTextColor,
-        DetailsButtonBackgroundColorHover,
         DetailsWidgetBackgroundColor,
         DockWidgetResizeHandleColor,
-        DoubleTabWidget1stSeparatorColor,
-        DoubleTabWidget1stTabActiveTextColor,
-        DoubleTabWidget1stTabBackgroundColor,
-        DoubleTabWidget1stTabInactiveTextColor,
-        DoubleTabWidget2ndSeparatorColor,
-        DoubleTabWidget2ndTabActiveTextColor,
-        DoubleTabWidget2ndTabBackgroundColor,
-        DoubleTabWidget2ndTabInactiveTextColor,
         EditorPlaceholderColor,
         FancyToolBarSeparatorColor,
-        FancyTabBarBackgroundColor,
         FancyTabBarSelectedBackgroundColor,
         FancyTabWidgetDisabledSelectedTextColor,
         FancyTabWidgetDisabledUnselectedTextColor,
@@ -60,24 +53,20 @@ public:
         FancyTabWidgetEnabledUnselectedTextColor,
         FancyToolButtonHoverColor,
         FancyToolButtonSelectedColor,
-        FutureProgressBackgroundColor,
+        FancyToolButtonHighlightColor,
         InfoBarBackground,
-        InfoBarText, // TODO: Deprecate. Unused.
-        MenuBarEmptyAreaBackgroundColor,
-        MenuBarItemBackgroundColor,
+        InfoBarText,
         MenuBarItemTextColorDisabled,
         MenuBarItemTextColorNormal,
         MenuItemTextColorDisabled,
         MenuItemTextColorNormal,
-        MiniProjectTargetSelectorBackgroundColor, // TODO: Deprecate. -> Utils::StyleHelper().baseColor()
+        MiniProjectTargetSelectorBackgroundColor,
         MiniProjectTargetSelectorBorderColor,
-        MiniProjectTargetSelectorSummaryBackgroundColor, // TODO: Deprecate. -> Utils::StyleHelper().baseColor()
         MiniProjectTargetSelectorTextColor,
         OutputPaneButtonFlashColor,
         OutputPaneToggleButtonTextColorChecked,
         OutputPaneToggleButtonTextColorUnchecked,
         PanelStatusBarBackgroundColor,
-        PanelsWidgetSeparatorLineColor, // TODO: Deprecate. Unused.
         PanelTextColorDark,
         PanelTextColorMid,
         PanelTextColorLight,
@@ -91,12 +80,7 @@ public:
         TextColorError,
         TextColorHighlightBackground,
         TextColorLink,
-        TextColorLinkVisited,
         TextColorNormal,
-        ToggleButtonBackgroundColor,
-        ToolBarBackgroundColor,
-        TreeViewArrowColorNormal,
-        TreeViewArrowColorSelected,
 
         /* Palette for QPalette */
 
@@ -144,6 +128,8 @@ public:
 
         PalettePlaceholderText,
         PalettePlaceholderTextDisabled,
+        PaletteAccent,
+        PaletteAccentDisabled,
 
         /* Icons */
 
@@ -165,13 +151,6 @@ public:
         IconsNavigationArrowsColor,
         IconsBuildHammerHandleColor,
         IconsBuildHammerHeadColor,
-        IconsModeWelcomeActiveColor,
-        IconsModeEditActiveColor,
-        IconsModeDesignActiveColor,
-        IconsModeDebugActiveColor,
-        IconsModeProjectActiveColor,
-        IconsModeAnalyzeActiveColor,
-        IconsModeHelpActiveColor,
 
         /* Code model Icons */
 
@@ -223,17 +202,42 @@ public:
         Debugger_WatchItem_ValueInvalid,
         Debugger_WatchItem_ValueChanged,
 
-        /* Welcome Plugin */
+        /* Qt Creator Color Tokens */
 
-        Welcome_TextColor,
-        Welcome_ForegroundPrimaryColor,
-        Welcome_ForegroundSecondaryColor,
-        Welcome_BackgroundPrimaryColor,
-        Welcome_BackgroundSecondaryColor,
-        Welcome_HoverColor,
-        Welcome_AccentColor,
-        Welcome_LinkColor,
-        Welcome_DisabledLinkColor,
+        Token_Basic_Black,
+        Token_Basic_White,
+        Token_Accent_Default,
+        Token_Accent_Muted,
+        Token_Accent_Subtle,
+        Token_Background_Default,
+        Token_Background_Muted,
+        Token_Background_Subtle,
+        Token_Foreground_Default,
+        Token_Foreground_Muted,
+        Token_Foreground_Subtle,
+        Token_Text_Default,
+        Token_Text_Muted,
+        Token_Text_Subtle,
+        Token_Text_Accent,
+        Token_Stroke_Strong,
+        Token_Stroke_Muted,
+        Token_Stroke_Subtle,
+        Token_Notification_Alert_Default,
+        Token_Notification_Alert_Muted,
+        Token_Notification_Alert_Subtle,
+        Token_Notification_Success_Default,
+        Token_Notification_Success_Muted,
+        Token_Notification_Success_Subtle,
+        Token_Notification_Neutral_Default,
+        Token_Notification_Neutral_Muted,
+        Token_Notification_Neutral_Subtle,
+        Token_Notification_Danger_Default,
+        Token_Notification_Danger_Muted,
+        Token_Notification_Danger_Subtle,
+        Token_Gradient01_Start,
+        Token_Gradient01_End,
+        Token_Gradient02_Start,
+        Token_Gradient02_End,
 
         /* Timeline Library */
         Timeline_TextColor,
@@ -259,6 +263,7 @@ public:
 
         /* TextEditor Plugin */
         TextEditor_SearchResult_ScrollBarColor,
+        TextEditor_Selection_ScrollBarColor,
         TextEditor_CurrentLine_ScrollBarColor,
 
         /* Debugger Plugin */
@@ -355,7 +360,9 @@ public:
         DSpillOperatorBackgroundHover,
         DSpillLiteralBackgroundIdle,
         DSpillLiteralBackgroundHover,
-
+        DSconnectionEditorMicroToolbar,
+        DSconnectionEditorButtonBackground_hover,
+        DSconnectionEditorButtonBorder_hover,
 
         /*Legacy QtDS*/
         DSiconColor,
@@ -511,7 +518,7 @@ public:
         DrawToolBarBorders,
         ComboBoxDrawTextShadow,
         DerivePaletteFromTheme,
-        ApplyThemePaletteGlobally,
+        DerivePaletteFromThemeIfNeeded,
         FlatToolBars,
         FlatSideBarIcons,
         FlatProjectsMode,
@@ -522,9 +529,14 @@ public:
         QDSTheme
     };
 
+    enum TokenFlag {
+        UsedInToolbar = 1,
+    };
+
     Q_ENUM(Color)
     Q_ENUM(ImageFile)
     Q_ENUM(Flag)
+    Q_DECLARE_FLAGS(TokenFlags, TokenFlag)
 
     Q_INVOKABLE bool flag(Utils::Theme::Flag f) const;
     Q_INVOKABLE QColor color(Utils::Theme::Color role) const;
@@ -532,6 +544,7 @@ public:
     QPalette palette() const;
     QStringList preferredStyles() const;
     QString defaultTextEditorColorScheme() const;
+    StyleHelper::ToolbarStyle defaultToolbarStyle() const;
 
     QString id() const;
     QString filePath() const;
@@ -547,17 +560,21 @@ public:
 
     static void setHelpMenu(QMenu *menu);
 
+    static expected_str<Color> colorToken(const QString &token, TokenFlags flags = {});
+    static Color highlightFor(Color role);
+
 protected:
     Theme(Theme *originTheme, QObject *parent = nullptr);
     ThemePrivate *d;
 
 private:
+    void readSettingsInternal(QSettings &settings);
     friend QTCREATOR_UTILS_EXPORT Theme *creatorTheme();
-    friend QTCREATOR_UTILS_EXPORT Theme *proxyTheme();
+    QColor readNamedColorNoWarning(const QString &color) const;
     QPair<QColor, QString> readNamedColor(const QString &color) const;
 };
 
 QTCREATOR_UTILS_EXPORT Theme *creatorTheme();
-QTCREATOR_UTILS_EXPORT Theme *proxyTheme();
+QTCREATOR_UTILS_EXPORT QColor creatorColor(Theme::Color role);
 
 } // namespace Utils

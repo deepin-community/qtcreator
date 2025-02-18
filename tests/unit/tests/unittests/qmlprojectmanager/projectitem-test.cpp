@@ -1,6 +1,8 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
+// clazy:excludeall=non-pod-global-static
+
 #include "../utils/google-using-declarations.h"
 #include "../utils/googletest.h" // IWYU pragma: keep
 
@@ -33,6 +35,11 @@ protected:
             Utils::FilePath::fromString(localTestDataDir
                                         + "/file-filters/MaterialBundle.qmlproject"),
             true);
+
+        projectItemMcuWithModules = std::make_unique<const QmlProjectManager::QmlProjectItem>(
+            Utils::FilePath::fromString(localTestDataDir
+                                        + "/getter-setter/mcu_project_with_modules.qmlproject"),
+            true);
     }
 
     static void TearDownTestSuite()
@@ -41,18 +48,19 @@ protected:
         projectItemWithQdsPrefix.reset();
         projectItemWithoutQdsPrefix.reset();
         projectItemFileFilters.reset();
+        projectItemMcuWithModules.reset();
     }
 
 protected:
-    static inline std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemEmpty;
-    static inline std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemWithQdsPrefix;
-    static inline std::unique_ptr<const QmlProjectManager::QmlProjectItem>
-        projectItemWithoutQdsPrefix;
+    inline static std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemEmpty;
+    inline static std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemWithQdsPrefix;
+    inline static std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemWithoutQdsPrefix;
     std::unique_ptr<QmlProjectManager::QmlProjectItem> projectItemSetters = std::make_unique<
         QmlProjectManager::QmlProjectItem>(Utils::FilePath::fromString(
                                                localTestDataDir + "/getter-setter/empty.qmlproject"),
                                            true);
-    static inline std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemFileFilters;
+    inline static std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemFileFilters;
+    inline static std::unique_ptr<const QmlProjectManager::QmlProjectItem> projectItemMcuWithModules;
 };
 
 auto createAbsoluteFilePaths(const QStringList &fileList)
@@ -120,6 +128,13 @@ TEST_F(QmlProjectItem, get_with_qds_prefix_tar_get_with_qds_prefix_directory)
     ASSERT_THAT(targetDirectory, Eq("/opt/targetDirectory"));
 }
 
+TEST_F(QmlProjectItem, get_with_qds_prefix_enable_cmake_generation)
+{
+    auto enable = projectItemWithQdsPrefix->enableCMakeGeneration();
+
+    ASSERT_TRUE(enable);
+}
+
 TEST_F(QmlProjectItem, get_with_qds_prefix_import_paths)
 {
     auto importPaths = projectItemWithQdsPrefix->importPaths();
@@ -151,7 +166,6 @@ TEST_F(QmlProjectItem, get_with_qds_prefix_supported_languages)
 TEST_F(QmlProjectItem, get_with_qds_prefix_primary_language)
 {
     auto primaryLanguage = projectItemWithQdsPrefix->primaryLanguage();
-    ;
 
     ASSERT_THAT(primaryLanguage, Eq("en"));
 }
@@ -265,6 +279,13 @@ TEST_F(QmlProjectItem, get_without_qds_prefix_tar_get_without_qds_prefix_directo
     ASSERT_THAT(targetDirectory, Eq("/opt/targetDirectory"));
 }
 
+TEST_F(QmlProjectItem, get_without_qds_prefix_enable_cmake_generation)
+{
+    auto enable = projectItemWithoutQdsPrefix->enableCMakeGeneration();
+
+    ASSERT_TRUE(enable);
+}
+
 TEST_F(QmlProjectItem, get_without_qds_prefix_import_paths)
 {
     auto importPaths = projectItemWithoutQdsPrefix->importPaths();
@@ -296,7 +317,6 @@ TEST_F(QmlProjectItem, get_without_qds_prefix_supported_languages)
 TEST_F(QmlProjectItem, get_without_qds_prefix_primary_language)
 {
     auto primaryLanguage = projectItemWithoutQdsPrefix->primaryLanguage();
-    ;
 
     ASSERT_THAT(primaryLanguage, Eq("en"));
 }
@@ -410,6 +430,13 @@ TEST_F(QmlProjectItem, get_empty_tar_get_empty_directory)
     auto targetDirectory = projectItemEmpty->targetDirectory();
 
     ASSERT_THAT(targetDirectory, IsEmpty());
+}
+
+TEST_F(QmlProjectItem, get_empty_enable_cmake_generation)
+{
+    auto enable = projectItemEmpty->enableCMakeGeneration();
+
+    ASSERT_FALSE(enable);
 }
 
 TEST_F(QmlProjectItem, get_empty_import_paths)
@@ -578,7 +605,6 @@ TEST_F(QmlProjectItem, set_primary_language)
     projectItemSetters->setPrimaryLanguage("testing");
 
     auto primaryLanguage = projectItemSetters->primaryLanguage();
-    ;
 
     ASSERT_THAT(primaryLanguage, Eq("testing"));
 }
@@ -634,8 +660,8 @@ TEST_F(QmlProjectItem, add_environment)
 {
     projectItemSetters->addToEnviroment("testing", "testing");
     auto envs = projectItemSetters->environment();
-
     Utils::EnvironmentItems expectedEnvs;
+
     expectedEnvs.push_back({"testing", "testing"});
 
     ASSERT_EQ(envs, expectedEnvs);
@@ -676,6 +702,13 @@ TEST_F(QmlProjectItem, set_design_studio_version)
     ASSERT_EQ(projectItemSetters->versionDesignStudio(), "6");
 }
 
+TEST_F(QmlProjectItem, set_enable_cmake_generation)
+{
+    projectItemSetters->setEnableCMakeGeneration(true);
+
+    ASSERT_EQ(projectItemSetters->enableCMakeGeneration(), true);
+}
+
 // TODO: We should move these 2 tests into the integration tests
 TEST_F(QmlProjectItem, test_file_filters)
 {
@@ -714,6 +747,26 @@ TEST_F(QmlProjectItem, not_matches_file)
 
     // THEN
     ASSERT_FALSE(fileFound);
+}
+
+TEST_F(QmlProjectItem, qmlproject_modules)
+{
+    auto qmlProjectModules = projectItemMcuWithModules->qmlProjectModules();
+
+    ASSERT_THAT(
+        qmlProjectModules,
+        UnorderedElementsAre(
+            "file1.qmlproject",
+            "file2.qmlproject",
+            "../converter/test-set-mcu-1/mcu-modules/from_importpath/imported_module.qmlproject",
+            "../converter/test-set-mcu-2/testfile.qmlproject"));
+}
+
+TEST_F(QmlProjectItem, no_qmlproject_modules)
+{
+    auto qmlProjectModules = projectItemEmpty->qmlProjectModules();
+
+    ASSERT_THAT(qmlProjectModules, IsEmpty());
 }
 
 } // namespace

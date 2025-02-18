@@ -1,7 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include "designercontext.h"
 #include "designertr.h"
 #include "editordata.h"
 #include "editorwidget.h"
@@ -27,10 +26,13 @@
 #include <coreplugin/outputpane.h>
 
 #include <utils/infobar.h>
+#include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 #include <utils/qtcsettings.h>
 #include <utils/stringutils.h>
 #include <utils/theme/theme.h>
+
+#include <aggregation/aggregate.h>
 
 #include <abstractobjectinspector.h>
 #include <QDesignerActionEditorInterface>
@@ -88,8 +90,7 @@ using namespace Core;
 using namespace Designer::Constants;
 using namespace Utils;
 
-namespace Designer {
-namespace Internal {
+namespace Designer::Internal {
 
 /* A stub-like, read-only text editor which displays UI files as text. Could be used as a
   * read/write editor too, but due to lack of XML editor, highlighting and other such
@@ -208,10 +209,7 @@ public:
     QWidget *m_modeWidget = nullptr;
     EditorWidget *m_editorWidget = nullptr;
 
-    QWidget *m_editorToolBar = nullptr;
-    EditorToolBar *m_toolBar = nullptr;
-
-    QMap<Command *, QAction *> m_commandToDesignerAction;
+    QHash<Command *, QAction *> m_commandToDesignerAction;
     FormWindowEditorFactory *m_xmlEditorFactory = nullptr;
 };
 
@@ -347,12 +345,6 @@ void FormEditorData::setupViewActions()
     Command *cmd = addToolAction(m_editorWidget->menuSeparator1(), m_contexts, "FormEditor.SeparatorLock", viewMenu);
     cmd->setAttribute(Command::CA_Hide);
 
-    cmd = addToolAction(m_editorWidget->autoHideTitleBarsAction(), m_contexts, "FormEditor.Locked", viewMenu);
-    cmd->setAttribute(Command::CA_Hide);
-
-    cmd = addToolAction(m_editorWidget->menuSeparator2(), m_contexts, "FormEditor.SeparatorReset", viewMenu);
-    cmd->setAttribute(Command::CA_Hide);
-
     cmd = addToolAction(m_editorWidget->resetLayoutAction(), m_contexts, "FormEditor.ResetToDefaultLayout", viewMenu);
 
     QObject::connect(m_editorWidget, &EditorWidget::resetLayout,
@@ -376,7 +368,7 @@ void FormEditorData::fullInit()
     initDesignerSubWindows();
     m_integration = new QtCreatorIntegration(m_formeditor, this);
     m_formeditor->setIntegration(m_integration);
-    // Connect Qt Designer help request to HelpManager.
+    // Connect Qt Widgets Designer help request to HelpManager.
     QObject::connect(m_integration, &QtCreatorIntegration::creatorHelpRequested,
                      HelpManager::Signals::instance(),
                      [](const QUrl &url) { HelpManager::showHelpUrl(url, HelpManager::HelpModeAlways); });
@@ -384,7 +376,7 @@ void FormEditorData::fullInit()
     /**
      * This will initialize our TabOrder, Signals and slots and Buddy editors.
      */
-    const QList<QObject *> plugins = QPluginLoader::staticInstances() + m_formeditor->pluginInstances();
+    const QObjectList plugins = QPluginLoader::staticInstances() + m_formeditor->pluginInstances();
     for (QObject *plugin : plugins) {
         if (QDesignerFormEditorPluginInterface *formEditorPlugin = qobject_cast<QDesignerFormEditorPluginInterface*>(plugin)) {
             if (!formEditorPlugin->isInitialized())
@@ -406,25 +398,25 @@ void FormEditorData::fullInit()
             m_editorWidget->removeFormWindowEditor(editor);
     });
 
+    QWidget *editorToolBar = createEditorToolBar();
+    auto toolBar = new EditorToolBar;
+    toolBar->setToolbarCreationFlags(EditorToolBar::FlagsStandalone);
+    toolBar->setNavigationVisible(false);
+    toolBar->addCenterToolBar(editorToolBar);
+
     // Nest toolbar and editor widget
-    m_editorWidget = new EditorWidget;
+    m_editorWidget = new EditorWidget(toolBar);
+    m_editorWidget->showCentralWidgetAction()->setVisible(false);
     QtcSettings *settings = ICore::settings();
     settings->beginGroup(settingsGroupC);
     m_editorWidget->restoreSettings(settings);
     settings->endGroup();
-
-    m_editorToolBar = createEditorToolBar();
-    m_toolBar = new EditorToolBar;
-    m_toolBar->setToolbarCreationFlags(EditorToolBar::FlagsStandalone);
-    m_toolBar->setNavigationVisible(false);
-    m_toolBar->addCenterToolBar(m_editorToolBar);
 
     m_modeWidget = new QWidget;
     m_modeWidget->setObjectName("DesignerModeWidget");
     auto layout = new QVBoxLayout(m_modeWidget);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(m_toolBar);
     // Avoid mode switch to 'Edit' mode when the application started by
     // 'Run' in 'Design' mode emits output.
     auto splitter = new MiniSplitter(Qt::Vertical);
@@ -436,9 +428,16 @@ void FormEditorData::fullInit()
 
     Context designerContexts = m_contexts;
     designerContexts.add(Core::Constants::C_EDITORMANAGER);
-    ICore::addContextObject(new DesignerContext(designerContexts, m_modeWidget, this));
 
-    DesignMode::registerDesignWidget(m_modeWidget, QStringList(FORM_MIMETYPE), m_contexts);
+    IContext::attach(m_modeWidget, designerContexts, [](const IContext::HelpCallback &callback) {
+        const QDesignerFormEditorInterface *core = designerEditor();
+        callback(core->integration()->contextHelpId());
+    });
+
+    DesignMode::registerDesignWidget(m_modeWidget,
+                                     QStringList(Utils::Constants::FORM_MIMETYPE),
+                                     m_contexts,
+                                     m_editorWidget);
 
     setupViewActions();
 
@@ -660,7 +659,7 @@ void FormEditorData::setupActions()
                   QString(), Core::Constants::G_DEFAULT_THREE);
 
     mformtools->addSeparator(m_contexts, Core::Constants::G_DEFAULT_THREE);
-    m_actionAboutPlugins = new QAction(Tr::tr("About Qt Designer Plugins..."), d);
+    m_actionAboutPlugins = new QAction(Tr::tr("About Qt Widgets Designer Plugins..."), d);
     addToolAction(m_actionAboutPlugins, m_contexts, "FormEditor.AboutPlugins", mformtools,
                   QString(), Core::Constants::G_DEFAULT_THREE);
     QObject::connect(m_actionAboutPlugins, &QAction::triggered,
@@ -710,7 +709,7 @@ ActionContainer *FormEditorData::createPreviewStyleMenu(QActionGroup *actionGrou
         QString name = menuId;
         name += dot;
         const QVariant data = a->data();
-        const bool isDeviceProfile = data.typeId() == QVariant::Int;
+        const bool isDeviceProfile = data.typeId() == QMetaType::Int;
         if (isDeviceProfile) {
             name += deviceProfilePrefix;
             name += dot;
@@ -811,7 +810,6 @@ IEditor *FormEditorData::createEditor()
     FormWindowEditor *formWindowEditor = m_xmlEditorFactory->create(form);
 
     m_editorWidget->add(widgetHost, formWindowEditor);
-    m_toolBar->addEditor(formWindowEditor);
 
     if (formWindowEditor) {
         Utils::InfoBarEntry info(Id(Constants::INFO_READ_ONLY),
@@ -987,7 +985,6 @@ void addPluginPath(const QString &pluginPath)
     sAdditionalPluginPaths->append(pluginPath);
 }
 
-} // namespace Internal
-} // namespace Designer
+} // namespace Designer::Internal
 
 Q_DECLARE_METATYPE(Designer::Internal::ToolData)

@@ -10,7 +10,6 @@
 #include <utils/id.h>
 
 #include <QObject>
-#include <QSharedPointer>
 #include <QTextCodec>
 #include <QMetaType>
 
@@ -51,10 +50,10 @@ public:
     Utils::EnvironmentItems environmentUserChanges() const;
 
     void setFilePath(const Utils::FilePath &filePath);
-    void setPreset(QSharedPointer<ExternalTool> preset);
+    void setPreset(std::shared_ptr<ExternalTool> preset);
     Utils::FilePath filePath() const;
     // all tools that are preset (changed or unchanged) have the original value here:
-    QSharedPointer<ExternalTool> preset() const;
+    std::shared_ptr<ExternalTool> preset() const;
 
     static ExternalTool *createFromXml(const QByteArray &xml, QString *errorMessage = nullptr,
                                        const QString &locale = {});
@@ -99,7 +98,7 @@ private:
 
     Utils::FilePath m_filePath;
     Utils::FilePath m_presetFileName;
-    QSharedPointer<ExternalTool> m_presetTool;
+    std::shared_ptr<ExternalTool> m_presetTool;
 };
 
 class CORE_EXPORT ExternalToolRunner : public QObject
@@ -115,8 +114,8 @@ public:
 
 private:
     void done();
-    void readStandardOutput();
-    void readStandardError();
+    void readStandardOutput(const QString &output);
+    void readStandardError(const QString &output);
 
     void run();
     bool resolve();
@@ -128,6 +127,7 @@ private:
     Utils::FilePath m_resolvedWorkingDirectory;
     Utils::Environment m_resolvedEnvironment;
     Utils::Process *m_process;
+    // TODO remove codec handling, that is done by Process now
     QTextCodec *m_outputCodec;
     QTextCodec::ConverterState m_outputCodecState;
     QTextCodec::ConverterState m_errorCodecState;

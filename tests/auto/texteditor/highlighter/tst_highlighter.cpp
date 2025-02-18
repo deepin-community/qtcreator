@@ -55,10 +55,8 @@ Second with spaces
 
 Last)";
 
-
     doc = new QTextDocument();
     doc->setPlainText(text);
-
     highlighter = new SyntaxHighlighter(doc, fontsettings);
 }
 

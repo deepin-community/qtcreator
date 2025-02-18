@@ -53,6 +53,7 @@
 #include <tools/set.h>
 #include <tools/settings.h>
 #include <tools/setupprojectparameters.h>
+#include <tools/span.h>
 #include <tools/stringutils.h>
 #include <tools/version.h>
 
@@ -1207,87 +1208,6 @@ void TestTools::stringutils_join_char_data()
                 << std::string("a b c");
 }
 
-void TestTools::stringutils_startsWith()
-{
-    std::string a;
-    a = "AB";
-    QVERIFY( startsWith(a, "A") );
-    QVERIFY( startsWith(a, "AB") );
-    QVERIFY( !startsWith(a, "C") );
-    QVERIFY( !startsWith(a, "ABCDEF") );
-    QVERIFY( startsWith(a, "") );
-    QVERIFY( startsWith(a, 'A') );
-    QVERIFY( !startsWith(a, 'C') );
-    QVERIFY( !startsWith(a, char()) );
-
-    QVERIFY( startsWith(a, "A") );
-    QVERIFY( startsWith(a, "AB") );
-    QVERIFY( !startsWith(a, "C") );
-    QVERIFY( !startsWith(a, "ABCDEF") );
-    QVERIFY( startsWith(a, "") );
-
-    a = "";
-    QVERIFY( startsWith(a, "") );
-    QVERIFY( !startsWith(a, "ABC") );
-
-    QVERIFY( startsWith(a, "") );
-    QVERIFY( !startsWith(a, "ABC") );
-
-    QVERIFY( !startsWith(a, 'x') );
-    QVERIFY( !startsWith(a, char()) );
-
-    a = std::string();
-    QVERIFY( startsWith(a, "") ); // different from QString::startsWith
-    QVERIFY( !startsWith(a, "ABC") );
-
-    QVERIFY( !startsWith(a, 'x') );
-    QVERIFY( !startsWith(a, char()) );
-
-    a = u8"\xc3\xa9";
-    QVERIFY( startsWith(a, u8"\xc3\xa9") );
-    QVERIFY( !startsWith(a, u8"\xc3\xa1") );
-}
-
-void TestTools::stringutils_endsWith()
-{
-    std::string a;
-    a = "AB";
-    QVERIFY( endsWith(a, "B") );
-    QVERIFY( endsWith(a, "AB") );
-    QVERIFY( !endsWith(a, "C") );
-    QVERIFY( !endsWith(a, "ABCDEF") );
-    QVERIFY( endsWith(a, "") );
-    QVERIFY( endsWith(a, 'B') );
-    QVERIFY( !endsWith(a, 'C') );
-    QVERIFY( !endsWith(a, char()) );
-
-    QVERIFY( endsWith(a, "B") );
-    QVERIFY( endsWith(a, "AB") );
-    QVERIFY( !endsWith(a, "C") );
-    QVERIFY( !endsWith(a, "ABCDEF") );
-    QVERIFY( endsWith(a, "") );
-
-    a = "";
-    QVERIFY( endsWith(a, "") );
-    QVERIFY( !endsWith(a, "ABC") );
-    QVERIFY( !endsWith(a, 'x') );
-    QVERIFY( !endsWith(a, char()) );
-
-    QVERIFY( endsWith(a, "") );
-    QVERIFY( !endsWith(a, "ABC") );
-
-    a = std::string();
-    QVERIFY( endsWith(a, "") ); // different from QString::endsWith
-    QVERIFY( !endsWith(a, "ABC") );
-
-    QVERIFY( !endsWith(a, 'x') );
-    QVERIFY( !endsWith(a, char()) );
-
-    a = u8"\xc3\xa9";
-    QVERIFY( endsWith(a, u8"\xc3\xa9") );
-    QVERIFY( !endsWith(a, u8"\xc3\xa1") );
-}
-
 void TestTools::stringutils_trimmed()
 {
     std::string a;
@@ -1341,6 +1261,12 @@ void TestTools::hash_range()
     QCOMPARE(map[key0], 0);
     QCOMPARE(map[key1], 1);
     QCOMPARE(map[key2], 2);
+}
+
+void TestTools::span()
+{
+    std::vector<int> vec;
+    qbs::Internal::span<int> span(vec);
 }
 
 int main(int argc, char *argv[])

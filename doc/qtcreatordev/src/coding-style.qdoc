@@ -637,8 +637,8 @@
         \li Use Utils::FilePath for any QString that semantically is a file or directory,
             see also \l{Passing File Names}.
         \li Prefer using Utils::FilePath over any use of QDir and QFileInfo.
-        \li Prefer using Utils::QtcProcess over QProcess.
-        \li If Utils::FilePath or Utils::QtcProcess functionality is not sufficient
+        \li Prefer using Utils::Process over QProcess.
+        \li If Utils::FilePath or Utils::Process functionality is not sufficient
             for your purpose, prefer enhancing them over falling back to QString
             or QProcess.
         \li Avoid platform #ifdefs unless they are absolutely needed for locally
@@ -952,13 +952,22 @@
 
     Consider using \c{=default} and \c{=delete} to control the special functions.
 
-    \section3 Override
+    \section3 Final and Override
 
-    It is recommended to use the \c{override} keyword when overriding virtual functions. Do not
-    use virtual on overridden functions.
+    It is recommended to use the \c{final} keyword for classes that are not meant to be inherited
+    from. This is the typical case for value classes, factories and most factory products.
 
-    Make sure that a class uses \c{override} consistently, either for all overridden functions or
-    for none.
+    It is recommended to use the \c{final} keyword when overriding virtual functions in
+    final classes, and whenever a virtual function is not meant to be overridden further.
+    Do not use \c{virtual} on \c{final} functions.
+
+    It is recommended to use the \c{override} keyword when overriding virtual functions if
+    \c{final} is not applicable, i.e. when the class is meant to be derived further and
+    further overriding of the function may be necessary.
+
+    Note that some compilers complain when a derived class marks only some but not all
+    overridden functions as either \c{final} or \c{override}, so make sure to mark all
+    at the same time.
 
     \section3 Range-Based for-Loop
 
@@ -1003,6 +1012,32 @@
             signal and slot lookup a few cycles faster. You can use
             $QTDIR/util/normalize to normalize existing code. For more
             information, see QMetaObject::normalizedSignature.
+        \li Avoid using \c{QObject::sender()}. Pass the sender explicitly instead.
+            \code
+                connect(action, &QAction::triggered, this, [this, action] {
+                    onActionTriggered(action);
+                });
+                ...
+                void MyClass::onActionTriggered(QAction *action)
+                {
+                    ... use action ...
+                }
+
+                -NOT-
+
+                connect(action, &QAction::triggered, this, &MyClass::onActionTriggered);
+                ...
+                void MyClass::onActionTriggered()
+                {
+                    QAction *action = qobject_cast<QAction *>(sender());
+                    if (action == nullptr)
+                        return;
+
+                    ... use action ...
+                }
+            \endcode
+        \li Avoid \c{QSignalMapper}. Use a lambda instead and pass the mapped value
+            via the lambda capture.
     \endlist
 
     \section2 File Headers

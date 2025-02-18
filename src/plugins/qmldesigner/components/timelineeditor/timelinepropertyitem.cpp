@@ -35,7 +35,6 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPainter>
-#include <QScopedPointer>
 
 #include <algorithm>
 
@@ -108,14 +107,14 @@ static void editValue(const ModelNode &frameNode, const std::pair<qreal, qreal> 
         int userType = value.typeId();
         QVariant newValue = dialog->value();
 
-        if (newValue.canConvert(userType)) {
+        if (newValue.canConvert(QMetaType(userType))) {
             QVariant newValueConverted = newValue;
-            bool converted = newValueConverted.convert(userType);
+            bool converted = newValueConverted.convert(QMetaType(userType));
 
             if (!converted) {
                 // convert() fails for int to double, so we try this combination
                 newValueConverted = newValue;
-                converted = newValueConverted.convert(QMetaType::Double);
+                converted = newValueConverted.convert(QMetaType(QMetaType::Double));
             }
 
             if (converted)
@@ -406,7 +405,7 @@ void TimelinePropertyItem::contextMenuEvent(QGraphicsSceneContextMenuEvent *even
         const ModelNode currentFrameNode = getModelNodeForFrame(m_frames, currentFrame());
 
         QAction *insertAction = mainMenu.addAction(tr("Insert Keyframe"));
-        QObject::connect(insertAction, &QAction::triggered, [this]() {
+        QObject::connect(insertAction, &QAction::triggered, [this] {
             timelineScene()->handleKeyframeInsertion(m_frames.target(), propertyName().toUtf8());
         });
 
@@ -442,8 +441,8 @@ void TimelinePropertyItem::contextMenuEvent(QGraphicsSceneContextMenuEvent *even
         QMenu mainMenu;
         QAction *deleteAction = mainMenu.addAction(tr("Remove Property"));
 
-        QObject::connect(deleteAction, &QAction::triggered, [this]() {
-            auto deleteKeyframeGroup = [this]() { timelineScene()->deleteKeyframeGroup(m_frames); };
+        QObject::connect(deleteAction, &QAction::triggered, [this] {
+            auto deleteKeyframeGroup = [this] { timelineScene()->deleteKeyframeGroup(m_frames); };
             QTimer::singleShot(0, deleteKeyframeGroup);
         });
 
@@ -627,12 +626,12 @@ void TimelineKeyframeItem::contextMenuEvent(QGraphicsSceneContextMenuEvent *even
 {
     QMenu mainMenu;
     QAction *removeAction = mainMenu.addAction(tr("Delete Keyframe"));
-    QObject::connect(removeAction, &QAction::triggered, [this]() {
+    QObject::connect(removeAction, &QAction::triggered, [this] {
         timelineGraphicsScene()->handleKeyframeDeletion();
     });
 
     QAction *editEasingAction = mainMenu.addAction(tr("Edit Easing Curve..."));
-    QObject::connect(editEasingAction, &QAction::triggered, [this]() {
+    QObject::connect(editEasingAction, &QAction::triggered, [this] {
         const QList<ModelNode> keys = Utils::transform(abstractScrollGraphicsScene()->selectedKeyframes(),
                                                        &TimelineKeyframeItem::m_frame);
 
@@ -640,7 +639,7 @@ void TimelineKeyframeItem::contextMenuEvent(QGraphicsSceneContextMenuEvent *even
     });
 
     QAction *editValueAction = mainMenu.addAction(tr("Edit Keyframe..."));
-    QObject::connect(editValueAction, &QAction::triggered, [this]() {
+    QObject::connect(editValueAction, &QAction::triggered, [this] {
         std::pair<qreal, qreal> timelineRange = {timelineGraphicsScene()->currentTimeline().startKeyframe(),
                                                  timelineGraphicsScene()->currentTimeline().endKeyframe()};
         editValue(m_frame, timelineRange, propertyItem()->propertyName());

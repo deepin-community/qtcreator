@@ -3,11 +3,9 @@
 
 import QtQuick
 import QtQuick.Controls
-import StudioControls 1.0 as StudioControls
-import StudioTheme 1.0 as StudioTheme
-import QtQuickDesignerTheme 1.0
-
-import ToolBar 1.0
+import StudioControls as StudioControls
+import StudioTheme as StudioTheme
+import ToolBar
 
 Rectangle {
     id: root
@@ -26,26 +24,75 @@ Rectangle {
         anchors.fill: parent
         visible: !backend.isInDesignMode
 
-        ToolbarButton {
-            id: homeOther
-            anchors.verticalCenter: parent.verticalCenter
+        Rectangle {
+            id: returnExtended
+            height: homeOther.height
+            width: backTo.visible ? (homeOther.width + backTo.width + contentRow.spacing + 6) : homeOther.width
+            anchors.verticalCenter: topToolbarOtherMode.verticalCenter
             anchors.left: parent.left
             anchors.leftMargin: 10
-            tooltip: backend.isDesignModeEnabled ? qsTr("Switch to Design Mode.")
-                                                 : qsTr("Switch to Welcome Mode.")
-            buttonIcon: backend.isDesignModeEnabled ? StudioTheme.Constants.designMode_large
-                                                    : StudioTheme.Constants.home_large
-            onClicked: backend.triggerModeChange()
-        }
+            color: StudioTheme.Values.themeToolbarBackground
+            radius: StudioTheme.Values.smallRadius
+            state: "default"
 
-        Text {
-            id: backTo
-            visible: backend.isDesignModeEnabled
-            anchors.verticalCenter: parent.verticalCenter
-            text: qsTr("Return to Design")
-            anchors.left: homeOther.right
-            anchors.leftMargin: 10
-            color: StudioTheme.Values.themeTextColor
+            Row {
+                id: contentRow
+                spacing: 6
+                anchors.fill: parent
+
+                ToolbarButton {
+                    id: homeOther
+                    tooltip: backend.isDesignModeEnabled ? qsTr("Switch to Design Mode.")
+                                                         : qsTr("Switch to Welcome Mode.")
+                    buttonIcon: backend.isDesignModeEnabled ? StudioTheme.Constants.designMode_large
+                                                            : StudioTheme.Constants.home_large
+                    hover: mouseArea.containsMouse
+                    press: mouseArea.pressed
+
+                    onClicked: backend.triggerModeChange()
+
+                }
+
+                Text {
+                    id: backTo
+                    height: homeOther.height
+                    visible: backend.isDesignModeEnabled
+                    horizontalAlignment: Text.AlignLeft
+                    verticalAlignment: Text.AlignVCenter
+                    text: qsTr("Return to Design")
+                    color: StudioTheme.Values.themeTextColor
+                }
+            }
+
+            MouseArea{
+                id: mouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: homeOther.onClicked()
+            }
+
+            states: [
+                State {
+                    name: "default"
+                    when: !mouseArea.containsMouse && !mouseArea.pressed
+                },
+                State {
+                    name: "hover"
+                    when: mouseArea.containsMouse && !mouseArea.pressed
+                    PropertyChanges {
+                        target: returnExtended
+                        color: StudioTheme.Values.themeControlBackground_topToolbarHover
+                    }
+                },
+                State {
+                    name: "pressed"
+                    when: mouseArea.pressed
+                    PropertyChanges {
+                        target: returnExtended
+                        color: StudioTheme.Values.themeInteraction
+                    }
+                }
+            ]
         }
     }
 
@@ -106,7 +153,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: runProject.right
             anchors.leftMargin: 10
-            iconFont: StudioTheme.Constants.font
+            iconFontFamily: StudioTheme.Constants.font.family
             buttonIcon: qsTr("Live Preview")
 
             onClicked: {
@@ -141,6 +188,26 @@ Rectangle {
             property int currentDocumentIndex: backend.documentIndex
             onCurrentDocumentIndexChanged: currentFile.currentIndex =  currentFile.currentDocumentIndex
             onActivated: backend.openFileByIndex(index)
+        }
+
+        Text {
+            parent:currentFile.contentItem
+            visible: backend.isDocumentDirty
+
+            anchors.right: parent.right
+            anchors.rightMargin: parent.width - metric.textWidth - 18
+            color: StudioTheme.Values.themeTextColor
+            text: StudioTheme.Constants.wildcard
+            font.family: StudioTheme.Constants.iconFont.family
+            font.pixelSize: StudioTheme.Values.smallIconFont
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: -4
+
+            FontMetrics {
+                id: metric
+                font: currentFile.font
+                property int textWidth: metric.boundingRect(currentFile.currentText).width
+            }
         }
 
         ToolbarButton {
@@ -215,7 +282,7 @@ Rectangle {
         ToolbarButton {
             id: enterComponent
             anchors.verticalCenter: parent.verticalCenter
-            anchors.right: workspaces.left
+            anchors.right: backend.isLiteModeEnabled ? shareButton.left : lockWorkspace.left
             anchors.rightMargin: 10
             enabled: goIntoComponentBackend.available
             tooltip: goIntoComponentBackend.tooltip
@@ -230,14 +297,30 @@ Rectangle {
             }
         }
 
+        ToolbarButton {
+            id: lockWorkspace
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: workspaces.left
+            anchors.rightMargin: 10
+            tooltip: qsTr("Sets the visible <b>Views</b> to immovable across the Workspaces.")
+            buttonIcon: backend.lockWorkspace ? StudioTheme.Constants.lockOn
+                                              : StudioTheme.Constants.lockOff
+            visible: !root.flyoutEnabled && !backend.isLiteModeEnabled
+            checkable: true
+            checked: backend.lockWorkspace
+            checkedInverted: true
+
+            onClicked: backend.setLockWorkspace(lockWorkspace.checked)
+        }
+
         StudioControls.TopLevelComboBox {
             id: workspaces
             style: StudioTheme.Values.toolbarStyle
             width: 210
             anchors.verticalCenter: parent.verticalCenter
-            anchors.right: annotations.left
+            anchors.right: shareButton.left
             anchors.rightMargin: 10
-            visible: !root.flyoutEnabled
+            visible: !root.flyoutEnabled && !backend.isLiteModeEnabled
             model: WorkspaceModel { id: workspaceModel }
             textRole: "displayName"
             valueRole: "fileName"
@@ -251,29 +334,17 @@ Rectangle {
         }
 
         ToolbarButton {
-            id: annotations
-            visible: false
-            enabled: backend.isInDesignMode
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.right: shareButton.left
-            anchors.rightMargin: 10
-            width: 0
-            tooltip: qsTr("Edit Annotations")
-            buttonIcon: StudioTheme.Constants.annotations_large
-
-            onClicked: backend.editGlobalAnnoation()
-        }
-
-        ToolbarButton {
             id: shareButton
             style: StudioTheme.Values.primaryToolbarStyle
             width: 96
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: moreItems.left
             anchors.rightMargin: 8
-            iconFont: StudioTheme.Constants.font
+            iconFontFamily: StudioTheme.Constants.font.family
             buttonIcon: qsTr("Share")
-            visible: !root.flyoutEnabled
+            visible: !root.flyoutEnabled && backend.isSharingEnabled
+            enabled: backend.isSharingEnabled
+            tooltip: shareButton.enabled ? qsTr("Share your project online.") : qsTr("Sharing your project online is disabled in the Community Version.")
 
             onClicked: backend.shareApplicationOnline()
         }
@@ -309,7 +380,8 @@ Rectangle {
             readonly property int padding: 6
 
             width: row.width + window.padding * 2
-            height: row.height + workspacesFlyout.height + 3 * window.padding
+            height: row.height + (backend.isLiteModeEnabled ? 0 : workspacesFlyout.height)
+                    + (backend.isLiteModeEnabled ? 2 : 3) * window.padding
                     + (workspacesFlyout.popup.opened ? workspacesFlyout.popup.height : 0)
             visible: false
             flags: Qt.FramelessWindowHint | Qt.Dialog | Qt.NoDropShadowWindowHint
@@ -377,11 +449,27 @@ Rectangle {
                         }
 
                         ToolbarButton {
+                            id: lockWorkspaceFlyout
+                            style: StudioTheme.Values.statusbarButtonStyle
+                            anchors.verticalCenter: parent.verticalCenter
+                            tooltip: lockWorkspace.tooltip
+                            buttonIcon: backend.lockWorkspace ? StudioTheme.Constants.lockOn
+                                                              : StudioTheme.Constants.lockOff
+                            checkable: true
+                            checked: backend.lockWorkspace
+                            visible: !backend.isLiteModeEnabled
+
+                            onClicked: backend.setLockWorkspace(lockWorkspaceFlyout.checked)
+                        }
+
+                        ToolbarButton {
                             anchors.verticalCenter: parent.verticalCenter
                             style: StudioTheme.Values.primaryToolbarStyle
                             width: shareButton.width
-                            iconFont: StudioTheme.Constants.font
+                            iconFontFamily: StudioTheme.Constants.font.family
                             buttonIcon: qsTr("Share")
+                            enabled: backend.isSharingEnabled
+                            tooltip: shareButton.enabled ? qsTr("Share your project online.") : qsTr("Sharing your project online is disabled in the Community Version.")
 
                             onClicked: backend.shareApplicationOnline()
                         }
@@ -398,6 +486,7 @@ Rectangle {
                         textRole: "displayName"
                         valueRole: "fileName"
                         currentIndex: workspacesFlyout.indexOfValue(backend.currentWorkspace)
+                        visible: !backend.isLiteModeEnabled
 
                         onCompressedActivated: backend.setCurrentWorkspace(workspacesFlyout.currentValue)
                         onCountChanged: workspacesFlyout.currentIndex = workspacesFlyout.indexOfValue(backend.currentWorkspace)

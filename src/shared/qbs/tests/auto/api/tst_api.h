@@ -93,6 +93,7 @@ private slots:
     void fileTagger();
     void fileTagsFilterOverride();
     void generatedFilesList();
+    void groupVisibility();
     void infiniteLoopBuilding();
     void infiniteLoopBuilding_data();
     void infiniteLoopResolving();
@@ -162,6 +163,7 @@ private:
                                   TaskReceiver *taskReceiver = 0,
                                   const qbs::BuildOptions &options = qbs::BuildOptions(),
                                   const QVariantMap &overriddenValues = QVariantMap());
+    QString getProductFilePath(const QString &productNameOrFilePath);
 
     LogSink * const m_logSink;
     const QString m_sourceDataDir;

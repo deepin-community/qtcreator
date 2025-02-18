@@ -127,6 +127,7 @@ QAction *s_inspectWizardAction = nullptr;
 bool s_areFactoriesLoaded = false;
 bool s_isWizardRunning = false;
 QWidget *s_currentWizard = nullptr;
+static QSet<Id> s_plugins;
 
 // NewItemDialog reopening data:
 class NewItemDialogData
@@ -186,33 +187,35 @@ QList<IWizardFactory*> IWizardFactory::allWizardFactories()
 
         QHash<Id, IWizardFactory *> sanityCheck;
         for (const FactoryCreator &fc : std::as_const(s_factoryCreators)) {
-            IWizardFactory *newFactory = fc();
-            // skip factories referencing wizard page generators provided by plugins not loaded
-            if (!newFactory)
-                continue;
-            IWizardFactory *existingFactory = sanityCheck.value(newFactory->id());
+            for (IWizardFactory *newFactory : fc()) {
+                if (!newFactory) // should not happen, but maybe something went wrong
+                    continue;
+                IWizardFactory *existingFactory = sanityCheck.value(newFactory->id());
 
-            QTC_ASSERT(existingFactory != newFactory, continue);
-            if (existingFactory) {
-                qWarning("%s", qPrintable(Tr::tr("Factory with id=\"%1\" already registered. Deleting.")
-                                          .arg(existingFactory->id().toString())));
-                delete newFactory;
-                continue;
-            }
-
-            QTC_ASSERT(!newFactory->m_action, continue);
-            newFactory->m_action = new QAction(newFactory->displayName(), newFactory);
-            ActionManager::registerAction(newFactory->m_action, actionId(newFactory));
-
-            connect(newFactory->m_action, &QAction::triggered, newFactory, [newFactory] {
-                if (!ICore::isNewItemDialogRunning()) {
-                    FilePath path = newFactory->runPath({});
-                    newFactory->runWizard(path, ICore::dialogParent(), Id(), QVariantMap());
+                QTC_ASSERT(existingFactory != newFactory, continue);
+                if (existingFactory) {
+                    qWarning("%s",
+                             qPrintable(
+                                 Tr::tr("Factory with id=\"%1\" already registered. Deleting.")
+                                     .arg(existingFactory->id().toString())));
+                    delete newFactory;
+                    continue;
                 }
-            });
 
-            sanityCheck.insert(newFactory->id(), newFactory);
-            s_allFactories << newFactory;
+                QTC_ASSERT(!newFactory->m_action, continue);
+                ActionBuilder(newFactory, actionId(newFactory))
+                    .setText(newFactory->displayName())
+                    .bindContextAction(&newFactory->m_action)
+                    .addOnTriggered(newFactory, [newFactory] {
+                        if (!ICore::isNewItemDialogRunning()) {
+                            FilePath path = newFactory->runPath({});
+                            newFactory->runWizard(path, ICore::dialogParent(), Id(), QVariantMap());
+                        }
+                    });
+
+                sanityCheck.insert(newFactory->id(), newFactory);
+                s_allFactories << newFactory;
+            }
         }
     }
 
@@ -322,6 +325,11 @@ void IWizardFactory::registerFactoryCreator(const IWizardFactory::FactoryCreator
     s_factoryCreators << creator;
 }
 
+void IWizardFactory::registerFactoryCreator(const std::function<IWizardFactory *()> &creator)
+{
+    s_factoryCreators << [creator] { return QList<IWizardFactory *>({creator()}); };
+}
+
 QSet<Id> IWizardFactory::allAvailablePlatforms()
 {
     QSet<Id> platforms;
@@ -378,6 +386,8 @@ void IWizardFactory::destroyFeatureProvider()
 
 void IWizardFactory::clearWizardFactories()
 {
+    s_plugins.clear();
+
     for (IWizardFactory *factory : std::as_const(s_allFactories))
         ActionManager::unregisterAction(factory->m_action, actionId(factory));
 
@@ -389,16 +399,17 @@ void IWizardFactory::clearWizardFactories()
 
 QSet<Id> IWizardFactory::pluginFeatures()
 {
-    static QSet<Id> plugins;
-    if (plugins.isEmpty()) {
+    if (s_plugins.isEmpty()) {
         // Implicitly create a feature for each plugin loaded:
-        const QVector<ExtensionSystem::PluginSpec *> pluginVector = ExtensionSystem::PluginManager::plugins();
+        const ExtensionSystem::PluginSpecs pluginVector = ExtensionSystem::PluginManager::plugins();
         for (const ExtensionSystem::PluginSpec *s : pluginVector) {
-            if (s->state() == ExtensionSystem::PluginSpec::Running)
-                plugins.insert(Id::fromString(s->name()));
+            if (s->state() == ExtensionSystem::PluginSpec::Running) {
+                s_plugins.insert(Id::fromString(s->id()));
+                s_plugins.insert(Id::fromString(s->name())); // Avoid breaking existing user wizards
+            }
         }
     }
-    return plugins;
+    return s_plugins;
 }
 
 QSet<Id> IWizardFactory::availableFeatures(Id platformId)
@@ -415,15 +426,22 @@ void IWizardFactory::initialize()
 {
     connect(ICore::instance(), &ICore::coreAboutToClose, &IWizardFactory::clearWizardFactories);
 
-    auto resetAction = new QAction(Tr::tr("Reload All Wizards"), ActionManager::instance());
-    ActionManager::registerAction(resetAction, "Wizard.Factory.Reset");
+    QAction *resetAction = nullptr;
+    ActionBuilder(ActionManager::instance(), "Wizard.Factory.Reset")
+        .setText(Tr::tr("Reload All Wizards"))
+        .bindContextAction(&resetAction)
+        .addOnTriggered(&IWizardFactory::clearWizardFactories);
 
-    connect(resetAction, &QAction::triggered, &IWizardFactory::clearWizardFactories);
     connect(ICore::instance(), &ICore::newItemDialogStateChanged, resetAction,
             [resetAction] { resetAction->setEnabled(!ICore::isNewItemDialogRunning()); });
 
-    s_inspectWizardAction = new QAction(Tr::tr("Inspect Wizard State"), ActionManager::instance());
-    ActionManager::registerAction(s_inspectWizardAction, "Wizard.Inspect");
+    connect(ExtensionSystem::PluginManager::instance(),
+            &ExtensionSystem::PluginManager::pluginsChanged,
+            &IWizardFactory::clearWizardFactories);
+
+    ActionBuilder(ActionManager::instance(), "Wizard.Inspect")
+        .setText(Tr::tr("Inspect Wizard State"))
+        .bindContextAction(&s_inspectWizardAction);
 }
 
 static QIcon iconWithText(const QIcon &icon, const QString &text)
@@ -448,7 +466,7 @@ static QIcon iconWithText(const QIcon &icon, const QString &text)
         font.setPixelSize(fontSize);
         font.setStretch(85);
         QPainter p(&pixmap);
-        p.setPen(Utils::creatorTheme()->color(Theme::PanelTextColorDark));
+        p.setPen(Utils::creatorColor(Theme::PanelTextColorDark));
         p.setFont(font);
         QTextOption textOption(Qt::AlignHCenter | Qt::AlignBottom);
         textOption.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);

@@ -1,11 +1,15 @@
-// Copyright (C) 2023 The Qt Company Ltd.
+// Copyright (C) 2024 Jarek Kobus
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#pragma once
+#ifndef TASKING_BARRIER_H
+#define TASKING_BARRIER_H
 
 #include "tasking_global.h"
 
 #include "tasktree.h"
+
+QT_BEGIN_NAMESPACE
 
 namespace Tasking {
 
@@ -19,17 +23,17 @@ public:
 
     void start();
     void advance(); // If limit reached, stops with true
-    void stopWithResult(bool success); // Ignores limit
+    void stopWithResult(DoneResult result); // Ignores limit
 
     bool isRunning() const { return m_current >= 0; }
     int current() const { return m_current; }
-    std::optional<bool> result() const { return m_result; }
+    std::optional<DoneResult> result() const { return m_result; }
 
-signals:
-    void done(bool success);
+Q_SIGNALS:
+    void done(DoneResult success);
 
 private:
-    std::optional<bool> m_result = {};
+    std::optional<DoneResult> m_result = {};
     int m_limit = 1;
     int m_current = -1;
 };
@@ -59,7 +63,7 @@ private:
 };
 
 template <int Limit = 1>
-using MultiBarrier = TreeStorage<SharedBarrier<Limit>>;
+using MultiBarrier = Storage<SharedBarrier<Limit>>;
 
 // Can't write: "MultiBarrier barrier;". Only "MultiBarrier<> barrier;" would work.
 // Can't have one alias with default type in C++17, getting the following error:
@@ -67,7 +71,7 @@ using MultiBarrier = TreeStorage<SharedBarrier<Limit>>;
 using SingleBarrier = MultiBarrier<1>;
 
 template <int Limit>
-GroupItem waitForBarrierTask(const MultiBarrier<Limit> &sharedBarrier)
+ExecutableItem waitForBarrierTask(const MultiBarrier<Limit> &sharedBarrier)
 {
     return BarrierTask([sharedBarrier](Barrier &barrier) {
         SharedBarrier<Limit> *activeBarrier = sharedBarrier.activeStorage();
@@ -75,17 +79,23 @@ GroupItem waitForBarrierTask(const MultiBarrier<Limit> &sharedBarrier)
             qWarning("The barrier referenced from WaitForBarrier element "
                      "is not reachable in the running tree. "
                      "It is possible that no barrier was added to the tree, "
-                     "or the storage is not reachable from where it is referenced. "
+                     "or the barrier is not reachable from where it is referenced. "
                      "The WaitForBarrier task finishes with an error. ");
             return SetupResult::StopWithError;
         }
         Barrier *activeSharedBarrier = activeBarrier->barrier();
-        const std::optional<bool> result = activeSharedBarrier->result();
-        if (result.has_value())
-            return result.value() ? SetupResult::StopWithDone : SetupResult::StopWithError;
+        const std::optional<DoneResult> result = activeSharedBarrier->result();
+        if (result.has_value()) {
+            return result.value() == DoneResult::Success ? SetupResult::StopWithSuccess
+                                                         : SetupResult::StopWithError;
+        }
         QObject::connect(activeSharedBarrier, &Barrier::done, &barrier, &Barrier::stopWithResult);
         return SetupResult::Continue;
     });
 }
 
 } // namespace Tasking
+
+QT_END_NAMESPACE
+
+#endif // TASKING_BARRIER_H

@@ -5,6 +5,7 @@
 */
 
 #include "ansihighlighter.h"
+#include "abstracthighlighter_p.h"
 #include "context_p.h"
 #include "definition.h"
 #include "definition_p.h"
@@ -16,8 +17,8 @@
 
 #include <QColor>
 #include <QFile>
-#include <QFileInfo>
 #include <QHash>
+#include <QIODevice>
 #include <QTextStream>
 
 #include <cmath>
@@ -715,7 +716,7 @@ void fillString(QString &s, int n, QStringView fill)
         for (; n > fill.size(); n -= fill.size()) {
             s += fill;
         }
-        s += fill.left(n);
+        s += fill.sliced(0, n);
     }
 }
 
@@ -726,8 +727,8 @@ struct GraphLine {
     int labelLineLength = 0;
     int nextLabelOffset = 0;
 
-    template<class String>
-    void pushLabel(int offset, String const &s, int numberDisplayableChar)
+    template<class StringBuilder>
+    void pushLabel(int offset, StringBuilder const &s, int numberDisplayableChar)
     {
         Q_ASSERT(offset >= labelLineLength);
         const int n = offset - labelLineLength;
@@ -737,20 +738,20 @@ struct GraphLine {
         nextLabelOffset = labelLineLength;
     }
 
-    template<class String>
-    void pushGraph(int offset, String const &s, int numberDisplayableChar)
+    template<class StringBuilder>
+    void pushGraph(int offset, StringBuilder const &s, int numberDisplayableChar)
     {
         Q_ASSERT(offset >= graphLineLength);
         const int n = offset - graphLineLength;
         graphLineLength += numberDisplayableChar + n;
         fillLine(graphLine, n);
-        const int ps1 = graphLine.size();
+        const qsizetype ps1 = graphLine.size();
         graphLine += s;
         if (offset >= labelLineLength) {
             const int n2 = offset - labelLineLength;
             labelLineLength += n2 + 1;
             fillLine(labelLine, n2);
-            labelLine += QStringView(graphLine).right(graphLine.size() - ps1);
+            labelLine += QStringView(graphLine).sliced(ps1);
         }
     }
 
@@ -783,7 +784,7 @@ GraphLine &lineAtOffset(std::vector<GraphLine> &graphLines, int offset)
 }
 
 // disable bold, italic and underline on |
-const QLatin1String graphSymbol("\x1b[21;23;24m|");
+const QLatin1String graphSymbol("\x1b[22;23;24m|");
 // reverse video
 const QLatin1String nameStyle("\x1b[7m");
 
@@ -793,8 +794,8 @@ const QLatin1String nameStyle("\x1b[7m");
 class DebugSyntaxHighlighter : public KSyntaxHighlighting::AbstractHighlighter
 {
 public:
-    using TraceOption = KSyntaxHighlighting::AnsiHighlighter::TraceOption;
-    using TraceOptions = KSyntaxHighlighting::AnsiHighlighter::TraceOptions;
+    using Option = KSyntaxHighlighting::AnsiHighlighter::Option;
+    using Options = KSyntaxHighlighting::AnsiHighlighter::Options;
 
     void setDefinition(const KSyntaxHighlighting::Definition &def) override
     {
@@ -815,14 +816,14 @@ public:
                        QLatin1String infoStyle,
                        QLatin1String editorBackground,
                        const std::vector<QPair<QString, QString>> &ansiStyles,
-                       TraceOptions traceOptions)
+                       Options options)
     {
         initRegionStyles(ansiStyles);
 
-        m_hasFormatTrace = traceOptions.testFlag(TraceOption::Format);
-        m_hasRegionTrace = traceOptions.testFlag(TraceOption::Region);
-        m_hasStackSizeTrace = traceOptions.testFlag(TraceOption::StackSize);
-        m_hasContextTrace = traceOptions.testFlag(TraceOption::Context);
+        m_hasFormatTrace = options.testFlag(Option::TraceFormat);
+        m_hasRegionTrace = options.testFlag(Option::TraceRegion);
+        m_hasStackSizeTrace = options.testFlag(Option::TraceStackSize);
+        m_hasContextTrace = options.testFlag(Option::TraceContext);
         const bool hasFormatOrContextTrace = m_hasFormatTrace || m_hasContextTrace || m_hasStackSizeTrace;
 
         const bool hasSeparator = hasFormatOrContextTrace && m_hasRegionTrace;
@@ -831,6 +832,7 @@ public:
         bool firstLine = true;
         State state;
         QString currentLine;
+        const bool isUnbuffered = options.testFlag(Option::Unbuffered);
         while (in.readLineInto(&currentLine)) {
             auto oldState = state;
             state = highlightLine(currentLine, state);
@@ -849,7 +851,7 @@ public:
 
             for (const auto &fragment : m_highlightedFragments) {
                 auto const &ansiStyle = ansiStyles[fragment.formatId];
-                out << ansiStyle.first << QStringView(currentLine).mid(fragment.offset, fragment.length) << ansiStyle.second;
+                out << ansiStyle.first << QStringView(currentLine).sliced(fragment.offset, fragment.length) << ansiStyle.second;
             }
 
             out << QStringLiteral("\x1b[K\n");
@@ -864,6 +866,10 @@ public:
             }
 
             m_highlightedFragments.clear();
+
+            if (isUnbuffered) {
+                out.flush();
+            }
         }
     }
 
@@ -948,7 +954,7 @@ private:
             m_contextCapture.offsetNext = 0;
             m_contextCapture.lengthNext = 0;
             // truncate the line to deduce the context from the format
-            const auto lineFragment = currentLine.mid(0, fragment.offset + fragment.length + 1);
+            const auto lineFragment = currentLine.sliced(0, fragment.offset + fragment.length + 1);
             newState = m_contextCapture.highlightLine(lineFragment, state);
 
             // Deduced context does not start at the position of the format.
@@ -970,12 +976,14 @@ private:
         QString label;
 
         if (m_hasStackSizeTrace) {
-            label += QLatin1Char('(') % QString::number(stateData->size()) % QLatin1Char(')');
+            // first state is empty
+            int stateSize = stateData ? stateData->size() : 0;
+            label = QLatin1Char('(') % QString::number(stateSize) % QLatin1Char(')');
         }
 
         if (m_hasContextTrace) {
             // first state is empty
-            if (stateData->isEmpty()) {
+            if (!stateData) {
                 return label + QStringLiteral("[???]");
             }
 
@@ -1138,7 +1146,7 @@ private:
         QString name;
         int offset;
         int length;
-        quint16 formatId;
+        int formatId;
     };
 
     struct ContextCaptureHighlighter : KSyntaxHighlighting::AbstractHighlighter {
@@ -1168,7 +1176,7 @@ private:
         int depth;
         int offset;
         int bindIndex;
-        quint16 regionId;
+        int regionId;
         State state;
     };
 
@@ -1190,7 +1198,7 @@ private:
 };
 } // anonymous namespace
 
-class KSyntaxHighlighting::AnsiHighlighterPrivate
+class KSyntaxHighlighting::AnsiHighlighterPrivate : public AbstractHighlighterPrivate
 {
 public:
     QTextStream out;
@@ -1198,17 +1206,25 @@ public:
     QStringView currentLine;
     // pairs of startColor / resetColor
     std::vector<QPair<QString, QString>> ansiStyles;
+    Theme::EditorColorRole bgRole = Theme::BackgroundColor;
 };
 
 AnsiHighlighter::AnsiHighlighter()
-    : d(new AnsiHighlighterPrivate())
+    : AbstractHighlighter(new AnsiHighlighterPrivate())
 {
 }
 
 AnsiHighlighter::~AnsiHighlighter() = default;
 
+void KSyntaxHighlighting::AnsiHighlighter::setBackgroundRole(Theme::EditorColorRole bgRole)
+{
+    Q_D(AnsiHighlighter);
+    d->bgRole = bgRole;
+}
+
 void AnsiHighlighter::setOutputFile(const QString &fileName)
 {
+    Q_D(AnsiHighlighter);
     if (d->file.isOpen()) {
         d->file.close();
     }
@@ -1218,42 +1234,38 @@ void AnsiHighlighter::setOutputFile(const QString &fileName)
         return;
     }
     d->out.setDevice(&d->file);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    d->out.setCodec("UTF-8");
-#endif
 }
 
 void AnsiHighlighter::setOutputFile(FILE *fileHandle)
 {
+    Q_D(AnsiHighlighter);
     d->file.open(fileHandle, QIODevice::WriteOnly);
     d->out.setDevice(&d->file);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    d->out.setCodec("UTF-8");
-#endif
 }
 
-void AnsiHighlighter::highlightFile(const QString &fileName, AnsiFormat format, bool useEditorBackground, TraceOptions traceOptions)
+void AnsiHighlighter::highlightFile(const QString &fileName, AnsiFormat format, Options options)
 {
-    QFileInfo fi(fileName);
     QFile f(fileName);
     if (!f.open(QFile::ReadOnly)) {
         qCWarning(Log) << "Failed to open input file" << fileName << ":" << f.errorString();
         return;
     }
 
-    highlightData(&f, format, useEditorBackground, traceOptions);
+    highlightData(&f, format, options);
 }
 
-void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useEditorBackground, TraceOptions traceOptions)
+void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, Options options)
 {
+    Q_D(AnsiHighlighter);
+
     if (!d->out.device()) {
         qCWarning(Log) << "No output stream defined!";
         return;
     }
 
     const auto is256Colors = (format == AnsiFormat::XTerm256Color);
-    const auto theme = this->theme();
-    const auto definition = this->definition();
+    const auto &theme = d->m_theme;
+    const auto &definition = d->m_definition;
 
     auto definitions = definition.includedDefinitions();
     definitions.append(definition);
@@ -1265,53 +1277,67 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
     QLatin1String foregroundDefaultColor;
     QLatin1String backgroundDefaultColor;
 
+    const bool useEditorBackground = options.testFlag(Option::UseEditorBackground);
+    const bool useSelectedText = useEditorBackground && d->bgRole == Theme::TextSelection;
+
+    const auto toRGB = [](QRgb argb) {
+        return argb & 0xff'ff'ffu;
+    };
+
+    const QRgb foregroundColor = [&] {
+        if (useSelectedText) {
+            const auto fg = theme.selectedTextColor(Theme::Normal);
+            if (fg) {
+                return toRGB(fg);
+            }
+        }
+        return useEditorBackground ? toRGB(theme.textColor(Theme::Normal)) : 0;
+    }();
+    const QRgb backgroundColor = useEditorBackground ? toRGB(theme.editorColor(d->bgRole)) : 0;
+
     // https://en.wikipedia.org/wiki/ANSI_escape_code#SGR_parameters
 
     if (useEditorBackground) {
-        const QRgb foregroundColor = theme.textColor(Theme::Normal);
-        const QRgb backgroundColor = theme.editorColor(Theme::BackgroundColor);
         foregroundColorBuffer.appendForeground(foregroundColor, is256Colors, colorCache);
         backgroundColorBuffer.append(QLatin1String("\x1b["));
         backgroundColorBuffer.appendBackground(backgroundColor, is256Colors, colorCache);
         foregroundDefaultColor = foregroundColorBuffer.latin1();
-        backgroundDefaultColor = backgroundColorBuffer.latin1().mid(2);
+        backgroundDefaultColor = backgroundColorBuffer.latin1().sliced(2);
     }
 
-    // ansiStyles must not be empty for applyFormat to work even with a definition without any context
-    if (d->ansiStyles.empty()) {
-        d->ansiStyles.resize(32);
-    } else {
-        d->ansiStyles[0].first.clear();
-        d->ansiStyles[0].second.clear();
+    int maxId = 0;
+    for (const auto &definition : std::as_const(definitions)) {
+        for (const auto &format : std::as_const(DefinitionData::get(definition)->formats)) {
+            maxId = qMax(maxId, format.id());
+        }
     }
+    d->ansiStyles.clear();
+    // ansiStyles must not be empty for applyFormat to work even with a definition without any context
+    d->ansiStyles.resize(maxId + 1);
 
     // initialize ansiStyles
-    for (auto &&definition : std::as_const(definitions)) {
-        for (auto &&format : std::as_const(DefinitionData::get(definition)->formats)) {
-            const auto id = format.id();
-            if (id >= d->ansiStyles.size()) {
-                // better than id + 1 to avoid successive allocations
-                d->ansiStyles.resize(id * 2);
-            }
-
+    for (const auto &definition : std::as_const(definitions)) {
+        for (const auto &format : std::as_const(DefinitionData::get(definition)->formats)) {
             AnsiBuffer buffer;
 
             buffer.append(QLatin1String("\x1b["));
 
-            const bool hasFg = format.hasTextColor(theme);
-            const bool hasBg = format.hasBackgroundColor(theme);
+            const auto fg = useSelectedText ? format.selectedTextColor(theme).rgba() : format.textColor(theme).rgba();
+            const auto bg = useSelectedText ? format.selectedBackgroundColor(theme).rgba() : format.backgroundColor(theme).rgba();
+            const bool hasFg = fg && (!useEditorBackground || toRGB(fg) != foregroundColor);
+            const bool hasBg = bg && (!useEditorBackground || toRGB(bg) != backgroundColor);
             const bool hasBold = format.isBold(theme);
             const bool hasItalic = format.isItalic(theme);
             const bool hasUnderline = format.isUnderline(theme);
             const bool hasStrikeThrough = format.isStrikeThrough(theme);
 
             if (hasFg) {
-                buffer.appendForeground(format.textColor(theme).rgb(), is256Colors, colorCache);
+                buffer.appendForeground(toRGB(fg), is256Colors, colorCache);
             } else {
                 buffer.append(foregroundDefaultColor);
             }
             if (hasBg) {
-                buffer.appendBackground(format.backgroundColor(theme).rgb(), is256Colors, colorCache);
+                buffer.appendBackground(toRGB(bg), is256Colors, colorCache);
             }
             if (hasBold) {
                 buffer.append(QLatin1String("1;"));
@@ -1329,7 +1355,8 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
             // if there is ANSI style
             if (buffer.latin1().size() > 2) {
                 buffer.setFinalStyle();
-                d->ansiStyles[id].first = buffer.latin1();
+                auto &style = d->ansiStyles[format.id()];
+                style.first = buffer.latin1();
 
                 if (useEditorBackground) {
                     buffer.clear();
@@ -1338,11 +1365,11 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
                         buffer.append(hasEffect ? QLatin1String("\x1b[0;") : QLatin1String("\x1b["));
                         buffer.append(backgroundDefaultColor);
                         buffer.setFinalStyle();
-                        d->ansiStyles[id].second = buffer.latin1();
+                        style.second = buffer.latin1();
                     } else if (hasEffect) {
                         buffer.append(QLatin1String("\x1b["));
                         if (hasBold) {
-                            buffer.append(QLatin1String("21;"));
+                            buffer.append(QLatin1String("22;"));
                         }
                         if (hasItalic) {
                             buffer.append(QLatin1String("23;"));
@@ -1354,10 +1381,10 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
                             buffer.append(QLatin1String("29;"));
                         }
                         buffer.setFinalStyle();
-                        d->ansiStyles[id].second = buffer.latin1();
+                        style.second = buffer.latin1();
                     }
                 } else {
-                    d->ansiStyles[id].second = QStringLiteral("\x1b[0m");
+                    style.second = QStringLiteral("\x1b[0m");
                 }
             }
         }
@@ -1370,13 +1397,11 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
     }
 
     QTextStream in(dev);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    in.setCodec("UTF-8");
-#endif
 
-    if (!traceOptions) {
+    if (!options.testAnyFlag(Option::TraceAll)) {
         State state;
         QString currentLine;
+        const bool isUnbuffered = options.testFlag(Option::Unbuffered);
         while (in.readLineInto(&currentLine)) {
             d->currentLine = currentLine;
             state = highlightLine(d->currentLine, state);
@@ -1386,6 +1411,10 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
             } else {
                 d->out << QLatin1Char('\n');
             }
+
+            if (isUnbuffered) {
+                d->out.flush();
+            }
         }
     } else {
         AnsiBuffer buffer;
@@ -1394,7 +1423,7 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
         buffer.setFinalStyle();
         DebugSyntaxHighlighter debugHighlighter;
         debugHighlighter.setDefinition(definition);
-        debugHighlighter.highlightData(in, d->out, buffer.latin1(), backgroundDefaultColor, d->ansiStyles, traceOptions);
+        debugHighlighter.highlightData(in, d->out, buffer.latin1(), backgroundDefaultColor, d->ansiStyles, options);
     }
 
     if (useEditorBackground) {
@@ -1408,6 +1437,7 @@ void AnsiHighlighter::highlightData(QIODevice *dev, AnsiFormat format, bool useE
 
 void AnsiHighlighter::applyFormat(int offset, int length, const Format &format)
 {
+    Q_D(AnsiHighlighter);
     auto const &ansiStyle = d->ansiStyles[format.id()];
-    d->out << ansiStyle.first << d->currentLine.mid(offset, length) << ansiStyle.second;
+    d->out << ansiStyle.first << d->currentLine.sliced(offset, length) << ansiStyle.second;
 }

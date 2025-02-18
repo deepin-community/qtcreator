@@ -8,7 +8,7 @@ add_qtc_plugin(LanguageClient
   PUBLIC_DEPENDS LanguageServerProtocol Qt::Core
   PLUGIN_DEPENDS ProjectExplorer Core TextEditor
   SOURCES
-    callhierarchy.cpp callhierarchy.h
+    callandtypehierarchy.cpp callandtypehierarchy.h
     client.cpp client.h
     clientrequest.cpp clientrequest.h
     currentdocumentsymbolsrequest.cpp currentdocumentsymbolsrequest.h
@@ -23,7 +23,7 @@ add_qtc_plugin(LanguageClient
     languageclientinterface.cpp languageclientinterface.h
     languageclientmanager.cpp languageclientmanager.h
     languageclientoutline.cpp languageclientoutline.h
-    languageclientplugin.cpp languageclientplugin.h
+    languageclientplugin.cpp
     languageclientquickfix.cpp languageclientquickfix.h
     languageclientsettings.cpp languageclientsettings.h
     languageclientsymbolsupport.cpp languageclientsymbolsupport.h
@@ -36,3 +36,5 @@ add_qtc_plugin(LanguageClient
     semantichighlightsupport.cpp semantichighlightsupport.h
     snippet.cpp snippet.h
 )
+
+add_subdirectory(lualanguageclient)

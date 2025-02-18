@@ -5,7 +5,7 @@
 
 #include "externalterminalprocessimpl.h"
 #include "filepath.h"
-#include "process.h"
+#include "qtcprocess.h"
 #include "utilstr.h"
 
 #include <QMutex>
@@ -38,11 +38,10 @@ public:
     HooksPrivate()
     {
         auto openTerminal = [](const OpenTerminalParameters &parameters) {
-            DeviceFileHooks::instance().openTerminal(parameters.workingDirectory.value_or(
-                                                         FilePath{}),
-                                                     parameters.environment.value_or(Environment{}));
+            parameters.workingDirectory.value_or(FilePath{})
+                    .openTerminal(parameters.environment.value_or(Environment{}));
         };
-        auto createProcessInterface = []() { return new ExternalTerminalProcessImpl(); };
+        auto createProcessInterface = [] { return new ExternalTerminalProcessImpl; };
 
         addCallbackSet("External", {openTerminal, createProcessInterface});
     }

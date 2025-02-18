@@ -712,9 +712,11 @@ void TestBlackboxApple::byteArrayInfoPlist()
 
 void TestBlackboxApple::codesign()
 {
+    QFETCH(int, expectedCount);
     QFETCH(bool, isBundle);
     QFETCH(bool, enableSigning);
     QFETCH(bool, multiArch);
+    QFETCH(bool, multiVariant);
 
     const auto xcodeVersion = findXcodeVersion();
 
@@ -723,20 +725,21 @@ void TestBlackboxApple::codesign()
 
     QDir::setCurrent(testDataDir + "/codesign");
     QbsRunParameters params(QStringList{"qbs.installPrefix:''"});
-    params.arguments
-            << QStringLiteral("project.isBundle:%1").arg(isBundle ? "true" : "false");
-    params.arguments
-            << QStringLiteral("project.enableSigning:%1").arg(enableSigning ? "true" : "false");
-    if (multiArch)
-        params.arguments << QStringLiteral("project.xcodeVersion:") + xcodeVersion->toString();
+    // the test can't use xcode module to determine version itself
+    params.arguments << QStringLiteral("project.xcodeVersion:") + xcodeVersion->toString();
+    params.arguments << QStringLiteral("project.isBundle:%1").arg(isBundle ? "true" : "false");
+    params.arguments << QStringLiteral("project.enableSigning:%1")
+                            .arg(enableSigning ? "true" : "false");
+    params.arguments << QStringLiteral("project.multiArch:%1").arg(multiArch ? "true" : "false");
+    params.arguments << QStringLiteral("project.multiVariant:%1")
+                            .arg(multiVariant ? "true" : "false");
 
     rmDirR(relativeBuildDir());
     QCOMPARE(runQbs(params), 0);
 
     const int codeSignCount =
             QString::fromUtf8(m_qbsStdout).count(QStringLiteral("codesign"));
-    // We have 3 products, we have to sign each exactly once, even in the multiplexed case
-    QCOMPARE(codeSignCount, enableSigning ? 3 : 0);
+    QCOMPARE(codeSignCount, expectedCount);
 
     const auto appName = isBundle ? QStringLiteral("A.app") : QStringLiteral("A");
     const auto appPath = defaultInstallRoot + "/" + appName;
@@ -781,16 +784,25 @@ void TestBlackboxApple::codesign()
 
 void TestBlackboxApple::codesign_data()
 {
+    QTest::addColumn<int>("expectedCount");
     QTest::addColumn<bool>("isBundle");
     QTest::addColumn<bool>("enableSigning");
     QTest::addColumn<bool>("multiArch");
+    QTest::addColumn<bool>("multiVariant");
 
-    QTest::newRow("bundle, unsigned") << true << false << false;
-    QTest::newRow("standalone, unsigned") << false << false << false;
-    QTest::newRow("bundle, signed") << true << true << false;
-    QTest::newRow("standalone, signed") << false << true << false;
-    QTest::newRow("bundle, signed, multiarch") << true << true << true;
-    QTest::newRow("standalone, signed, multiarch") << false << true << true;
+    QTest::newRow("standalone, unsigned") << 0 << false << false << false << false;
+    QTest::newRow("bundle, unsigned") << 0 << true << false << false << false;
+    QTest::newRow("standalone, signed") << 3 << false << true << false << false;
+    QTest::newRow("bundle, signed") << 3 << true << true << false << false;
+    // here we only sign the resulting lipo artifact
+    QTest::newRow("standalone, signed, multiarch") << 3 << false << true << true << false;
+    QTest::newRow("bundle, signed, multiarch") << 3 << true << true << true << false;
+    // here we sign all artifacts
+    QTest::newRow("standalone, signed, multivariant") << 15 << false << true << false << true;
+    QTest::newRow("bundle, signed, multivariant") << 15 << true << true << false << true;
+    QTest::newRow("standalone, signed, multiarch, multivariant")
+        << 15 << false << true << true << true;
+    QTest::newRow("bundle, signed, multiarch, multivariant") << 15 << true << true << true << true;
 }
 
 void TestBlackboxApple::deploymentTarget()
@@ -1076,6 +1088,66 @@ void TestBlackboxApple::infoPlistVariables()
              QStringLiteral("infoPlistVariables"));
     QCOMPARE(content.value(QStringLiteral("WithDefault")),
              QStringLiteral("DEFAULT"));
+}
+
+void TestBlackboxApple::lipoSymlinks()
+{
+    QFETCH(bool, multiArch);
+    QFETCH(bool, multiVariant);
+
+    const auto xcodeVersion = findXcodeVersion();
+
+    if (!xcodeVersion)
+        QSKIP("requires Xcode profile");
+
+    QDir::setCurrent(testDataDir + "/lipo-symlinks");
+    QbsRunParameters params(QStringList{"qbs.installPrefix:''"});
+    // the test can't use xcode module to determine version itself
+    params.arguments << QStringLiteral("project.xcodeVersion:") + xcodeVersion->toString();
+    params.arguments << QStringLiteral("project.multiArch:%1").arg(multiArch ? "true" : "false");
+    params.arguments << QStringLiteral("project.multiVariant:%1")
+                            .arg(multiVariant ? "true" : "false");
+
+    rmDirR(relativeBuildDir());
+    QCOMPARE(runQbs(params), 0);
+
+    const auto libraryDirPath = QStringList{{relativeBuildDir(), "install-root"}}.join("/");
+    const auto checkSymLink = [](const auto &path, const auto &targetPath) {
+        QFileInfo fi(path);
+        return fi.exists() && fi.isSymbolicLink() && fi.symLinkTarget() == targetPath;
+    };
+
+    const auto libraryPath
+        = QFileInfo(QStringList{{libraryDirPath, "libA.1.2.3.dylib"}}.join("/")).absoluteFilePath();
+
+    QVERIFY(QFileInfo(libraryPath).exists() && !QFileInfo(libraryPath).isSymbolicLink());
+    QVERIFY(checkSymLink(QStringList{{libraryDirPath, "libA.1.2.dylib"}}.join("/"), libraryPath));
+    QVERIFY(checkSymLink(QStringList{{libraryDirPath, "libA.1.dylib"}}.join("/"), libraryPath));
+    QVERIFY(checkSymLink(QStringList{{libraryDirPath, "libA.dylib"}}.join("/"), libraryPath));
+    if (multiArch && multiVariant) { // in this case there are 2 libs and 2 sets of symlinks
+        const auto debugLibraryPath
+            = QFileInfo(QStringList{{libraryDirPath, "libA_debug.1.2.3.dylib"}}.join("/"))
+                  .absoluteFilePath();
+        QVERIFY(
+            QFileInfo(debugLibraryPath).exists() && !QFileInfo(debugLibraryPath).isSymbolicLink());
+        QVERIFY(checkSymLink(
+            QStringList{{libraryDirPath, "libA_debug.1.2.dylib"}}.join("/"), debugLibraryPath));
+        QVERIFY(checkSymLink(
+            QStringList{{libraryDirPath, "libA_debug.1.dylib"}}.join("/"), debugLibraryPath));
+        QVERIFY(checkSymLink(
+            QStringList{{libraryDirPath, "libA_debug.dylib"}}.join("/"), debugLibraryPath));
+    }
+}
+
+void TestBlackboxApple::lipoSymlinks_data()
+{
+    QTest::addColumn<bool>("multiArch");
+    QTest::addColumn<bool>("multiVariant");
+
+    QTest::newRow("standalone") << false << false;
+    QTest::newRow("multiArch") << true << false;
+    QTest::newRow("multiVariant") << false << true;
+    QTest::newRow("multiArch, multiVariant") << true << true;
 }
 
 void TestBlackboxApple::objcArc()

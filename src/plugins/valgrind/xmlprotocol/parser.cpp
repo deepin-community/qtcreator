@@ -10,8 +10,6 @@
 #include "suppression.h"
 #include "../valgrindtr.h"
 
-#include <extensionsystem/pluginmanager.h>
-
 #include <utils/async.h>
 #include <utils/expected.h>
 #include <utils/futuresynchronizer.h>
@@ -25,6 +23,7 @@
 #include <QWaitCondition>
 #include <QXmlStreamReader>
 
+using namespace Tasking;
 using namespace Utils;
 
 namespace Valgrind::XmlProtocol {
@@ -683,7 +682,7 @@ public:
         if (!m_watcher)
             return;
         m_thread->cancel();
-        ExtensionSystem::PluginManager::futureSynchronizer()->addFuture(m_watcher->future());
+        Utils::futureSynchronizer()->addFuture(m_watcher->future());
     }
 
     void start()
@@ -710,7 +709,7 @@ public:
                 m_errorString = data.m_internalError;
         });
         QObject::connect(m_watcher.get(), &QFutureWatcherBase::finished, q, [this] {
-            emit q->done(!m_errorString, m_errorString.value_or(QString()));
+            emit q->done(toDoneResult(!m_errorString), m_errorString.value_or(QString()));
             m_watcher.release()->deleteLater();
             m_thread.reset();
             m_socket.reset();
@@ -786,8 +785,8 @@ bool Parser::runBlocking()
     bool ok = false;
     QEventLoop loop;
 
-    const auto finalize = [&loop, &ok](bool success) {
-        ok = success;
+    const auto finalize = [&loop, &ok](DoneResult result) {
+        ok = result == DoneResult::Success;
         // Refer to the QObject::deleteLater() docs.
         QMetaObject::invokeMethod(&loop, [&loop] { loop.quit(); }, Qt::QueuedConnection);
     };

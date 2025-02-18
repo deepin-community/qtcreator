@@ -4,7 +4,6 @@
 #include "qmlprofileranimationsmodel.h"
 #include "qmlprofilermodelmanager.h"
 #include "qmlprofilernotesmodel.h"
-#include "qmlprofilerplugin.h"
 #include "qmlprofilerrangemodel.h"
 #include "qmlprofilerstatemanager.h"
 #include "qmlprofilertool.h"
@@ -75,7 +74,7 @@ QmlProfilerTraceView::QmlProfilerTraceView(QWidget *parent, QmlProfilerViewManag
     setObjectName("QmlProfiler.Timeline.Dock");
 
     d->m_zoomControl = new Timeline::TimelineZoomControl(this);
-    modelManager->registerFeatures(0, QmlProfilerModelManager::QmlEventLoader(), [this]() {
+    modelManager->registerFeatures(0, QmlProfilerModelManager::QmlEventLoader(), [this] {
         if (d->m_suspendedModels.isEmpty()) {
             // Temporarily remove the models, while we're changing them
             d->m_suspendedModels = d->m_modelProxy->models();
@@ -91,7 +90,7 @@ QmlProfilerTraceView::QmlProfilerTraceView(QWidget *parent, QmlProfilerViewManag
         d->m_zoomControl->setRange(start, start + (end - start) / 10);
         d->m_modelProxy->setModels(d->m_suspendedModels);
         d->m_suspendedModels.clear();
-    }, [this]() {
+    }, [this] {
         d->m_zoomControl->clear();
         if (!d->m_suspendedModels.isEmpty()) {
             d->m_modelProxy->setModels(d->m_suspendedModels);
@@ -108,9 +107,7 @@ QmlProfilerTraceView::QmlProfilerTraceView(QWidget *parent, QmlProfilerViewManag
     d->m_mainView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setFocusProxy(d->m_mainView);
 
-    auto agg = new Aggregation::Aggregate;
-    agg->add(d->m_mainView);
-    agg->add(new TraceViewFindSupport(this, modelManager));
+    Aggregation::aggregate({d->m_mainView, new TraceViewFindSupport(this, modelManager)});
 
     groupLayout->addWidget(d->m_mainView);
     groupLayout->addWidget(new Core::FindToolBarPlaceHolder(this));

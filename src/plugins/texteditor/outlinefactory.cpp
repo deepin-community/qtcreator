@@ -7,14 +7,15 @@
 #include "ioutlinewidget.h"
 
 #include <coreplugin/coreconstants.h>
-#include <coreplugin/icore.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/editormanager/ieditor.h>
+#include <coreplugin/icore.h>
+#include <coreplugin/inavigationwidgetfactory.h>
 
-#include <utils/utilsicons.h>
 #include <utils/qtcassert.h>
 #include <utils/store.h>
 #include <utils/stylehelper.h>
+#include <utils/utilsicons.h>
 
 #include <QDebug>
 #include <QLabel>
@@ -25,9 +26,37 @@
 using namespace Utils;
 
 namespace TextEditor {
+namespace Internal {
+
+class OutlineFactory : public Core::INavigationWidgetFactory
+{
+    Q_OBJECT
+
+public:
+    OutlineFactory();
+
+    Core::NavigationView createWidget() override;
+    void saveSettings(Utils::QtcSettings *settings, int position, QWidget *widget) override;
+    void restoreSettings(Utils::QtcSettings *settings, int position, QWidget *widget) override;
+
+signals:
+    void updateOutline();
+};
+
+OutlineFactory &outlineFactory()
+{
+    static OutlineFactory theOutlineFactory;
+    return theOutlineFactory;
+}
+
+void setupOutlineFactory()
+{
+    (void) outlineFactory();
+}
+
+} // Internal
 
 static QList<IOutlineWidgetFactory *> g_outlineWidgetFactories;
-static QPointer<Internal::OutlineFactory> g_outlineFactory;
 
 IOutlineWidgetFactory::IOutlineWidgetFactory()
 {
@@ -41,8 +70,7 @@ IOutlineWidgetFactory::~IOutlineWidgetFactory()
 
 void IOutlineWidgetFactory::updateOutline()
 {
-    if (QTC_GUARD(!g_outlineFactory.isNull()))
-        emit g_outlineFactory->updateOutline();
+    emit Internal::outlineFactory().updateOutline();
 }
 
 namespace Internal {
@@ -149,7 +177,6 @@ void OutlineWidgetStack::restoreSettings(Utils::QtcSettings *settings, int posit
     const Key baseKey = numberedKey("Outline.", position) + '.';
     const QString baseKeyString = stringFromKey(baseKey);
 
-    bool syncWithEditor = true;
     m_widgetSettings.clear();
     const QStringList longKeys = settings->allKeys();
     for (const QString &longKey : longKeys) {
@@ -159,13 +186,13 @@ void OutlineWidgetStack::restoreSettings(Utils::QtcSettings *settings, int posit
         const QString key = longKey.mid(baseKeyString.length());
 
         if (key == QLatin1String("SyncWithEditor")) {
-            syncWithEditor = settings->value(keyFromString(longKey)).toBool();
+            m_syncWithEditor = settings->value(keyFromString(longKey)).toBool();
             continue;
         }
         m_widgetSettings.insert(key, settings->value(keyFromString(longKey)));
     }
 
-    m_toggleSync->setChecked(syncWithEditor);
+    m_toggleSync->setChecked(m_syncWithEditor);
     if (auto outlineWidget = qobject_cast<IOutlineWidget*>(currentWidget()))
         outlineWidget->restoreSettings(m_widgetSettings);
 }
@@ -243,8 +270,6 @@ void OutlineWidgetStack::updateEditor(Core::IEditor *editor)
 
 OutlineFactory::OutlineFactory()
 {
-    QTC_CHECK(g_outlineFactory.isNull());
-    g_outlineFactory = this;
     setDisplayName(Tr::tr("Outline"));
     setId("Outline");
     setPriority(600);

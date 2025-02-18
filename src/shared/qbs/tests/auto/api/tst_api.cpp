@@ -72,7 +72,7 @@ public:
         warnings.push_back(error);
     }
     void doPrintMessage(qbs::LoggerLevel, const QString &message, const QString &) override {
-        output += message;
+        output += '\n' + message;
     }
 
     QList<qbs::ErrorInfo> warnings;
@@ -357,7 +357,7 @@ void TestApi::buildGraphLocking()
 void TestApi::buildProject()
 {
     QFETCH(QString, projectSubDir);
-    QFETCH(QString, productFileName);
+    QFETCH(QString, productNameOrFilePath);
     const QString projectFilePath = projectSubDir + QLatin1Char('/') + projectSubDir
             + QLatin1String(".qbs");
     qbs::SetupProjectParameters params = defaultSetupParameters(projectFilePath);
@@ -368,9 +368,10 @@ void TestApi::buildProject()
         QSKIP("https://gcc.gnu.org/bugzilla/show_bug.cgi?id=91440");
     VERIFY_NO_ERROR(errorInfo);
     QVERIFY(regularFileExists(relativeBuildGraphFilePath()));
-    if (!productFileName.isEmpty()) {
-        QVERIFY2(regularFileExists(productFileName), qPrintable(productFileName));
-        QVERIFY2(QFile::remove(productFileName), qPrintable(productFileName));
+    const QString productFilePath = getProductFilePath(productNameOrFilePath);
+    if (!productFilePath.isEmpty()) {
+        QVERIFY2(regularFileExists(productFilePath), qPrintable(productFilePath));
+        QVERIFY2(QFile::remove(productFilePath), qPrintable(productFilePath));
     }
 
     WAIT_FOR_NEW_TIMESTAMP();
@@ -378,73 +379,45 @@ void TestApi::buildProject()
     options.setForceTimestampCheck(true);
     errorInfo = doBuildProject(projectFilePath, nullptr, nullptr, nullptr, options);
     VERIFY_NO_ERROR(errorInfo);
-    if (!productFileName.isEmpty())
-        QVERIFY2(regularFileExists(productFileName), qPrintable(productFileName));
+    if (!productFilePath.isEmpty())
+        QVERIFY2(regularFileExists(productFilePath), qPrintable(productFilePath));
     QVERIFY(regularFileExists(relativeBuildGraphFilePath()));
 }
 
 void TestApi::buildProject_data()
 {
     QTest::addColumn<QString>("projectSubDir");
-    QTest::addColumn<QString>("productFileName");
-    QTest::newRow("BPs in Sources")
-            << QString("build-properties-source")
-            << relativeExecutableFilePath("HelloWorld");
-    QTest::newRow("code generator")
-            << QString("codegen")
-            << relativeExecutableFilePath("codegen");
-    QTest::newRow("link static libs")
-            << QString("link-static-lib")
-            << relativeExecutableFilePath("HelloWorld");
+    QTest::addColumn<QString>("productNameOrFilePath");
+    QTest::newRow("BPs in Sources") << QString("build-properties-source") << QString("HelloWorld");
+    QTest::newRow("code generator") << QString("codegen") << QString("codegen");
+    QTest::newRow("link static libs") << QString("link-static-lib") << QString("HelloWorld");
     QTest::newRow("link staticlib dynamiclib")
-            << QString("link-staticlib-dynamiclib")
-            << relativeExecutableFilePath("app");
+        << QString("link-staticlib-dynamiclib") << QString("app");
     QTest::newRow("precompiled header new")
-            << QString("precompiled-header-new")
-            << relativeExecutableFilePath("MyApp");
+        << QString("precompiled-header-new") << QString("MyApp");
     QTest::newRow("precompiled header dynamic")
-            << QString("precompiled-header-dynamic")
-            << relativeExecutableFilePath("MyApp");
-    QTest::newRow("lots of dots")
-            << QString("lots-of-dots")
-            << relativeExecutableFilePath("lots.of.dots");
+        << QString("precompiled-header-dynamic") << QString("MyApp");
+    QTest::newRow("lots of dots") << QString("lots-of-dots") << QString("lots.of.dots");
     QTest::newRow("Qt5 plugin")
             << QString("qt5-plugin")
             << relativeProductBuildDir("echoplugin") + '/'
                + qbs::Internal::HostOsInfo::dynamicLibraryName("echoplugin");
-    QTest::newRow("Q_OBJECT in source")
-            << QString("moc-cpp")
-            << relativeExecutableFilePath("moc_cpp");
-    QTest::newRow("Q_OBJECT in header")
-            << QString("moc-hpp")
-            << relativeExecutableFilePath("moc_hpp");
+    QTest::newRow("Q_OBJECT in source") << QString("moc-cpp") << QString("moc_cpp");
+    QTest::newRow("Q_OBJECT in header") << QString("moc-hpp") << QString("moc_hpp");
     QTest::newRow("Q_OBJECT in header, moc_XXX.cpp included")
-            << QString("moc-hpp-included")
-            << relativeExecutableFilePath("moc_hpp_included");
+        << QString("moc-hpp-included") << QString("moc_hpp_included");
     QTest::newRow("app and lib with same source file")
-            << QString("lib-same-source")
-            << relativeExecutableFilePath("HelloWorldApp");
+        << QString("lib-same-source") << QString("HelloWorldApp");
     QTest::newRow("source files with the same base name but different extensions")
-            << QString("same-base-name")
-            << relativeExecutableFilePath("basename");
-    QTest::newRow("static library dependencies")
-            << QString("static-lib-deps")
-            << relativeExecutableFilePath("staticLibDeps");
-    QTest::newRow("simple probes")
-            << QString("simple-probe")
-            << relativeExecutableFilePath("MyApp");
+        << QString("same-base-name") << QString("basename");
+    QTest::newRow("simple probes") << QString("simple-probe") << QString("MyApp");
     QTest::newRow("application without sources")
-            << QString("app-without-sources")
-            << relativeExecutableFilePath("appWithoutSources");
-    QTest::newRow("productNameWithDots")
-            << QString("productNameWithDots")
-            << relativeExecutableFilePath("myapp");
+        << QString("app-without-sources") << QString("appWithoutSources");
+    QTest::newRow("productNameWithDots") << QString("productNameWithDots") << QString("myapp");
     QTest::newRow("only default properties")
             << QString("two-default-property-values")
             << relativeProductBuildDir("two-default-property-values") + "/set";
-    QTest::newRow("Export item with Group")
-            << QString("export-item-with-group")
-            << relativeExecutableFilePath("app");
+    QTest::newRow("Export item with Group") << QString("export-item-with-group") << QString("app");
     QTest::newRow("QBS-728")
             << QString("QBS-728")
             << QString();
@@ -453,7 +426,7 @@ void TestApi::buildProject_data()
 void TestApi::buildProjectDryRun()
 {
     QFETCH(QString, projectSubDir);
-    QFETCH(QString, productFileName);
+    QFETCH(QString, productNameOrFilePath);
     const QString projectFilePath = projectSubDir + QLatin1Char('/') + projectSubDir
             + QLatin1String(".qbs");
     qbs::SetupProjectParameters params = defaultSetupParameters(projectFilePath);
@@ -651,7 +624,7 @@ void TestApi::changeContent()
         product = projectData.allProducts().front();
     };
     resolve();
-    QVERIFY(product.groups().size() >= 8);
+    QVERIFY(product.groups().size() >= 5);
 
     // Error handling: Invalid product.
     qbs::ErrorInfo errorInfo = project.addGroup(qbs::ProductData(), "blubb");
@@ -1351,6 +1324,9 @@ void TestApi::generatedFilesList()
                                                                               m_logSink, nullptr));
     QVERIFY(waitForFinished(setupJob.get()));
     QVERIFY2(!setupJob->error().hasError(), qPrintable(setupJob->error().toString()));
+    const bool isEmscripten = m_logSink->output.contains("is emscripten: true");
+    const bool isNotEmscripten = m_logSink->output.contains("is emscripten: false");
+    QCOMPARE(isEmscripten, !isNotEmscripten);
     qbs::Project project = setupJob->project();
     qbs::BuildOptions options;
     options.setExecuteRulesOnly(true);
@@ -1362,17 +1338,26 @@ void TestApi::generatedFilesList()
     const qbs::ProductData product = projectData.products().front();
     QString uiFilePath;
     QVERIFY(product.generatedArtifacts().size() >= 6);
-    const auto artifacts = product.generatedArtifacts();
+    const auto &artifacts = product.generatedArtifacts();
     for (const qbs::ArtifactData &a : artifacts) {
         QVERIFY(a.isGenerated());
         QFileInfo fi(a.filePath());
         using qbs::Internal::HostOsInfo;
         const QStringList possibleFileNames = QStringList()
-                << "main.cpp.o" << "main.cpp.obj"
-                << "mainwindow.cpp.o" << "mainwindow.cpp.obj"
-                << "moc_mainwindow.cpp" << "moc_mainwindow.cpp.o" << "moc_mainwindow.cpp.obj"
-                << "ui_mainwindow.h"
-                << HostOsInfo::appendExecutableSuffix("generated-files-list");
+                                              << "main.cpp.o"
+                                              << "main.cpp.obj"
+                                              << "mainwindow.cpp.o"
+                                              << "mainwindow.cpp.obj"
+                                              << "moc_mainwindow.cpp"
+                                              << "moc_mainwindow.cpp.o"
+                                              << "moc_mainwindow.cpp.obj"
+                                              << "ui_mainwindow.h"
+                                              << "generated-files-list.wasm"
+                                              << "generated-files-list.worker.js"
+                                              << "generated-files-list.js"
+                                              << "generated-files-list.html"
+                                              << qbs::Internal::HostOsInfo::appendExecutableSuffix(
+                                                     "generated-files-list");
         QVERIFY2(possibleFileNames.contains(fi.fileName()) || fi.fileName().endsWith(".plist")
                  || fi.fileName().contains("qt_plugin_import"),
                  qPrintable(fi.fileName()));
@@ -1398,7 +1383,30 @@ void TestApi::generatedFilesList()
     QCOMPARE(uiHeaderFileInfo.fileName(), QStringLiteral("ui_mainwindow.h"));
     QVERIFY(!uiHeaderFileInfo.exists());
     const QStringList allParents = project.generatedFiles(product, uiFilePath, true);
-    QCOMPARE(allParents.size(), 3);
+    if (isEmscripten)
+        QCOMPARE(allParents.size(), 5); //built with "-pthread" support
+    else
+        QCOMPARE(allParents.size(), 3);
+}
+
+void TestApi::groupVisibility()
+{
+    qbs::SetupProjectParameters setupParams = defaultSetupParameters(
+        "group-visibility/group-visibility.qbs");
+    std::unique_ptr<qbs::SetupProjectJob> job(
+        qbs::Project().setupProject(setupParams, m_logSink, nullptr));
+    waitForFinished(job.get());
+    QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
+    qbs::ProjectData project = job->project().projectData();
+    QCOMPARE(project.allProducts().size(), 1);
+    qbs::ProductData product = project.allProducts().front();
+    const QList<qbs::GroupData> groups = product.groups();
+    QCOMPARE(groups.size(), 3);
+    for (const qbs::GroupData &g : groups) {
+        QVERIFY2(
+            g.name().contains("should be visible") || g.name() == "group-visibility",
+            qPrintable(g.name()));
+    }
 }
 
 void TestApi::infiniteLoopBuilding()
@@ -1496,8 +1504,8 @@ void TestApi::installableFiles()
     for (const qbs::ArtifactData &f : beforeInstallableFiles) {
         if (!QFileInfo(f.filePath()).fileName().startsWith("main")) {
             QVERIFY(f.isExecutable());
-            QString expectedTargetFilePath = qbs::Internal::HostOsInfo
-                    ::appendExecutableSuffix(QStringLiteral("/tmp/usr/bin/installedApp"));
+            const auto expectedTargetFilePath = appendExecSuffix(
+                QStringLiteral("/tmp/usr/bin/installedApp"), m_logSink->output.toLocal8Bit());
             QCOMPARE(f.installData().localInstallFilePath(), expectedTargetFilePath);
             QCOMPARE(product.targetExecutable(), expectedTargetFilePath);
             break;
@@ -1545,6 +1553,11 @@ void TestApi::isRunnable()
 void TestApi::linkDynamicLibs()
 {
     const qbs::ErrorInfo errorInfo = doBuildProject("link-dynamiclibs");
+    const bool isEmscripten = m_logSink->output.contains("is emscripten: true");
+    const bool isNotEmscripten = m_logSink->output.contains("is emscripten: false");
+    if (isEmscripten)
+        QEXPECT_FAIL(nullptr, "Emscripten does not support dynamic linking", Abort);
+    QVERIFY(isNotEmscripten);
     VERIFY_NO_ERROR(errorInfo);
 }
 
@@ -1556,8 +1569,13 @@ void TestApi::linkDynamicAndStaticLibs()
     m_logSink->output.clear();
     const qbs::ErrorInfo errorInfo = doBuildProject("link-dynamiclibs-staticlibs", &bdr, nullptr,
                                                     nullptr, options);
+    const bool isEmscripten = m_logSink->output.contains("is emscripten: true");
+    const bool isNotEmscripten = m_logSink->output.contains("is emscripten: false");
+    if (isEmscripten)
+        QEXPECT_FAIL(nullptr, "Emscripten does not support dynamic linking", Abort);
     VERIFY_NO_ERROR(errorInfo);
 
+    QVERIFY(isNotEmscripten);
     const bool isGcc = m_logSink->output.contains("is gcc: true");
     const bool isNotGcc = m_logSink->output.contains("is gcc: false");
     if (isNotGcc)
@@ -1585,14 +1603,19 @@ void TestApi::linkStaticAndDynamicLibs()
     qbs::BuildOptions options;
     options.setEchoMode(qbs::CommandEchoModeCommandLine);
     m_logSink->output.clear();
-    const qbs::ErrorInfo errorInfo = doBuildProject("link-staticlibs-dynamiclibs", &bdr, nullptr,
-                                                    nullptr, options);
-    VERIFY_NO_ERROR(errorInfo);
+    const qbs::ErrorInfo errorInfo = doBuildProject(
+        "link-staticlibs-dynamiclibs", &bdr, nullptr, nullptr, options);
     const bool isNormalUnix = m_logSink->output.contains("is normal unix: yes");
     const bool isNotNormalUnix = m_logSink->output.contains("is normal unix: no");
     QVERIFY2(isNormalUnix != isNotNormalUnix, qPrintable(m_logSink->output));
     const bool isGcc = m_logSink->output.contains("is gcc: true");
     const bool isNotGcc = m_logSink->output.contains("is gcc: false");
+    const bool isEmscripten = m_logSink->output.contains("is emscripten: true");
+    const bool isNotEmscripten = m_logSink->output.contains("is emscripten: false");
+    if (isEmscripten)
+        QEXPECT_FAIL(nullptr, "Emscripten does not support dynamic linking", Abort);
+    VERIFY_NO_ERROR(errorInfo);
+    QVERIFY(isNotEmscripten);
     if (isNotGcc)
         QSKIP("The remainder of this test applies only to GCC");
     QVERIFY(isGcc);
@@ -1925,7 +1948,8 @@ struct ProductDataSelector
     bool qbsPropertiesMatch(const qbs::ProductData &p) const
     {
         for (auto it = qbsProperties.begin(); it != qbsProperties.end(); ++it) {
-            if (it.value() != p.moduleProperties().getModuleProperty("qbs", it.key()))
+            if (!qbs::qVariantsEqual(
+                    it.value(), p.moduleProperties().getModuleProperty("qbs", it.key())))
                 return false;
         }
         return true;
@@ -2664,7 +2688,7 @@ void TestApi::removeFileDependency()
 void TestApi::resolveProject()
 {
     QFETCH(QString, projectSubDir);
-    QFETCH(QString, productFileName);
+    QFETCH(QString, productNameOrFilePath);
 
     const qbs::SetupProjectParameters params = defaultSetupParameters(projectSubDir);
     removeBuildDir(params);
@@ -2672,7 +2696,9 @@ void TestApi::resolveProject()
                                                                                     m_logSink, nullptr));
     waitForFinished(setupJob.get());
     VERIFY_NO_ERROR(setupJob->error());
-    QVERIFY2(!QFile::exists(productFileName), qPrintable(productFileName));
+
+    const QString productFilePath = getProductFilePath(productNameOrFilePath);
+    QVERIFY2(!QFile::exists(productFilePath), qPrintable(productFilePath));
     QVERIFY(regularFileExists(relativeBuildGraphFilePath()));
 }
 
@@ -2684,7 +2710,7 @@ void TestApi::resolveProject_data()
 void TestApi::resolveProjectDryRun()
 {
     QFETCH(QString, projectSubDir);
-    QFETCH(QString, productFileName);
+    QFETCH(QString, productNameOrFilePath);
 
     qbs::SetupProjectParameters params = defaultSetupParameters(projectSubDir);
     params.setDryRun(true);
@@ -2693,7 +2719,8 @@ void TestApi::resolveProjectDryRun()
                                                                                     m_logSink, nullptr));
     waitForFinished(setupJob.get());
     VERIFY_NO_ERROR(setupJob->error());
-    QVERIFY2(!QFile::exists(productFileName), qPrintable(productFileName));
+    const QString productFilePath = getProductFilePath(productNameOrFilePath);
+    QVERIFY2(!QFile::exists(productFilePath), qPrintable(productFilePath));
     QVERIFY(!regularFileExists(relativeBuildGraphFilePath()));
 }
 
@@ -2737,7 +2764,7 @@ void TestApi::restoredWarnings()
 
     // Re-resolving with changes: Errors come from the re-resolving, stored ones must be suppressed.
     QVariantMap overridenValues;
-    overridenValues.insert("products.theProduct.moreFiles", true);
+    overridenValues.insert("products.aThirdProduct.moreFiles", true);
     setupParams.setOverriddenValues(overridenValues);
     job.reset(qbs::Project().setupProject(setupParams, m_logSink, nullptr));
     waitForFinished(job.get());
@@ -2747,13 +2774,14 @@ void TestApi::restoredWarnings()
     const auto afterErrors = m_logSink->warnings;
     for (const qbs::ErrorInfo &e : afterErrors) {
         const QString msg = e.toString();
-        QVERIFY2(msg.contains("Superfluous version")
-                 || msg.contains("Property 'blubb' is not declared")
-                 || msg.contains("blubb.cpp' does not exist")
-                 || msg.contains("this one comes from a thread")
-                 || msg.contains("Product 'theOtherProduct' had errors and was disabled")
-                 || msg.contains("Product 'theProduct' had errors and was disabled"),
-                 qPrintable(msg));
+        QVERIFY2(
+            msg.contains("Superfluous version") || msg.contains("Property 'blubb' is not declared")
+                || msg.contains("blubb.txt' does not exist")
+                || msg.contains("this one comes from a thread")
+                || msg.contains("Product 'theOtherProduct' had errors and was disabled")
+                || msg.contains("Product 'theThirdProduct' had errors and was disabled")
+                || msg.contains("Product 'theProduct' had errors and was disabled"),
+            qPrintable(msg));
     }
     m_logSink->warnings.clear();
 }
@@ -2900,6 +2928,7 @@ void TestApi::targetArtifactStatus()
 void TestApi::timeout()
 {
     QFETCH(QString, projectDirName);
+    QFETCH(QString, cancelOutput);
     const auto setupParams = defaultSetupParameters(projectDirName + "/timeout.qbs");
     std::unique_ptr<qbs::SetupProjectJob> setupJob{
             qbs::Project().setupProject(setupParams, m_logSink, nullptr)};
@@ -2932,13 +2961,15 @@ void TestApi::timeout()
     const auto errorString = buildJob->error().toString();
     QVERIFY2(errorString.contains("cancel"), qPrintable(errorString));
     QVERIFY(errorString.contains("timeout"));
+    QVERIFY(errorString.contains(cancelOutput));
 }
 
 void TestApi::timeout_data()
 {
     QTest::addColumn<QString>("projectDirName");
-    QTest::newRow("JS Command") << QString("timeout-js");
-    QTest::newRow("Process Command") << QString("timeout-process");
+    QTest::addColumn<QString>("cancelOutput");
+    QTest::newRow("JS Command") << QString("timeout-js") << QString("infinite loop");
+    QTest::newRow("Process Command") << QString("timeout-process") << QString("infinite-loop");
 }
 
 void TestApi::toolInModule()
@@ -3137,6 +3168,16 @@ qbs::ErrorInfo TestApi::doBuildProject(
     }
     waitForFinished(buildJob.get());
     return buildJob->error();
+}
+
+QString TestApi::getProductFilePath(const QString &productNameOrFilePath)
+{
+    if (productNameOrFilePath.isEmpty())
+        return {};
+
+    return productNameOrFilePath.contains('/')
+               ? productNameOrFilePath
+               : relativeExecutableFilePath(productNameOrFilePath, m_logSink->output.toLocal8Bit());
 }
 
 QTEST_MAIN(TestApi)

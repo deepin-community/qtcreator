@@ -87,13 +87,23 @@ public:
     DockWidget *m_centralWidget = nullptr;
     bool m_isLeavingMinimized = false;
 
+    Qt::ToolButtonStyle m_toolBarStyleDocked = Qt::ToolButtonIconOnly;
+    Qt::ToolButtonStyle m_toolBarStyleFloating = Qt::ToolButtonTextUnderIcon;
+    QSize m_toolBarIconSizeDocked = QSize(16, 16);
+    QSize m_toolBarIconSizeFloating = QSize(24, 24);
+
     QString m_workspacePresetsPath;
     QList<Workspace> m_workspaces;
     Workspace m_workspace;
+    bool m_workspaceLocked = false;
 
     QtcSettings *m_settings = nullptr;
     bool m_modeChangeState = false;
+    bool m_wasShown = false;
     bool m_workspaceOrderDirty = false;
+
+    bool m_mcusProject = false;
+    bool m_liteModeEnabled = false;
 
     /**
      * Private data constructor
@@ -332,7 +342,7 @@ DockManager::DockManager(QWidget *parent)
     : DockContainerWidget(this, parent)
     , d(new DockManagerPrivate(this))
 {
-    connect(this, &DockManager::workspaceListChanged, this, [=] {
+    connect(this, &DockManager::workspaceListChanged, this, [this] {
         d->m_workspaceOrderDirty = true;
     });
 
@@ -363,9 +373,16 @@ DockManager::DockManager(QWidget *parent)
 
 DockManager::~DockManager()
 {
-    emit aboutToUnloadWorkspace(d->m_workspace.fileName());
-    save();
-    saveStartupWorkspace();
+    // Only save startup workspace and lock state if not in lite design mode
+    if (!d->m_liteModeEnabled) {
+        if (d->m_wasShown) {
+            emit aboutToUnloadWorkspace(d->m_workspace.fileName());
+            save();
+        }
+
+        saveStartupWorkspace();
+        saveLockWorkspace();
+    }
 
     // Fix memory leaks, see https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System/issues/307
     std::vector<ADS::DockAreaWidget *> areas;
@@ -461,34 +478,41 @@ void DockManager::initialize()
 
     QString workspace = ADS::Constants::DEFAULT_WORKSPACE;
 
-    // Determine workspace to restore at startup
-    if (autoRestoreWorkspace()) {
-        const QString lastWorkspace = startupWorkspace();
-        if (!lastWorkspace.isEmpty()) {
-            if (!workspaceExists(lastWorkspace)) {
-                // This is a fallback mechanism for pre 4.1 settings which stored the workspace name
-                // instead of the file name.
-                QString minusVariant = lastWorkspace;
-                minusVariant.replace(" ", "-");
-                minusVariant.append("." + workspaceFileExtension);
+    if (d->m_liteModeEnabled && workspaceExists(ADS::Constants::LITE_WORKSPACE)) {
+        workspace = ADS::Constants::LITE_WORKSPACE;
+    } else {
+        // Determine workspace to restore at startup
+        if (autoRestoreWorkspace()) {
+            const QString lastWorkspace = startupWorkspace();
+            if (!lastWorkspace.isEmpty()) {
+                if (!workspaceExists(lastWorkspace)) {
+                    // This is a fallback mechanism for pre 4.1 settings which stored the workspace
+                    // name instead of the file name.
 
-                if (workspaceExists(minusVariant))
-                    workspace = minusVariant;
+                    const std::vector<QString> separators = {"-", "_"};
 
-                QString underscoreVariant = lastWorkspace;
-                underscoreVariant.replace(" ", "_");
-                underscoreVariant.append("." + workspaceFileExtension);
+                    for (const QString &separator : separators) {
+                        QString workspaceVariant = lastWorkspace;
+                        workspaceVariant.replace(" ", separator);
+                        workspaceVariant.append("." + workspaceFileExtension);
 
-                if (workspaceExists(underscoreVariant))
-                    workspace = underscoreVariant;
-            } else {
-                workspace = lastWorkspace;
-            }
-        } else
-            qWarning() << "Could not restore workspace:" << lastWorkspace;
+                        if (workspaceExists(workspaceVariant))
+                            workspace = workspaceVariant;
+                    }
+                } else {
+                    workspace = lastWorkspace;
+                }
+            } else
+                qWarning() << "Could not restore workspace:" << lastWorkspace;
+        }
     }
 
     openWorkspace(workspace);
+
+    if (d->m_liteModeEnabled)
+        lockWorkspace(true);
+    else
+        lockWorkspace(d->m_settings->value(Constants::LOCK_WORKSPACE_SETTINGS_KEY, false).toBool());
 }
 
 DockAreaWidget *DockManager::addDockWidget(DockWidgetArea area,
@@ -762,6 +786,38 @@ QString DockManager::floatingContainersTitle()
         return qApp->applicationDisplayName();
 
     return g_floatingContainersTitle;
+}
+
+void DockManager::setDockWidgetToolBarStyle(Qt::ToolButtonStyle style, DockWidget::eState state)
+{
+    if (DockWidget::StateFloating == state)
+        d->m_toolBarStyleFloating = style;
+    else
+        d->m_toolBarStyleDocked = style;
+}
+
+Qt::ToolButtonStyle DockManager::dockWidgetToolBarStyle(DockWidget::eState state) const
+{
+    if (DockWidget::StateFloating == state)
+        return d->m_toolBarStyleFloating;
+    else
+        return d->m_toolBarStyleDocked;
+}
+
+void DockManager::setDockWidgetToolBarIconSize(const QSize &iconSize, DockWidget::eState state)
+{
+    if (DockWidget::StateFloating == state)
+        d->m_toolBarIconSizeFloating = iconSize;
+    else
+        d->m_toolBarIconSizeDocked = iconSize;
+}
+
+QSize DockManager::dockWidgetToolBarIconSize(DockWidget::eState state) const
+{
+    if (DockWidget::StateFloating == state)
+        return d->m_toolBarIconSizeFloating;
+    else
+        return d->m_toolBarIconSizeDocked;
 }
 
 DockWidget *DockManager::centralWidget() const
@@ -1103,6 +1159,32 @@ void DockManager::showWorkspaceMananger()
                             workspaceDialog.autoLoadWorkspace());
 }
 
+void DockManager::lockWorkspace(bool value)
+{
+    if (value == d->m_workspaceLocked)
+        return;
+
+    d->m_workspaceLocked = value;
+
+    DockWidget::DockWidgetFeatures features = DockWidget::DefaultDockWidgetFeatures;
+
+    if (value) {
+        internal::setFlag(features, DockWidget::DockWidgetMovable, false);
+        internal::setFlag(features, DockWidget::DockWidgetFloatable, false);
+    }
+
+    const auto &dockWidgets = dockWidgetsMap();
+    for (auto dockWidget : dockWidgets)
+        dockWidget->setFeatures(features);
+
+    emit lockWorkspaceChanged();
+}
+
+bool DockManager::isWorkspaceLocked() const
+{
+    return d->m_workspaceLocked;
+}
+
 expected_str<QString> DockManager::createWorkspace(const QString &workspaceName)
 {
     qCInfo(adsLog) << "Create workspace" << workspaceName;
@@ -1111,7 +1193,7 @@ expected_str<QString> DockManager::createWorkspace(const QString &workspaceName)
     uniqueWorkspaceFileName(fileName);
     const FilePath filePath = userDirectory().pathAppended(fileName);
 
-    expected_str<void> result = write(filePath, saveState(workspaceName));
+    expected_str<void> result = write(filePath, saveState(workspaceName)); // TODO utils
     if (!result)
         return make_unexpected(result.error());
 
@@ -1229,7 +1311,7 @@ expected_str<QString> DockManager::cloneWorkspace(const QString &originalFileNam
 
     const FilePath clonePath = workspaceNameToFilePath(cloneName);
 
-    const expected_str<void> copyResult = originalPath.copyFile(clonePath);
+    const Result copyResult = originalPath.copyFile(clonePath);
     if (!copyResult)
         return make_unexpected(Tr::tr("Could not clone \"%1\" due to: %2")
                                    .arg(originalPath.toUserOutput(), copyResult.error()));
@@ -1255,21 +1337,21 @@ expected_str<QString> DockManager::renameWorkspace(const QString &originalFileNa
     return originalFileName;
 }
 
-expected_str<void> DockManager::resetWorkspacePreset(const QString &fileName)
+Result DockManager::resetWorkspacePreset(const QString &fileName)
 {
     qCInfo(adsLog) << "Reset workspace" << fileName;
 
     Workspace *w = workspace(fileName);
     if (!w)
-        return make_unexpected(Tr::tr("Workspace \"%1\" does not exist.").arg(fileName));
+        return Result::Error(Tr::tr("Workspace \"%1\" does not exist.").arg(fileName));
 
     if (!w->isPreset())
-        return make_unexpected(Tr::tr("Workspace \"%1\" is not a preset.").arg(fileName));
+        return Result::Error(Tr::tr("Workspace \"%1\" is not a preset.").arg(fileName));
 
     const FilePath filePath = w->filePath();
 
     if (!filePath.removeFile())
-        return make_unexpected(Tr::tr("Cannot remove \"%1\".").arg(filePath.toUserOutput()));
+        return Result::Error(Tr::tr("Cannot remove \"%1\".").arg(filePath.toUserOutput()));
 
     return presetDirectory().pathAppended(fileName).copyFile(filePath);
 }
@@ -1296,6 +1378,11 @@ bool DockManager::isModeChangeState() const
     return d->m_modeChangeState;
 }
 
+void DockManager::aboutToShow()
+{
+    d->m_wasShown = true;
+}
+
 expected_str<QString> DockManager::importWorkspace(const QString &filePath)
 {
     qCInfo(adsLog) << "Import workspace" << filePath;
@@ -1313,7 +1400,7 @@ expected_str<QString> DockManager::importWorkspace(const QString &filePath)
 
     const FilePath targetFilePath = userDirectory().pathAppended(fileName);
 
-    const expected_str<void> copyResult = sourceFilePath.copyFile(targetFilePath);
+    const Result copyResult = sourceFilePath.copyFile(targetFilePath);
     if (!copyResult)
         return make_unexpected(
             Tr::tr("Could not copy \"%1\" to \"%2\" due to: %3")
@@ -1354,7 +1441,7 @@ expected_str<QString> DockManager::exportWorkspace(const QString &targetFilePath
             Tr::tr("The workspace \"%1\" does not exist ").arg(workspaceFile.toUserOutput()));
 
     // Finally copy the workspace to the target
-    const expected_str<void> copyResult = workspaceFile.copyFile(targetFile);
+    const Result copyResult = workspaceFile.copyFile(targetFile);
     if (!copyResult)
         return make_unexpected(
             Tr::tr("Could not copy \"%1\" to \"%2\" due to: %3")
@@ -1458,16 +1545,31 @@ QByteArray DockManager::loadFile(const FilePath &filePath)
 
 QString DockManager::readDisplayName(const FilePath &filePath)
 {
-    if (!filePath.exists())
-        return {};
+    return readAttribute(filePath, workspaceDisplayNameAttribute);
+}
 
+bool DockManager::writeDisplayName(const FilePath &filePath, const QString &displayName)
+{
+    return writeAttribute(filePath, workspaceDisplayNameAttribute, displayName);
+}
+
+QString DockManager::readMcusEnabled(const FilePath &filePath)
+{
+    return readAttribute(filePath, workspaceMcusEnabledAttribute);
+}
+
+bool DockManager::writeMcusEnabled(const FilePath &filePath, const QString &mcusEnabled)
+{
+    return writeAttribute(filePath, workspaceMcusEnabledAttribute, mcusEnabled);
+}
+
+QString DockManager::readAttribute(const FilePath &filePath, QStringView key)
+{
     auto data = loadFile(filePath);
-
     if (data.isEmpty())
         return {};
 
     auto tmp = data.startsWith("<?xml") ? data : qUncompress(data);
-
     DockingStateReader reader(tmp);
     if (!reader.readNextStartElement())
         return {};
@@ -1475,13 +1577,12 @@ QString DockManager::readDisplayName(const FilePath &filePath)
     if (reader.name() != QLatin1String("QtAdvancedDockingSystem"))
         return {};
 
-    return reader.attributes().value(workspaceDisplayNameAttribute.toString()).toString();
+    return reader.attributes().value(key.toString()).toString();
 }
 
-bool DockManager::writeDisplayName(const FilePath &filePath, const QString &displayName)
+bool DockManager::writeAttribute(const FilePath &filePath, QStringView key, const QString &value)
 {
     const expected_str<QByteArray> content = filePath.fileContents();
-
     QTC_ASSERT_EXPECTED(content, return false);
 
     QDomDocument doc;
@@ -1489,23 +1590,19 @@ bool DockManager::writeDisplayName(const FilePath &filePath, const QString &disp
     int error_line, error_col;
     if (!doc.setContent(*content, &error_msg, &error_line, &error_col)) {
         qWarning() << QString("XML error on line %1, col %2: %3")
-                          .arg(error_line)
-                          .arg(error_col)
-                          .arg(error_msg);
+                          .arg(error_line).arg(error_col).arg(error_msg);
         return false;
     }
 
     QDomElement docElem = doc.documentElement();
-    docElem.setAttribute(workspaceDisplayNameAttribute.toString(), displayName);
+    docElem.setAttribute(key.toString(), value);
 
     const expected_str<void> result = write(filePath, doc.toByteArray(workspaceXmlFormattingIndent));
-    if (!result) {
-        qWarning() << "Could not write display name" << displayName << "to" << filePath << ":"
-                   << result.error();
-        return false;
-    }
+    if (result)
+        return true;
 
-    return true;
+    qWarning() << "Could not write" << key << value << "to" << filePath << ":" << result.error();
+    return false;
 }
 
 expected_str<void> DockManager::write(const FilePath &filePath, const QByteArray &data)
@@ -1564,13 +1661,21 @@ void DockManager::syncWorkspacePresets()
 
             // If *.wrk file and displayName attribute is empty set the displayName. This
             // should fix old workspace files which don't have the displayName attribute.
-            if (userFile.suffix() == workspaceFileExtension && readDisplayName(userFile).isEmpty())
-                writeDisplayName(userFile, readDisplayName(filePath));
+            if (userFile.suffix() == workspaceFileExtension) {
+                const QString name = readDisplayName(userFile);
+                if (name.isEmpty())
+                    writeDisplayName(userFile, name);
+
+                const QString presetMcusEnabled = readMcusEnabled(filePath);
+                const QString mcusEnabled = readMcusEnabled(userFile);
+                if (mcusEnabled.isEmpty() || mcusEnabled != presetMcusEnabled)
+                    writeMcusEnabled(userFile, presetMcusEnabled);
+            }
 
             continue;
         }
 
-        const expected_str<void> copyResult = filePath.copyFile(
+        const Result copyResult = filePath.copyFile(
             userDirectory().pathAppended(filePath.fileName()));
         if (!copyResult)
             qWarning() << QString("Could not copy '%1' to '%2' due to %3")
@@ -1613,6 +1718,30 @@ void DockManager::saveStartupWorkspace()
     QTC_ASSERT(d->m_settings, return);
     d->m_settings->setValue(Constants::STARTUP_WORKSPACE_SETTINGS_KEY,
                             activeWorkspace()->fileName());
+}
+
+void DockManager::saveLockWorkspace()
+{
+    QTC_ASSERT(d->m_settings, return);
+    d->m_settings->setValue(Constants::LOCK_WORKSPACE_SETTINGS_KEY, d->m_workspaceLocked);
+}
+
+void DockManager::setMcusProject(bool value) {
+    d->m_mcusProject = value;
+}
+
+bool DockManager::mcusProject() const {
+    return d->m_mcusProject;
+}
+
+void DockManager::setLiteMode(bool value)
+{
+    d->m_liteModeEnabled = value;
+}
+
+bool DockManager::isLiteModeEnabled() const
+{
+    return d->m_liteModeEnabled;
 }
 
 } // namespace ADS

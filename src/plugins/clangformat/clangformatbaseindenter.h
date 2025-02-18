@@ -5,16 +5,19 @@
 
 #include <texteditor/indenter.h>
 
-#include <clang/Format/Format.h>
+#include <QLoggingCategory>
+
+namespace clang::format { struct FormatStyle; }
 
 namespace ClangFormat {
 
-enum class ReplacementsToKeep { OnlyIndent, IndentAndBefore, All };
+Q_DECLARE_LOGGING_CATEGORY(clangIndenterLog)
 
 class ClangFormatBaseIndenter : public TextEditor::Indenter
 {
 public:
     ClangFormatBaseIndenter(QTextDocument *doc);
+    ~ClangFormatBaseIndenter();
 
     TextEditor::IndentationForBlock indentationForBlocks(const QVector<QTextBlock> &blocks,
                                                          const TextEditor::TabSettings &tabSettings,
@@ -49,41 +52,17 @@ public:
 
     const clang::format::FormatStyle &styleForFile() const;
 
+    void setOverriddenPreferences(TextEditor::ICodeStylePreferences *preferences) final;
+    void setOverriddenStyle(const clang::format::FormatStyle &style);
+
 protected:
     virtual bool formatCodeInsteadOfIndent() const { return false; }
     virtual bool formatWhileTyping() const { return false; }
     virtual int lastSaveRevision() const { return 0; }
 
 private:
-    void indent(const QTextCursor &cursor, const QChar &typedChar, int cursorPositionInEditor);
-    void indentBlocks(const QTextBlock &startBlock,
-                      const QTextBlock &endBlock,
-                      const QChar &typedChar,
-                      int cursorPositionInEditor);
-    Utils::ChangeSet indentsFor(QTextBlock startBlock,
-                                const QTextBlock &endBlock,
-                                const QChar &typedChar,
-                                int cursorPositionInEditor,
-                                bool trimTrailingWhitespace = true);
-    Utils::ChangeSet replacements(QByteArray buffer,
-                                  const QTextBlock &startBlock,
-                                  const QTextBlock &endBlock,
-                                  int cursorPositionInEditor,
-                                  ReplacementsToKeep replacementsToKeep,
-                                  const QChar &typedChar = QChar::Null,
-                                  bool secondTry = false) const;
-
-    struct CachedStyle {
-        clang::format::FormatStyle style = clang::format::getNoStyle();
-        QDateTime expirationTime;
-        void setCache(clang::format::FormatStyle newStyle, std::chrono::milliseconds timeout)
-        {
-            style = newStyle;
-            expirationTime = QDateTime::currentDateTime().addMSecs(timeout.count());
-        }
-    };
-
-    mutable CachedStyle m_cachedStyle;
+    friend class ClangFormatBaseIndenterPrivate;
+    class ClangFormatBaseIndenterPrivate *d = nullptr;
 };
 
 } // namespace ClangFormat

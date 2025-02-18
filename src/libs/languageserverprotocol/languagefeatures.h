@@ -52,6 +52,9 @@ public:
     operator QJsonValue() const;
 };
 
+template<>
+LANGUAGESERVERPROTOCOL_EXPORT MarkedString fromJsonValue<MarkedString>(const QJsonValue &value);
+
 class LANGUAGESERVERPROTOCOL_EXPORT HoverContent
     : public std::variant<MarkedString, QList<MarkedString>, MarkupContent>
 {
@@ -678,8 +681,8 @@ public:
     void clearTrimFinalNewlines() { remove(trimFinalNewlinesKey); }
 
     QHash<QString, DocumentFormattingProperty> properties() const;
-    void setProperty(const std::string_view key, const DocumentFormattingProperty &property);
-    void removeProperty(const std::string_view &key) { remove(key); }
+    void setProperty(const Key key, const DocumentFormattingProperty &property);
+    void removeProperty(const Key &key) { remove(key); }
 
     bool isValid() const override { return contains(insertSpaceKey) && contains(tabSizeKey); }
 };

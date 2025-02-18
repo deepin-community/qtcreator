@@ -31,20 +31,12 @@ NameValueDictionary::NameValueDictionary(const NameValuePairs &nameValues)
 
 NameValueMap::iterator NameValueDictionary::findKey(const QString &key)
 {
-    for (auto it = m_values.begin(); it != m_values.end(); ++it) {
-        if (key.compare(it.key().name, nameCaseSensitivity()) == 0)
-            return it;
-    }
-    return m_values.end();
+    return m_values.find(DictKey(key, nameCaseSensitivity()));
 }
 
 NameValueMap::const_iterator NameValueDictionary::findKey(const QString &key) const
 {
-    for (auto it = m_values.constBegin(); it != m_values.constEnd(); ++it) {
-        if (key.compare(it.key().name, nameCaseSensitivity()) == 0)
-            return it;
-    }
-    return m_values.constEnd();
+    return m_values.find(DictKey(key, nameCaseSensitivity()));
 }
 
 QStringList NameValueDictionary::toStringList() const
@@ -87,44 +79,41 @@ QString NameValueDictionary::value(const QString &key) const
     return it != m_values.end() && it.value().second ? it.value().first : QString();
 }
 
-NameValueDictionary::const_iterator NameValueDictionary::constFind(const QString &name) const
-{
-    return findKey(name);
-}
-
 int NameValueDictionary::size() const
 {
     return m_values.size();
 }
 
-void NameValueDictionary::modify(const NameValueItems &items)
+void NameValueDictionary::modify(const EnvironmentItems &items)
 {
     NameValueDictionary resultKeyValueDictionary = *this;
-    for (const NameValueItem &item : items)
+    for (const EnvironmentItem &item : items)
         item.apply(&resultKeyValueDictionary);
     *this = resultKeyValueDictionary;
 }
 
-NameValueItems NameValueDictionary::diff(const NameValueDictionary &other, bool checkAppendPrepend) const
+EnvironmentItems NameValueDictionary::diff(const NameValueDictionary &other, bool checkAppendPrepend) const
 {
-    NameValueMap::const_iterator thisIt = constBegin();
-    NameValueMap::const_iterator otherIt = other.constBegin();
+    NameValueMap::const_iterator thisIt = m_values.begin();
+    NameValueMap::const_iterator otherIt = other.m_values.begin();
 
-    NameValueItems result;
-    while (thisIt != constEnd() || otherIt != other.constEnd()) {
-        if (thisIt == constEnd()) {
-            result.append({other.key(otherIt), other.value(otherIt),
-                otherIt.value().second ? NameValueItem::SetEnabled : NameValueItem::SetDisabled});
+    EnvironmentItems result;
+    while (thisIt != m_values.end() || otherIt != other.m_values.end()) {
+        if (thisIt == m_values.end()) {
+            const auto enabled = otherIt.value().second ? EnvironmentItem::SetEnabled
+                                                        : EnvironmentItem::SetDisabled;
+            result.append({otherIt.key().name, otherIt.value().first, enabled});
             ++otherIt;
-        } else if (otherIt == other.constEnd()) {
-            result.append(NameValueItem(key(thisIt), QString(), NameValueItem::Unset));
+        } else if (otherIt == other.m_values.end()) {
+            result.append(EnvironmentItem(thisIt.key().name, QString(), EnvironmentItem::Unset));
             ++thisIt;
         } else if (thisIt.key() < otherIt.key()) {
-            result.append(NameValueItem(key(thisIt), QString(), NameValueItem::Unset));
+            result.append(EnvironmentItem(thisIt.key().name, QString(), EnvironmentItem::Unset));
             ++thisIt;
         } else if (thisIt.key() > otherIt.key()) {
-            result.append({other.key(otherIt), otherIt.value().first,
-                otherIt.value().second ? NameValueItem::SetEnabled : NameValueItem::SetDisabled});
+            const auto enabled = otherIt.value().second ? EnvironmentItem::SetEnabled
+                                                        : EnvironmentItem::SetDisabled;
+            result.append({otherIt.key().name, otherIt.value().first, enabled});
             ++otherIt;
         } else {
             const QString &oldValue = thisIt.value().first;
@@ -137,16 +126,19 @@ NameValueItems NameValueDictionary::diff(const NameValueDictionary &other, bool 
                     QString appended = newValue.right(newValue.size() - oldValue.size());
                     if (appended.startsWith(OsSpecificAspects::pathListSeparator(osType())))
                         appended.remove(0, 1);
-                    result.append(NameValueItem(other.key(otherIt), appended, NameValueItem::Append));
+                    result.append(
+                        EnvironmentItem(otherIt.key().name, appended, EnvironmentItem::Append));
                 } else if (checkAppendPrepend && newValue.endsWith(oldValue)
                            && oldEnabled == newEnabled) {
                     QString prepended = newValue.left(newValue.size() - oldValue.size());
                     if (prepended.endsWith(OsSpecificAspects::pathListSeparator(osType())))
                         prepended.chop(1);
-                    result.append(NameValueItem(other.key(otherIt), prepended, NameValueItem::Prepend));
+                    result.append(
+                        EnvironmentItem(otherIt.key().name, prepended, EnvironmentItem::Prepend));
                 } else {
-                    result.append({other.key(otherIt), newValue, newEnabled
-                            ? NameValueItem::SetEnabled : NameValueItem::SetDisabled});
+                    const auto enabled = newEnabled ? EnvironmentItem::SetEnabled
+                                                    : EnvironmentItem::SetDisabled;
+                    result.append({otherIt.key().name, newValue, enabled});
                 }
             }
             ++otherIt;
@@ -158,7 +150,7 @@ NameValueItems NameValueDictionary::diff(const NameValueDictionary &other, bool 
 
 bool NameValueDictionary::hasKey(const QString &key) const
 {
-    return findKey(key) != constEnd();
+    return m_values.find(DictKey(key, nameCaseSensitivity())) != m_values.end();
 }
 
 OsType NameValueDictionary::osType() const

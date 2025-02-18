@@ -3,7 +3,7 @@
 
 #include "deviceshell.h"
 
-#include "process.h"
+#include "qtcprocess.h"
 #include "processinterface.h"
 #include "qtcassert.h"
 #include "utilstr.h"
@@ -11,6 +11,8 @@
 #include <QLoggingCategory>
 
 Q_LOGGING_CATEGORY(deviceShellLog, "qtc.utils.deviceshell", QtWarningMsg)
+
+using namespace std::chrono_literals;
 
 namespace Utils {
 
@@ -86,13 +88,12 @@ RunResult DeviceShell::run(const CommandLine &cmd, const QByteArray &stdInData)
         qCDebug(deviceShellLog) << "Running fallback:" << fallbackCmd;
         proc.setCommand(fallbackCmd);
         proc.setWriteData(stdInData);
-        proc.runBlocking();
-
-        return RunResult{
-            proc.exitCode(),
-            proc.readAllRawStandardOutput(),
-            proc.readAllRawStandardError()
-        };
+        // Practically unlimited timeout since we are most probably running dd for copying
+        // data to a device here (=deployment), so a) we have no idea how long that might take
+        // for large files, and b) the user can cancel this manually.
+        proc.runBlocking(/*timout=*/1h);
+        // TODO This misses interesting data like proc.errorMessage() and/or proc.exitMessage()
+        return RunResult{proc.exitCode(), proc.rawStdOut(), proc.rawStdErr()};
     }
 
     const RunResult errorResult{-1, {}, {}};
@@ -160,7 +161,7 @@ CommandLine DeviceShell::createFallbackCommand(const CommandLine &cmd)
  *
  * \note You have to call this function when deriving from DeviceShell. Current implementations call the function from their constructor.
  */
-expected_str<void> DeviceShell::start()
+Result DeviceShell::start()
 {
     m_shellProcess = std::make_unique<Process>();
     connect(m_shellProcess.get(), &Process::done, m_shellProcess.get(),
@@ -168,8 +169,6 @@ expected_str<void> DeviceShell::start()
     connect(&m_thread, &QThread::finished, m_shellProcess.get(), [this] { closeShellProcess(); }, Qt::DirectConnection);
 
     setupShellProcess(m_shellProcess.get());
-
-    CommandLine cmdLine = m_shellProcess->commandLine();
 
     m_shellProcess->setProcessMode(ProcessMode::Writer);
 
@@ -250,11 +249,11 @@ expected_str<QByteArray> DeviceShell::checkCommand(const QByteArray &command)
     return out;
 }
 
-expected_str<void> DeviceShell::installShellScript()
+Result DeviceShell::installShellScript()
 {
     if (m_forceFailScriptInstallation) {
         m_shellScriptState = State::Failed;
-        return make_unexpected(Tr::tr("Script installation was forced to fail."));
+        return Result::Error(Tr::tr("Script installation was forced to fail."));
     }
 
     static const QList<QByteArray> requiredCommands
@@ -263,7 +262,7 @@ expected_str<void> DeviceShell::installShellScript()
     for (const QByteArray &command : requiredCommands) {
         auto checkResult = checkCommand(command);
         if (!checkResult)
-            return make_unexpected(checkResult.error());
+            return Result::Error(checkResult.error());
     }
 
     const static QByteArray shellScriptBase64 = FilePath(":/utils/scripts/deviceshell.sh")
@@ -279,18 +278,17 @@ expected_str<void> DeviceShell::installShellScript()
     m_shellProcess->writeRaw(scriptCmd);
 
     while (m_shellScriptState == State::Unknown) {
-        if (!m_shellProcess->waitForReadyRead(5000)) {
-            return make_unexpected(Tr::tr("Timeout while waiting for shell script installation."));
-        }
+        if (!m_shellProcess->waitForReadyRead(5s))
+            return Result::Error(Tr::tr("Timeout while waiting for shell script installation."));
 
         QByteArray out = m_shellProcess->readAllRawStandardError();
         if (out.contains("SCRIPT_INSTALLED") && !out.contains("ERROR_INSTALL_SCRIPT")) {
             m_shellScriptState = State::Succeeded;
-            return {};
+            return Result::Ok;
         }
         if (out.contains("ERROR_INSTALL_SCRIPT")) {
             m_shellScriptState = State::Failed;
-            return make_unexpected(
+            return Result::Error(
                 Tr::tr("Failed to install shell script: %1").arg(QString::fromUtf8(out)));
         }
         if (!out.isEmpty()) {
@@ -299,7 +297,7 @@ expected_str<void> DeviceShell::installShellScript()
         }
     }
 
-    return {};
+    return Result::Ok;
 }
 
 void DeviceShell::closeShellProcess()
@@ -307,7 +305,7 @@ void DeviceShell::closeShellProcess()
     if (m_shellProcess) {
         if (m_shellProcess->isRunning()) {
             m_shellProcess->write("exit\nexit\n");
-            if (!m_shellProcess->waitForFinished(2000))
+            if (!m_shellProcess->waitForFinished(2s))
                 m_shellProcess->terminate();
         }
         m_shellProcess.reset();

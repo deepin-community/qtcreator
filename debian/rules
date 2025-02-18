@@ -16,25 +16,14 @@ upstream_version_of_pkg = $(shell dpkg-query -f '$${Version}' -W $(1) | sed -e '
 # dwz failing with "Could not allocate memory: Cannot allocate memory" errors;
 # hence, on architectures where we see this result, try to use a more memory
 # friendly processing for a lower number of DIEs (dwz default is 10M)
-archs_with_dwz_low_mem = armel armhf
+archs_with_dwz_low_mem = armel armhf hurd-i386
 dwz_low_mem = 3000000
-
-archs_using_clang = mips64el
-ifeq ($(DEB_HOST_ARCH),$(findstring $(DEB_HOST_ARCH), $(archs_using_clang)))
-export CC=clang
-export CXX=clang++
-export DEB_CFLAGS_MAINT_APPEND := -gdwarf-4
-export DEB_CXXFLAGS_MAINT_APPEND := -gdwarf-4
-export DEB_LDFLAGS_MAINT_APPEND := -Wl,--as-needed
-EXTRA_CMAKE_ARGS += -DBUILD_WITH_PCH=OFF
-endif
 
 %:
 	dh $@ --builddirectory=builddir
 
 override_dh_auto_configure:
 	dh_auto_configure --buildsystem=cmake -- \
-		-DBUILD_DEVELOPER_DOCS=ON \
 		-DBUILD_QBS=OFF \
 		-DWITH_TESTS=OFF \
 		-DBUILD_TESTING=OFF \
@@ -57,9 +46,6 @@ endif
 	# License files of the embedded copy of KSyntaxHighlighting
 	rm -rf debian/tmp/usr/share/qtcreator/generic-highlighter/syntax/licenses/
 
-	# Remove extra exec permissions
-	find debian/tmp -name qmldir -type f -perm /111 -exec chmod -v -x {} \;
-
 execute_after_dh_install:
 	# Copied in qtcreator-doc already
 	rm -rf debian/qtcreator-data/usr/share/qtcreator/doc/
@@ -76,3 +62,6 @@ ifeq ($(DEB_HOST_ARCH),$(findstring $(DEB_HOST_ARCH), $(archs_with_dwz_low_mem))
 override_dh_dwz:
 	dh_dwz -- --low-mem-die-limit $(dwz_low_mem)
 endif
+
+override_dh_strip:
+	dh_strip -Xusr/libexec/qtcreator/cmdbridge

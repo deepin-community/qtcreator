@@ -106,6 +106,7 @@ private:
     void mergeDependencyParameters();
     void checkDependencyParameterDeclarations(const Item *productItem,
                                               const QString &productName) const;
+    void collectCodeLinks();
 
     ProductContext &m_product;
     LoaderState &m_loaderState;
@@ -124,8 +125,8 @@ public:
 private:
     void resolveProductFully();
     void createProductConfig();
-    void resolveGroup(Item *item);
-    void resolveGroupFully(Item *item, bool isEnabled);
+    void resolveGroup(Item *item, ModuleContext *moduleContext);
+    void resolveGroupFully(Item *item, bool isEnabled, ModuleContext *moduleContext);
     QVariantMap resolveAdditionalModuleProperties(const Item *group,
                                                   const QVariantMap &currentValues);
     SourceArtifactPtr createSourceArtifact(const QString &fileName, const GroupPtr &group,
@@ -138,7 +139,7 @@ private:
                                  std::vector<ExportedProperty> &properties);
     QVariantMap evaluateModuleValues(Item *item, bool lookupPrototype = true);
 
-    void resolveScanner(Item *item, ModuleContext &moduleContext);
+    void resolveScanner(Item *item, ModuleContext *moduleContext);
     void resolveModules();
     void resolveModule(const QualifiedId &moduleName, Item *item, bool isProduct,
                        const QVariantMap &parameters, JobLimits &jobLimits);
@@ -224,10 +225,8 @@ void ProductResolverStage1::start()
     QBS_CHECK(m_product.dependenciesContext);
     if (!m_product.dependenciesContext->dependenciesResolved)
         return;
-    if (m_product.delayedError.hasError()
-            && m_loaderState.parameters().productErrorMode() == ErrorHandlingMode::Strict) {
+    if (m_product.delayedError.hasError())
         return;
-    }
 
     // Run probes for modules and product.
     resolveProbes();
@@ -260,6 +259,7 @@ void ProductResolverStage1::start()
 
     const bool enabled = topLevelProject.checkItemCondition(m_product.item, evaluator);
 
+    collectCodeLinks();
     mergeDependencyParameters();
     checkDependencyParameterDeclarations(m_product.item, m_product.name);
 
@@ -338,9 +338,11 @@ void ProductResolverStage1::updateModulePresentState(const Item::Module &module)
 {
     if (!module.item->isPresentModule())
         return;
+    if (module.name.first() == StringConstants::qbsModule())
+        return;
     bool hasPresentLoadingItem = false;
-    for (const auto &loadingItemInfo : module.loadingItems) {
-        const Item * const loadingItem = loadingItemInfo.first;
+    for (const Item::Module::LoadContext &loadContext : module.loadContexts) {
+        const Item * const loadingItem = loadContext.loadingItem();
         if (loadingItem == m_product.item) {
             hasPresentLoadingItem = true;
             break;
@@ -421,21 +423,23 @@ void ProductResolverStage1::mergeDependencyParameters()
                 ? module.product->defaultParameters
                 : m_loaderState.topLevelProject().parameters(module.item->prototype());
         priorityList.emplace_back(defaultParameters, INT_MIN);
-        for (const Item::Module::LoadingItemInfo &info : module.loadingItems) {
-            const QVariantMap &parameters = info.second.first;
+        for (const Item::Module::LoadContext &context : module.loadContexts) {
+            const QVariantMap &parameters = context.parameters.first;
 
             // Empty parameter maps and inactive loading modules do not contribute to the
             // final parameter map.
             if (parameters.isEmpty())
                 continue;
-            if (info.first->type() == ItemType::ModuleInstance && !info.first->isPresentModule())
+            if (context.loadingItem()->type() == ItemType::ModuleInstance
+                    && !context.loadingItem()->isPresentModule()) {
                 continue;
+            }
 
             // Build a list sorted by priority.
             static const auto cmp = [](const PP &elem, int prio) { return elem.second < prio; };
             const auto it = std::lower_bound(priorityList.begin(), priorityList.end(),
-                                             info.second.second, cmp);
-            priorityList.insert(it, info.second);
+                                             context.parameters.second, cmp);
+            priorityList.insert(it, context.parameters);
         }
 
         module.parameters = qbs::Internal::mergeDependencyParameters(std::move(priorityList));
@@ -505,6 +509,21 @@ void ProductResolverStage1::checkDependencyParameterDeclarations(const Item *pro
     for (const Item::Module &dep : productItem->modules()) {
         if (!dep.parameters.empty())
             dpdc(dep.parameters);
+    }
+}
+
+void ProductResolverStage1::collectCodeLinks()
+{
+    for (const Item::Module &module : m_product.item->modules()) {
+        if (module.name.first() == StringConstants::qbsModule())
+            continue;
+        for (const Item::Module::LoadContext &context : module.loadContexts) {
+            m_loaderState.topLevelProject().addCodeLink(
+                        context.dependsItem->location().filePath(),
+                        context.dependsItem->codeRange(),
+                        module.product ? module.product->item->location()
+                                       : module.item->location());
+        }
     }
 }
 
@@ -623,6 +642,9 @@ void ProductResolverStage2::resolveProductFully()
         case ItemType::Rule:
             resolveRule(m_loaderState, child, m_product.project, &m_product, nullptr);
             break;
+        case ItemType::Scanner:
+            resolveScanner(child, nullptr);
+            break;
         case ItemType::FileTagger:
             resolveFileTagger(m_loaderState, child, nullptr, &m_product);
             break;
@@ -630,7 +652,7 @@ void ProductResolverStage2::resolveProductFully()
             resolveJobLimit(m_loaderState, child, nullptr, &m_product, nullptr);
             break;
         case ItemType::Group:
-            resolveGroup(child);
+            resolveGroup(child, nullptr);
             break;
         case ItemType::Export:
             resolveExport(child);
@@ -667,14 +689,14 @@ void ProductResolverStage2::createProductConfig()
         m_product.item, m_product.item, QVariantMap(), true, true);
 }
 
-void ProductResolverStage2::resolveGroup(Item *item)
+void ProductResolverStage2::resolveGroup(Item *item, ModuleContext *moduleContext)
 {
     const bool parentEnabled = m_currentGroup ? m_currentGroup->enabled
                                               : m_product.product->enabled;
     const bool isEnabled = parentEnabled
             && m_loaderState.evaluator().boolValue(item, StringConstants::conditionProperty());
     try {
-        resolveGroupFully(item, isEnabled);
+        resolveGroupFully(item, isEnabled, moduleContext);
     } catch (const ErrorInfo &error) {
         if (!isEnabled) {
             qCDebug(lcProjectResolver) << "error resolving group at" << item->location()
@@ -687,7 +709,8 @@ void ProductResolverStage2::resolveGroup(Item *item)
     }
 }
 
-void ProductResolverStage2::resolveGroupFully(Item *item, bool isEnabled)
+void ProductResolverStage2::resolveGroupFully(
+    Item *item, bool isEnabled, ModuleContext *moduleContext)
 {
     AccumulatingTimer groupTimer(m_loaderState.parameters().logElapsedTime()
                                  ? &m_product.timingData.groupsResolving
@@ -779,6 +802,8 @@ void ProductResolverStage2::resolveGroupFully(Item *item, bool isEnabled)
     }
 
     const CodeLocation filesLocation = item->property(StringConstants::filesProperty())->location();
+    if (filesLocation.line() > 0 || item->location() == m_product.item->location())
+        group->files.emplace();
     const VariantValueConstPtr moduleProp = item->variantProperty(
                 StringConstants::modulePropertyInternal());
     if (moduleProp)
@@ -787,14 +812,14 @@ void ProductResolverStage2::resolveGroupFully(Item *item, bool isEnabled)
     if (!patterns.empty()) {
         group->wildcards = std::make_unique<SourceWildCards>();
         SourceWildCards *wildcards = group->wildcards.get();
-        wildcards->group = group.get();
         wildcards->excludePatterns = evaluator.stringListValue(
             item, StringConstants::excludeFilesProperty());
         wildcards->patterns = patterns;
-        const Set<QString> files = wildcards->expandPatterns(group,
-                FileInfo::path(item->file()->filePath()),
-                m_product.project->project->topLevelProject()->buildDirectory);
-        for (const QString &fileName : files)
+        wildcards->prefix = group->prefix;
+        wildcards->baseDir = FileInfo::path(item->file()->filePath());
+        wildcards->buildDir = m_product.project->project->topLevelProject()->buildDirectory;
+        wildcards->expandPatterns();
+        for (const QString &fileName : wildcards->expandedFiles)
             createSourceArtifact(fileName, group, true, filesLocation, &fileError);
     }
 
@@ -826,8 +851,27 @@ void ProductResolverStage2::resolveGroupFully(Item *item, bool isEnabled)
         const GroupConstPtr m_oldGroup;
     };
     GroupContextSwitcher groupSwitcher(*this, group);
-    for (Item * const childItem : item->children())
-        resolveGroup(childItem);
+    for (Item * const childItem : item->children()) {
+        switch (childItem->type()) {
+        case ItemType::FileTagger:
+            if (isEnabled)
+                resolveFileTagger(m_loaderState, childItem, nullptr, &m_product);
+            break;
+        case ItemType::Group:
+            resolveGroup(childItem, moduleContext);
+            break;
+        case ItemType::Rule:
+            if (isEnabled)
+                resolveRule(m_loaderState, childItem, m_product.project, &m_product, moduleContext);
+            break;
+        case ItemType::Scanner:
+            if (isEnabled)
+                resolveScanner(childItem, moduleContext);
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 SourceArtifactPtr ProductResolverStage2::createSourceArtifact(
@@ -861,7 +905,9 @@ SourceArtifactPtr ProductResolverStage2::createSourceArtifact(
     artifact->overrideFileTags = group->overrideTags;
     artifact->properties = group->properties;
     artifact->targetOfModule = group->targetOfModule;
-    (wildcard ? group->wildcards->files : group->files).push_back(artifact);
+    artifact->fromWildcard = wildcard;
+    QBS_CHECK(group->files);
+    group->files->push_back(artifact);
     return artifact;
 }
 
@@ -1083,7 +1129,7 @@ QVariantMap ProductResolverStage2::evaluateModuleValues(Item *item, bool lookupP
     return moduleValues;
 }
 
-void ProductResolverStage2::resolveScanner(Item *item, ModuleContext &moduleContext)
+void ProductResolverStage2::resolveScanner(Item *item, ModuleContext *moduleContext)
 {
     Evaluator &evaluator = m_loaderState.evaluator();
     if (!evaluator.boolValue(item, StringConstants::conditionProperty())) {
@@ -1092,7 +1138,7 @@ void ProductResolverStage2::resolveScanner(Item *item, ModuleContext &moduleCont
     }
 
     ResolvedScannerPtr scanner = ResolvedScanner::create();
-    scanner->module = moduleContext.module;
+    scanner->module = moduleContext ? moduleContext->module : m_product.project->dummyModule;
     scanner->inputs = evaluator.fileTagsValue(item, StringConstants::inputsProperty());
     scanner->recursive = evaluator.boolValue(item, StringConstants::recursiveProperty());
     scanner->searchPathsScript.initialize(m_loaderState.topLevelProject().scriptFunctionValue(
@@ -1153,7 +1199,10 @@ void ProductResolverStage2::resolveModule(const QualifiedId &moduleName, Item *i
             resolveJobLimit(m_loaderState, child, nullptr, nullptr, &moduleContext);
             break;
         case ItemType::Scanner:
-            resolveScanner(child, moduleContext);
+            resolveScanner(child, &moduleContext);
+            break;
+        case ItemType::Group:
+            resolveGroup(child, &moduleContext);
             break;
         default:
             break;
@@ -1567,7 +1616,13 @@ void PropertiesEvaluator::evaluateProperty(
         } else if (pd.type() == PropertyDeclaration::VariantList) {
             v = v.toList();
         }
+
+        // Enforce proper type for undefined values (note that path degrades to string).
+        if (!v.isValid())
+            v = pd.typedNullValue();
+
         pd.checkAllowedValues(v, propValue->location(), propName, m_loaderState);
+
         result[propName] = v;
         break;
     }

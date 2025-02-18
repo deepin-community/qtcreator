@@ -283,13 +283,17 @@ TopLevelProjectPtr ProjectResolver::Private::resolveTopLevelProject()
     }
     resolveProducts(state);
     ErrorInfo accumulatedErrors;
-    for (const ErrorInfo &e : state.topLevelProject().queuedErrors())
-        appendError(accumulatedErrors, e);
+    {
+        const auto queuedErrors = state.topLevelProject().queuedErrors();
+        for (const ErrorInfo &e : queuedErrors.get())
+            appendError(accumulatedErrors, e);
+    }
     if (accumulatedErrors.hasError())
         throw accumulatedErrors;
 
     project->buildSystemFiles.unite(state.topLevelProject().buildSystemFiles());
     project->profileConfigs = state.topLevelProject().profileConfigs();
+    project->codeLinks = state.topLevelProject().codeLinks();
     const QVariantMap &profiles = state.topLevelProject().localProfiles();
     for (auto it = profiles.begin(); it != profiles.end(); ++it)
         project->profileConfigs.remove(it.key());

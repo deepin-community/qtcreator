@@ -25,6 +25,7 @@
 #include <projectexplorer/buildpropertiessettings.h>
 #include <projectexplorer/buildsteplist.h>
 #include <projectexplorer/kit.h>
+#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/makestep.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/projectexplorertr.h>
@@ -36,7 +37,8 @@
 #include <qtsupport/qtkitaspect.h>
 #include <qtsupport/qtversionmanager.h>
 
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
+#include <utils/mimeconstants.h>
 #include <utils/qtcassert.h>
 
 #include <QDebug>
@@ -72,7 +74,7 @@ FilePath QmakeBuildConfiguration::shadowBuildDirectory(const FilePath &proFilePa
         return {};
 
     const QString projectName = proFilePath.completeBaseName();
-    return buildDirectoryFromTemplate(Project::projectDirectory(proFilePath), proFilePath,
+    return buildDirectoryFromTemplate(proFilePath.absolutePath(), proFilePath,
                                       projectName, k, suffix, buildType, "qmake");
 }
 
@@ -239,6 +241,7 @@ void QmakeBuildConfiguration::updateProblemLabel()
     bool targetMismatch = false;
     bool incompatibleBuild = false;
     bool allGood = false;
+    bool invalidArguments = false;
     // we only show if we actually have a qmake and makestep
     QString errorString;
     if (qmakeStep() && makeStep()) {
@@ -255,6 +258,9 @@ void QmakeBuildConfiguration::updateProblemLabel()
             break;
         case QmakeBuildConfiguration::MakefileForWrongProject:
             targetMismatch = true;
+            break;
+        case QmakeBuildConfiguration::InvalidArguments:
+            invalidArguments = true;
             break;
         }
     }
@@ -302,6 +308,10 @@ void QmakeBuildConfiguration::updateProblemLabel()
         return;
     } else if (unalignedBuildDir) {
         buildDirectoryAspect()->setProblem(unalignedBuildDirWarning());
+        return;
+    } else if (invalidArguments) {
+        buildDirectoryAspect()->setProblem(
+            Tr::tr("Starting qmake failed with the following error: %1").arg(errorString));
         return;
     }
 
@@ -371,7 +381,8 @@ QString QmakeBuildConfiguration::unalignedBuildDirWarning()
 bool QmakeBuildConfiguration::isBuildDirAtSafeLocation(const FilePath &sourceDir,
                                                        const FilePath &buildDir)
 {
-    return buildDir.path().count('/') == sourceDir.path().count('/');
+    return buildDir.path().count('/') == sourceDir.path().count('/')
+           || buildDir.isChildOf(sourceDir);
 }
 
 bool QmakeBuildConfiguration::isBuildDirAtSafeLocation() const
@@ -489,7 +500,9 @@ QmakeBuildConfiguration::MakefileState QmakeBuildConfiguration::compareToImportF
         return MakefileIncompatible;
     }
 
-    if (version->qmakeFilePath() != parse.qmakePath()) {
+    if (version->qmakeFilePath() != parse.qmakePath()
+        && (parse.qtConfPath().isEmpty() // QTCREATORBUG-30354
+            || version->qmakeFilePath().parentDir() != parse.qtConfPath().parentDir())) {
         qCDebug(logs) << "**Different Qt versions, buildconfiguration:" << version->qmakeFilePath()
                       << " Makefile:" << parse.qmakePath();
         return MakefileForWrongProject;
@@ -511,8 +524,16 @@ QmakeBuildConfiguration::MakefileState QmakeBuildConfiguration::compareToImportF
     // and compare that on its own
     FilePath workingDirectory = makefile.parentDir();
     QStringList actualArgs;
-    QString allArgs = macroExpander()->expandProcessArgs(qs->allArguments(
-        QtKitAspect::qtVersion(target()->kit()), QMakeStep::ArgumentFlag::Expand));
+    expected_str<QString> expandResult = macroExpander()->expandProcessArgs(
+        qs->allArguments(QtKitAspect::qtVersion(target()->kit()), QMakeStep::ArgumentFlag::Expand));
+
+    if (!expandResult) {
+        if (errorString)
+            *errorString = expandResult.error();
+        return InvalidArguments;
+    }
+
+    QString allArgs = *expandResult;
     // This copies the settings from allArgs to actualArgs (minus some we
     // are not interested in), splitting them up into individual strings:
     extractSpecFromArguments(&allArgs, workingDirectory, version, &actualArgs);
@@ -718,7 +739,7 @@ QmakeBuildConfigurationFactory::QmakeBuildConfigurationFactory()
 {
     registerBuildConfiguration<QmakeBuildConfiguration>(Constants::QMAKE_BC_ID);
     setSupportedProjectType(Constants::QMAKEPROJECT_ID);
-    setSupportedProjectMimeTypeName(Constants::PROFILE_MIMETYPE);
+    setSupportedProjectMimeTypeName(Utils::Constants::PROFILE_MIMETYPE);
     setIssueReporter([](Kit *k, const FilePath &projectPath, const FilePath &buildDir) {
         QtSupport::QtVersion *version = QtSupport::QtKitAspect::qtVersion(k);
         Tasks issues;
@@ -780,7 +801,7 @@ QmakeBuildConfiguration::LastKitState::LastKitState(Kit *k)
       m_sysroot(SysRootKitAspect::sysRoot(k).toString()),
       m_mkspec(QmakeKitAspect::mkspec(k))
 {
-    ToolChain *tc = ToolChainKitAspect::cxxToolChain(k);
+    Toolchain *tc = ToolchainKitAspect::cxxToolchain(k);
     m_toolchain = tc ? tc->id() : QByteArray();
 }
 

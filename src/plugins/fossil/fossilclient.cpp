@@ -4,7 +4,6 @@
 #include "fossilclient.h"
 
 #include "constants.h"
-#include "fossileditor.h"
 #include "fossiltr.h"
 
 #include <vcsbase/vcsbaseplugin.h>
@@ -16,7 +15,7 @@
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/processenums.h>
 #include <utils/qtcassert.h>
 #include <utils/utilsicons.h>
@@ -34,16 +33,13 @@
 using namespace Utils;
 using namespace VcsBase;
 
-namespace Fossil {
-namespace Internal {
+namespace Fossil::Internal {
 
 const RunFlags s_pullFlags = RunFlags::ShowStdOut | RunFlags::ShowSuccessMessage;
 
 // Parameter widget controlling whitespace diff mode, associated with a parameter
 class FossilDiffConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilDiffConfig(FossilClient *client, QToolBar *toolBar) :
         VcsBaseEditorConfig(toolBar)
@@ -65,8 +61,6 @@ public:
 // Parameter widget controlling annotate/blame mode
 class FossilAnnotateConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilAnnotateConfig(FossilClient *client, QToolBar *toolBar) :
         VcsBaseEditorConfig(toolBar)
@@ -91,8 +85,6 @@ public:
 
 class FossilLogCurrentFileConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilLogCurrentFileConfig(FossilClient *client, QToolBar *toolBar) :
         VcsBaseEditorConfig(toolBar)
@@ -104,8 +96,6 @@ public:
 
 class FossilLogConfig : public VcsBaseEditorConfig
 {
-    Q_OBJECT
-
 public:
     FossilLogConfig(QToolBar *toolBar)
         : VcsBaseEditorConfig(toolBar)
@@ -702,14 +692,15 @@ void FossilClient::annotate(const FilePath &workingDir, const QString &file, int
                                                   VcsBaseEditor::getCodec(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
-    auto *fossilEditor = qobject_cast<FossilEditorWidget *>(editor);
+    auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
     QTC_ASSERT(fossilEditor, return);
 
     if (!fossilEditor->editorConfig()) {
         if (VcsBaseEditorConfig *editorConfig = createAnnotateEditor(fossilEditor)) {
             editorConfig->setBaseArguments(extraOptions);
             // editor has been just created, createVcsEditor() didn't set a configuration widget yet
-            connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this, [=] {
+            connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this,
+                    [this, workingDir, file, revision, editorConfig] {
                 const int line = VcsBaseEditor::lineNumberOfCurrentEditor();
                 annotate(workingDir, file, line, revision, editorConfig->arguments());
             });
@@ -736,15 +727,14 @@ void FossilClient::annotate(const FilePath &workingDir, const QString &file, int
         lineNumber = -1;
     editor->setDefaultLineNumber(lineNumber);
 
-    enqueueJob(createCommand(workingDir, fossilEditor), args);
+    enqueueJob(createCommand(workingDir, fossilEditor), args, workingDir);
 }
 
 bool FossilClient::isVcsFileOrDirectory(const FilePath &filePath) const
 {
     // false for any dir or file other than fossil checkout db-file
-    return filePath.toFileInfo().isFile()
-           && !filePath.fileName().compare(Constants::FOSSILREPO,
-                                           HostOsInfo::fileNameCaseSensitivity());
+    return !filePath.fileName().compare(Constants::FOSSILREPO, HostOsInfo::fileNameCaseSensitivity())
+           && filePath.isFile();
 }
 
 FilePath FossilClient::findTopLevelForFile(const FilePath &file) const
@@ -766,7 +756,7 @@ unsigned int FossilClient::binaryVersion() const
     static unsigned int cachedBinaryVersion = 0;
     static FilePath cachedBinaryPath;
 
-    const FilePath currentBinaryPath = settings().binaryPath();
+    const FilePath currentBinaryPath = settings().binaryPath.effectiveBinary();
 
     if (currentBinaryPath.isEmpty())
         return 0;
@@ -833,14 +823,14 @@ void FossilClient::view(const FilePath &source, const QString &id, const QString
                                                   VcsBaseEditor::getCodec(source), "view", id);
     editor->setWorkingDirectory(workingDirectory);
 
-    enqueueJob(createCommand(workingDirectory, editor), args + extraOptions);
+    enqueueJob(createCommand(workingDirectory, editor), args + extraOptions, source);
 }
 
 class FossilLogHighlighter : QSyntaxHighlighter
 {
 public:
     explicit FossilLogHighlighter(QTextDocument *parent);
-    virtual void highlightBlock(const QString &text) final;
+    void highlightBlock(const QString &text) final;
 
 private:
     const QRegularExpression m_revisionIdRx;
@@ -906,7 +896,7 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
                                                   VcsBaseEditor::getCodec(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
-    auto *fossilEditor = qobject_cast<FossilEditorWidget *>(editor);
+    auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
     QTC_ASSERT(fossilEditor, return);
 
     fossilEditor->setFileLogAnnotateEnabled(enableAnnotationContextMenu);
@@ -915,7 +905,8 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
         if (VcsBaseEditorConfig *editorConfig = createLogEditor(fossilEditor)) {
             editorConfig->setBaseArguments(extraOptions);
             // editor has been just created, createVcsEditor() didn't set a configuration widget yet
-            connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this, [=] {
+            connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this,
+                    [this, workingDir, files, editorConfig, enableAnnotationContextMenu, addAuthOptions] {
                 log(workingDir, files, editorConfig->arguments(), enableAnnotationContextMenu,
                     addAuthOptions);
             });
@@ -934,7 +925,7 @@ void FossilClient::log(const FilePath &workingDir, const QStringList &files,
     args << effectiveArgs;
     if (!files.isEmpty())
          args << "--path" << files;
-    enqueueJob(createCommand(workingDir, fossilEditor), args);
+    enqueueJob(createCommand(workingDir, fossilEditor), args, workingDir);
 }
 
 void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList &files,
@@ -961,7 +952,7 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
                                                   VcsBaseEditor::getCodec(source),
                                                   vcsCmdString.toLatin1().constData(), id);
 
-    auto *fossilEditor = qobject_cast<FossilEditorWidget *>(editor);
+    auto fossilEditor = qobject_cast<VcsBaseEditorWidget *>(editor);
     QTC_ASSERT(fossilEditor, return);
 
     fossilEditor->setFileLogAnnotateEnabled(enableAnnotationContextMenu);
@@ -970,7 +961,8 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
         if (VcsBaseEditorConfig *editorConfig = createLogCurrentFileEditor(fossilEditor)) {
             editorConfig->setBaseArguments(extraOptions);
             // editor has been just created, createVcsEditor() didn't set a configuration widget yet
-            connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this, [=] {
+            connect(editorConfig, &VcsBaseEditorConfig::commandExecutionRequested, this,
+                    [this, workingDir, files, editorConfig, enableAnnotationContextMenu, addAuthOptions] {
                 logCurrentFile(workingDir, files, editorConfig->arguments(),
                                enableAnnotationContextMenu, addAuthOptions);
             });
@@ -987,7 +979,7 @@ void FossilClient::logCurrentFile(const FilePath &workingDir, const QStringList 
 
     QStringList args(vcsCmdString);
     args << effectiveArgs << files;
-    enqueueJob(createCommand(workingDir, fossilEditor), args);
+    enqueueJob(createCommand(workingDir, fossilEditor), args, workingDir);
 }
 
 void FossilClient::revertFile(const FilePath &workingDir,
@@ -1007,7 +999,7 @@ void FossilClient::revertFile(const FilePath &workingDir,
         if (cmd->result() == ProcessResult::FinishedWithSuccess)
             emit changed(files);
     });
-    enqueueJob(cmd, args);
+    enqueueJob(cmd, args, workingDir);
 }
 
 void FossilClient::revertAll(const FilePath &workingDir, const QString &revision, const QStringList &extraOptions)
@@ -1031,7 +1023,7 @@ void FossilClient::revertAll(const FilePath &workingDir, const QString &revision
         if (cmd->result() == ProcessResult::FinishedWithSuccess)
             emit changed(files);
     });
-    enqueueJob(createCommand(workingDir), args);
+    enqueueJob(createCommand(workingDir), args, workingDir);
 }
 
 QString FossilClient::sanitizeFossilOutput(const QString &output) const
@@ -1082,7 +1074,7 @@ QStringList FossilClient::revisionSpec(const QString &revision) const
 {
     // Pass the revision verbatim.
     // Fossil uses a variety of ways to spec the revisions.
-    // In most cases revision is passed directly (SHA1) or via tag.
+    // In most cases revision is passed directly (hash) or via tag.
     // Tag name may need to be prefixed with tag: to disambiguate it from hex (beef).
     // Handle the revision option per specific command (e.g. diff, revert ).
 
@@ -1170,7 +1162,10 @@ VcsBaseEditorConfig *FossilClient::createLogEditor(VcsBaseEditorWidget *editor)
     return new FossilLogConfig(editor->toolBar());
 }
 
-} // namespace Internal
-} // namespace Fossil
+FossilClient &fossilClient()
+{
+    static FossilClient theFossilClient;
+    return theFossilClient;
+}
 
-#include "fossilclient.moc"
+} // namespace Fossil::Internal

@@ -3,16 +3,6 @@
 
 #pragma once
 
-#include <coreplugin/inavigationwidgetfactory.h>
-
 namespace CppEditor::Internal {
-
-class CppTypeHierarchyFactory : public Core::INavigationWidgetFactory
-{
-public:
-    CppTypeHierarchyFactory();
-
-    Core::NavigationView createWidget()  override;
-};
-
+void setupCppTypeHierarchy();
 } // CppEditor::Internal

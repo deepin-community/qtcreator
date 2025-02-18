@@ -3,70 +3,24 @@
 
 #pragma once
 
-#include "compilationdatabaseutils.h"
-
-#include <projectexplorer/buildconfiguration.h>
-#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/project.h>
 
-#include <texteditor/texteditor.h>
-
-#include <utils/filesystemwatcher.h>
-
-#include <QFutureWatcher>
-
-namespace CppEditor { class CppProjectUpdater; }
 namespace ProjectExplorer { class Kit; }
-namespace Utils { class FileSystemWatcher; }
 
-namespace CompilationDatabaseProjectManager {
-namespace Internal {
-class CompilationDbParser;
+namespace CompilationDatabaseProjectManager::Internal {
 
-class CompilationDatabaseProject : public ProjectExplorer::Project
+class CompilationDatabaseProject final : public ProjectExplorer::Project
 {
     Q_OBJECT
 
 public:
     explicit CompilationDatabaseProject(const Utils::FilePath &filename);
-    Utils::FilePath rootPathFromSettings() const;
 
 private:
-    void configureAsExampleProject(ProjectExplorer::Kit *kit) override;
+    void configureAsExampleProject(ProjectExplorer::Kit *kit) final;
 };
 
-class CompilationDatabaseBuildSystem : public ProjectExplorer::BuildSystem
-{
-public:
-    explicit CompilationDatabaseBuildSystem(ProjectExplorer::Target *target);
-    ~CompilationDatabaseBuildSystem();
+void setupCompilationDatabaseEditor();
+void setupCompilationDatabaseBuildConfiguration();
 
-    void triggerParsing() final;
-    QString name() const final { return QLatin1String("compilationdb"); }
-
-    void reparseProject();
-    void updateDeploymentData();
-    void buildTreeAndProjectParts();
-
-    QFutureWatcher<void> m_parserWatcher;
-    std::unique_ptr<CppEditor::CppProjectUpdater> m_cppCodeModelUpdater;
-    MimeBinaryCache m_mimeBinaryCache;
-    QByteArray m_projectFileHash;
-    CompilationDbParser *m_parser = nullptr;
-    Utils::FileSystemWatcher * const m_deployFileWatcher;
-};
-
-class CompilationDatabaseEditorFactory : public TextEditor::TextEditorFactory
-{
-public:
-    CompilationDatabaseEditorFactory();
-};
-
-class CompilationDatabaseBuildConfigurationFactory : public ProjectExplorer::BuildConfigurationFactory
-{
-public:
-    CompilationDatabaseBuildConfigurationFactory();
-};
-
-} // namespace Internal
-} // namespace CompilationDatabaseProjectManager
+} // CompilationDatabaseProjectManager::Internal

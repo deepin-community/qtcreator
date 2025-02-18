@@ -13,11 +13,12 @@
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/runconfigurationaspects.h>
+#include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/runcontrol.h>
 #include <projectexplorer/target.h>
 
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QComboBox>
@@ -102,7 +103,7 @@ static WebBrowserEntries emrunBrowsers(Target *target)
         browserLister.start();
 
         if (browserLister.waitForFinished())
-            result.append(parseEmrunOutput(browserLister.readAllRawStandardOutput()));
+            result.append(parseEmrunOutput(browserLister.rawStdOut()));
     }
     return result;
 }
@@ -130,7 +131,7 @@ public:
         addDataExtractor(this, &WebBrowserSelectionAspect::currentBrowser, &Data::currentBrowser);
     }
 
-    void addToLayout(Layouting::LayoutItem &parent) override
+    void addToLayoutImpl(Layouting::Layout &parent) override
     {
         QTC_CHECK(!m_webBrowserComboBox);
         m_webBrowserComboBox = new QComboBox;
@@ -204,16 +205,15 @@ public:
     EmrunRunWorker(RunControl *runControl)
         : SimpleTargetRunner(runControl)
     {
-        auto portsGatherer = new PortsGatherer(runControl);
-        addStartDependency(portsGatherer);
+        runControl->requestWorkerChannel();
 
-        setStartModifier([this, runControl, portsGatherer] {
+        setStartModifier([this, runControl] {
             const QString browserId =
-                    runControl->aspect<WebBrowserSelectionAspect>()->currentBrowser;
+                    runControl->aspectData<WebBrowserSelectionAspect>()->currentBrowser;
             setCommandLine(emrunCommand(runControl->target(),
                                         runControl->buildKey(),
                                         browserId,
-                                        QString::number(portsGatherer->findEndPoint().port())));
+                                        QString::number(runControl->workerChannel().port())));
             setEnvironment(runControl->buildEnvironment());
         });
     }
@@ -221,17 +221,31 @@ public:
 
 // Factories
 
-EmrunRunConfigurationFactory::EmrunRunConfigurationFactory()
+class EmrunRunConfigurationFactory final : public ProjectExplorer::RunConfigurationFactory
 {
-    registerRunConfiguration<EmrunRunConfiguration>(Constants::WEBASSEMBLY_RUNCONFIGURATION_EMRUN);
-    addSupportedTargetDeviceType(Constants::WEBASSEMBLY_DEVICE_TYPE);
-}
+public:
+    EmrunRunConfigurationFactory()
+    {
+        registerRunConfiguration<EmrunRunConfiguration>(Constants::WEBASSEMBLY_RUNCONFIGURATION_EMRUN);
+        addSupportedTargetDeviceType(Constants::WEBASSEMBLY_DEVICE_TYPE);
+    }
+};
 
-EmrunRunWorkerFactory::EmrunRunWorkerFactory()
+class EmrunRunWorkerFactory final : public ProjectExplorer::RunWorkerFactory
 {
-    setProduct<EmrunRunWorker>();
-    addSupportedRunMode(ProjectExplorer::Constants::NORMAL_RUN_MODE);
-    addSupportedRunConfig(Constants::WEBASSEMBLY_RUNCONFIGURATION_EMRUN);
+public:
+    EmrunRunWorkerFactory()
+    {
+        setProduct<EmrunRunWorker>();
+        addSupportedRunMode(ProjectExplorer::Constants::NORMAL_RUN_MODE);
+        addSupportedRunConfig(Constants::WEBASSEMBLY_RUNCONFIGURATION_EMRUN);
+    }
+};
+
+void setupEmrunRunSupport()
+{
+    static EmrunRunConfigurationFactory theEmrunRunConfigurationFactory;
+    static EmrunRunWorkerFactory theEmrunRunWorkerFactory;
 }
 
 } // Webassembly::Internal

@@ -37,25 +37,28 @@ Probe {
     property stringList _extraPaths
     property stringList _libDirs
     property bool _staticMode: false
+    property bool _definePrefix: false
 
     property path _sysroot
-
-    // TODO: deprecate in 2.2, remove in 2.3
-    property bool _mergeDependencies: false
 
     // Output
     property var packages
     property var packagesByModuleName
     property var brokenPackages
-    property varList qtInfos
+    property stringList qmakePaths
 
     configure: {
         var result = PkgConfigProbeConfigure.configure(
-            _executableFilePath, _extraPaths, _libDirs, _staticMode, _sysroot, _mergeDependencies);
+            _executableFilePath,
+            _extraPaths,
+            _libDirs,
+            _staticMode,
+            _definePrefix,
+            _sysroot);
         packages = result.packages;
         packagesByModuleName = result.packagesByModuleName;
         brokenPackages = result.brokenPackages;
-        qtInfos = result.qtInfos;
+        qmakePaths = result.qmakePaths;
         found = true;
     }
 }

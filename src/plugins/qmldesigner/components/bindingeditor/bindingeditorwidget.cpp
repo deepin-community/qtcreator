@@ -3,10 +3,13 @@
 
 #include "bindingeditorwidget.h"
 
+#include <indentingtexteditormodifier.h>
+
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/coreplugintr.h>
-#include <coreplugin/icore.h>
-#include <plaintexteditmodifier.h>
+
+#include <projectexplorer/projectexplorerconstants.h>
+
 #include <qmljseditor/qmljsautocompleter.h>
 #include <qmljseditor/qmljscompletionassist.h>
 #include <qmljseditor/qmljseditor.h>
@@ -14,11 +17,11 @@
 #include <qmljseditor/qmljshighlighter.h>
 #include <qmljseditor/qmljshoverhandler.h>
 #include <qmljseditor/qmljssemantichighlighter.h>
-#include <qmljstools/qmljsindenter.h>
-#include <qmljstools/qmljstoolsconstants.h>
 
-#include <projectexplorer/projectexplorerconstants.h>
+#include <qmljstools/qmljsindenter.h>
+
 #include <utils/fancylineedit.h>
+#include <utils/mimeconstants.h>
 #include <utils/transientscroll.h>
 
 #include <QAction>
@@ -26,14 +29,11 @@
 namespace QmlDesigner {
 
 BindingEditorWidget::BindingEditorWidget()
-    : m_context(new Core::IContext(this))
 {
     Core::Context context(BINDINGEDITOR_CONTEXT_ID,
                           ProjectExplorer::Constants::QMLJS_LANGUAGE_ID);
 
-    m_context->setWidget(this);
-    m_context->setContext(context);
-    Core::ICore::addContextObject(m_context);
+    Core::IContext::attach(this, context);
 
     Utils::TransientScrollAreaSupport::support(this);
 
@@ -50,7 +50,7 @@ BindingEditorWidget::BindingEditorWidget()
                                        ? tr("Meta+Space")
                                        : tr("Ctrl+Space")));
 
-    connect(m_completionAction, &QAction::triggered, this, [this]() {
+    connect(m_completionAction, &QAction::triggered, this, [this] {
         invokeAssist(TextEditor::Completion);
     });
 }
@@ -128,14 +128,14 @@ void BindingDocument::applyFontSettings()
 {
     TextDocument::applyFontSettings();
     m_semanticHighlighter->updateFontSettings(fontSettings());
-    if (!isSemanticInfoOutdated())
+    if (!isSemanticInfoOutdated() && semanticInfo().isValid())
         m_semanticHighlighter->rerun(semanticInfo());
 }
 
 void BindingDocument::triggerPendingUpdates()
 {
     TextDocument::triggerPendingUpdates(); // calls applyFontSettings if necessary
-    if (!isSemanticInfoOutdated())
+    if (!isSemanticInfoOutdated() && semanticInfo().isValid())
         m_semanticHighlighter->rerun(semanticInfo());
 }
 
@@ -143,11 +143,10 @@ BindingEditorFactory::BindingEditorFactory()
 {
     setId(BINDINGEDITOR_CONTEXT_ID);
     setDisplayName(::Core::Tr::tr("Binding Editor"));
-    setEditorActionHandlers(0);
     addMimeType(BINDINGEDITOR_CONTEXT_ID);
-    addMimeType(QmlJSTools::Constants::QML_MIMETYPE);
-    addMimeType(QmlJSTools::Constants::QMLTYPES_MIMETYPE);
-    addMimeType(QmlJSTools::Constants::JS_MIMETYPE);
+    addMimeType(Utils::Constants::QML_MIMETYPE);
+    addMimeType(Utils::Constants::QMLTYPES_MIMETYPE);
+    addMimeType(Utils::Constants::JS_MIMETYPE);
 
     setDocumentCreator([]() { return new BindingDocument; });
     setEditorWidgetCreator([]() { return new BindingEditorWidget; });
@@ -163,8 +162,9 @@ BindingEditorFactory::BindingEditorFactory()
 
 void BindingEditorFactory::decorateEditor(TextEditor::TextEditorWidget *editor)
 {
-    editor->textDocument()->setSyntaxHighlighter(new QmlJSEditor::QmlJSHighlighter);
-    editor->textDocument()->setIndenter(new QmlJSEditor::Internal::Indenter(
+    editor->textDocument()->resetSyntaxHighlighter(
+        [] { return new QmlJSEditor::QmlJSHighlighter(); });
+    editor->textDocument()->setIndenter(QmlJSEditor::createQmlJsIndenter(
                                             editor->textDocument()->document()));
     editor->setAutoCompleter(new QmlJSEditor::AutoCompleter);
 }

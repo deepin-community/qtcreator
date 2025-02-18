@@ -13,9 +13,7 @@
 
 #include <utils/cpplanguage_details.h>
 #include <utils/environment.h>
-#include <utils/fileutils.h>
-
-#include <QPointer>
+#include <utils/store.h>
 
 #include <functional>
 
@@ -36,7 +34,7 @@ class PROJECTEXPLORER_EXPORT RawProjectPartFlags
 {
 public:
     RawProjectPartFlags() = default;
-    RawProjectPartFlags(const ToolChain *toolChain, const QStringList &commandLineFlags,
+    RawProjectPartFlags(const Toolchain *toolChain, const QStringList &commandLineFlags,
                         const Utils::FilePath &includeFileBaseDir);
 
 public:
@@ -52,7 +50,7 @@ class PROJECTEXPLORER_EXPORT RawProjectPart
 public:
     void setDisplayName(const QString &displayName);
 
-    void setProjectFileLocation(const QString &projectFile, int line = -1, int column = -1);
+    void setProjectFileLocation(const Utils::FilePath &projectFile, int line = -1, int column = -1);
     void setConfigFileName(const QString &configFileName);
     void setCallGroupId(const QString &id);
 
@@ -81,7 +79,7 @@ public:
 public:
     QString displayName;
 
-    QString projectFile;
+    Utils::FilePath projectFile;
     int projectFileLine = -1;
     int projectFileColumn = -1;
     QString callGroupId;
@@ -119,19 +117,19 @@ public:
     bool isValid() const;
 
     Kit *kit = nullptr;
-    ToolChain *cToolChain = nullptr;
-    ToolChain *cxxToolChain = nullptr;
+    Toolchain *cToolchain = nullptr;
+    Toolchain *cxxToolchain = nullptr;
 
     Utils::QtMajorVersion projectPartQtVersion = Utils::QtMajorVersion::None;
 
     Utils::FilePath sysRootPath;
 };
 
-class PROJECTEXPLORER_EXPORT ToolChainInfo
+class PROJECTEXPLORER_EXPORT ToolchainInfo
 {
 public:
-    ToolChainInfo() = default;
-    ToolChainInfo(const ProjectExplorer::ToolChain *toolChain,
+    ToolchainInfo() = default;
+    ToolchainInfo(const ProjectExplorer::Toolchain *toolChain,
                   const Utils::FilePath &sysRootPath,
                   const Utils::Environment &env);
 
@@ -139,7 +137,7 @@ public:
 
 public:
     Utils::Id type;
-    bool isMsvc2015ToolChain = false;
+    bool isMsvc2015Toolchain = false;
     bool targetTripleIsAuthoritative = false;
     Abi abi;
     QString targetTriple;
@@ -148,8 +146,8 @@ public:
     QStringList extraCodeModelFlags;
 
     Utils::FilePath sysRootPath; // For headerPathsRunner.
-    ProjectExplorer::ToolChain::BuiltInHeaderPathsRunner headerPathsRunner;
-    ProjectExplorer::ToolChain::MacroInspectionRunner macroInspectionRunner;
+    ProjectExplorer::Toolchain::BuiltInHeaderPathsRunner headerPathsRunner;
+    ProjectExplorer::Toolchain::MacroInspectionRunner macroInspectionRunner;
 };
 
 class PROJECTEXPLORER_EXPORT ProjectUpdateInfo
@@ -170,9 +168,13 @@ public:
     Utils::FilePath buildRoot;
     RawProjectParts rawProjectParts;
     RppGenerator rppGenerator;
+    Utils::Store cppSettings;
 
-    ToolChainInfo cToolChainInfo;
-    ToolChainInfo cxxToolChainInfo;
+    ToolchainInfo cToolchainInfo;
+    ToolchainInfo cxxToolchainInfo;
 };
+
+using CppSettingsRetriever = std::function<Utils::Store(const Project *)>;
+void PROJECTEXPLORER_EXPORT provideCppSettingsRetriever(const CppSettingsRetriever &retriever);
 
 } // namespace ProjectExplorer

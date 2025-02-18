@@ -65,11 +65,11 @@ public:
     static QList<ProjectPart::ConstPtr> createCAndCxxProjectParts()
     {
         QList<ProjectPart::ConstPtr> projectParts;
-        ToolChainInfo tcInfo;
+        ToolchainInfo tcInfo;
 
         // Create project part for C
         tcInfo.macroInspectionRunner = [](const QStringList &) {
-            return ToolChain::MacroInspectionReport{{}, Utils::LanguageVersion::C11};
+            return Toolchain::MacroInspectionReport{{}, Utils::LanguageVersion::C11};
         };
         const ProjectPart::ConstPtr cprojectpart = ProjectPart::create({}, {}, {}, {}, {}, {}, {},
                                                                   tcInfo);
@@ -77,7 +77,7 @@ public:
 
         // Create project part for CXX
         tcInfo.macroInspectionRunner = [](const QStringList &) {
-            return ToolChain::MacroInspectionReport{{}, Utils::LanguageVersion::CXX98};
+            return Toolchain::MacroInspectionReport{{}, Utils::LanguageVersion::CXX98};
         };
         const ProjectPart::ConstPtr cxxprojectpart = ProjectPart::create({}, {}, {}, {}, {}, {}, {},
                                                                     tcInfo);
@@ -115,7 +115,7 @@ void ProjectPartChooserTest::testChooseManuallySet()
     rpp2.setProjectFileLocation("someId");
     ProjectPart::ConstPtr p2 = ProjectPart::create({}, rpp2);
     ProjectPartChooserTestHelper t;
-    t.preferredProjectPartId = p2->projectFile;
+    t.preferredProjectPartId = p2->projectFile.toString();
     t.projectPartsForFile += {p1, p2};
 
     QCOMPARE(t.choose().projectPart, p2);
@@ -128,7 +128,7 @@ void ProjectPartChooserTest::testIndicateManuallySet()
     rpp2.setProjectFileLocation("someId");
     ProjectPart::ConstPtr p2 = ProjectPart::create({}, rpp2);
     ProjectPartChooserTestHelper t;
-    t.preferredProjectPartId = p2->projectFile;
+    t.preferredProjectPartId = p2->projectFile.toString();
     t.projectPartsForFile += {p1, p2};
 
     QVERIFY(t.choose().hints & ProjectPartInfo::IsPreferredMatch);
@@ -141,7 +141,7 @@ void ProjectPartChooserTest::testIndicateManuallySetForFallbackToProjectPartFrom
     rpp2.setProjectFileLocation("someId");
     ProjectPart::ConstPtr p2 = ProjectPart::create({}, rpp2);
     ProjectPartChooserTestHelper t;
-    t.preferredProjectPartId = p2->projectFile;
+    t.preferredProjectPartId = p2->projectFile.toString();
     t.projectPartsFromDependenciesForFile += {p1, p2};
 
     QVERIFY(t.choose().hints & ProjectPartInfo::IsPreferredMatch);
@@ -330,10 +330,10 @@ void ProjectPartChooserTest::testDoNotIndicateFromDependencies()
 }
 
 namespace {
-class TestToolchain : public ToolChain
+class TestToolchain : public Toolchain
 {
 public:
-    TestToolchain() : ToolChain("dummy") {}
+    TestToolchain() : Toolchain("dummy") {}
 
 private:
     MacroInspectionRunner createMacroInspectionRunner() const override { return {}; }
@@ -344,10 +344,7 @@ private:
     void addToEnvironment(Utils::Environment &) const override {}
     Utils::FilePath makeCommand(const Utils::Environment &) const override { return {}; }
     QList<Utils::OutputLineParser *> createOutputParsers() const override { return {}; }
-    std::unique_ptr<ToolChainConfigWidget> createConfigurationWidget() override
-    {
-        return {};
-    };
+    bool canShareBundleImpl(const Toolchain &) const override { return false; }
 };
 
 class ProjectInfoGeneratorTestHelper
@@ -355,9 +352,9 @@ class ProjectInfoGeneratorTestHelper
 public:
     ProjectInfoGeneratorTestHelper()
     {
-        TestToolchain aToolChain;
-        projectUpdateInfo.cxxToolChainInfo = {&aToolChain, {}, {}};
-        projectUpdateInfo.cToolChainInfo = {&aToolChain, {}, {}};
+        TestToolchain toolchain;
+        projectUpdateInfo.cxxToolchainInfo = {&toolchain, {}, {}};
+        projectUpdateInfo.cToolchainInfo = {&toolchain, {}, {}};
     }
 
     ProjectInfo::ConstPtr generate()
@@ -426,7 +423,7 @@ void ProjectInfoGeneratorTest::testProjectPartHasLatestLanguageVersionByDefault(
 void ProjectInfoGeneratorTest::testUseMacroInspectionReportForLanguageVersion()
 {
     ProjectInfoGeneratorTestHelper t;
-    t.projectUpdateInfo.cxxToolChainInfo.macroInspectionRunner = [](const QStringList &) {
+    t.projectUpdateInfo.cxxToolchainInfo.macroInspectionRunner = [](const QStringList &) {
         return TestToolchain::MacroInspectionReport{Macros(), Utils::LanguageVersion::CXX17};
     };
     t.rawProjectPart.files = QStringList{ "foo.cpp" };
@@ -484,7 +481,7 @@ public:
     {
         RawProjectPart rpp;
         rpp.setHeaderPaths(headerPaths);
-        ToolChainInfo tcInfo;
+        ToolchainInfo tcInfo;
         tcInfo.type = toolchainType;
         tcInfo.targetTriple = targetTriple;
         tcInfo.installDir = toolchainInstallDir;

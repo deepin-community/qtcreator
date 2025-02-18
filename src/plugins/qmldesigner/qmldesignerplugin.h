@@ -6,9 +6,8 @@
 #include "documentmanager.h"
 #include "qmldesigner_global.h"
 
-#include <designersettings.h>
-#include <viewmanager.h>
 #include <qmldesignercorelib_global.h>
+#include <viewmanager.h>
 
 #include <extensionsystem/iplugin.h>
 
@@ -64,9 +63,6 @@ public:
     QWidget *createProjectExplorerWidget(QWidget *parent) const;
 
     void switchToTextModeDeferred();
-    void emitCurrentTextEditorChanged(Core::IEditor *editor);
-
-    void emitAssetChanged(const QString &assetPath);
 
     static double formEditorDevicePixelRatio();
 
@@ -74,7 +70,6 @@ public:
 
     static void emitUsageStatistics(const QString &identifier);
     static void emitUsageStatisticsContextAction(const QString &identifier);
-    static void emitUsageStatisticsHelpRequested(const QString &identifier);
     static void emitUsageStatisticsTime(const QString &identifier, int elapsed);
     static void emitUsageStatisticsUsageDuration(const QString &identifier, int elapsed);
 
@@ -104,7 +99,7 @@ private slots:
 
 private: // functions
     void lauchFeedbackPopupInternal(const QString &identifier);
-    void integrateIntoQtCreator(QWidget *modeWidget);
+    void integrateIntoQtCreator(Internal::DesignModeWidget *modeWidget);
     void clearDesigner();
     void resetDesignerDocument();
     void setupDesigner();

@@ -1,10 +1,10 @@
 import qbs.FileInfo
 import qbs.Utilities
 
-QbsStaticLibrary {
+QbsProduct {
+    type: "staticlibrary"
     Depends { name: "cpp" }
     Depends { name: "qbsbuildconfig" }
-    Depends { name: "qbsvariant" }
 
     property stringList pcPaths: {
         var result = [];
@@ -45,20 +45,14 @@ QbsStaticLibrary {
             "PKG_CONFIG_PC_PATH=\"" + pcPathsString + "\"",
             "PKG_CONFIG_SYSTEM_LIBRARY_PATH=\"/usr/" + qbsbuildconfig.libDirName + "\"",
         ]
-        if ((qbs.targetOS.contains("darwin")
-                && Utilities.versionCompare(cpp.minimumMacosVersion, "10.15") < 0)
-                || qbs.toolchain.contains("mingw"))
-            result.push("HAS_STD_FILESYSTEM=0")
-        else
-            result.push("HAS_STD_FILESYSTEM=1")
         result = result.concat(publicDefines);
         return result
     }
 
     Export {
         Depends { name: "cpp" }
-        Depends { name: "qbsvariant" }
         cpp.defines: exportingProduct.publicDefines
+        cpp.includePaths: [exportingProduct.sourceDirectory]
         cpp.staticLibraries: {
             if (qbs.toolchainType === "gcc" && cpp.compilerVersionMajor < 9)
                 return ["stdc++fs"];

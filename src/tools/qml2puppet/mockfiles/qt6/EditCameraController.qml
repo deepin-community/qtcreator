@@ -7,9 +7,11 @@ import QtQuick3D 6.0
 Item {
     id: cameraCtrl
 
-    property Camera camera: null
-    property View3D view3d: null
-    property string sceneId
+    property var viewRoot: null
+    property int splitId: -1
+    property Camera camera: view3d ? view3d.camera : null
+    property View3D view3d: viewRoot.editViews[splitId]
+    property string sceneId: viewRoot.sceneId
     property vector3d _lookAtPoint
     property vector3d _pressPoint
     property vector3d _prevPoint
@@ -24,8 +26,13 @@ Item {
     readonly property vector3d _defaultCameraPosition: Qt.vector3d(0, 600, 600)
     readonly property vector3d _defaultCameraRotation: Qt.vector3d(-45, 0, 0)
     readonly property real _defaultCameraLookAtDistance: _defaultCameraPosition.length()
-    readonly property real _keyPanAmount: 5
+    readonly property real _keyPanAmount: 1.0
     property bool ignoreToolState: false
+    property bool flyMode: viewRoot.flyMode
+    property bool showCrosshairs: false
+
+    z: 10
+    anchors.fill: parent
 
     function restoreCameraState(cameraState)
     {
@@ -47,10 +54,19 @@ Item {
 
         _lookAtPoint = Qt.vector3d(0, 0, 0);
         _zoomFactor = 1;
-        camera.position = _defaultCameraPosition;
-        camera.eulerRotation = _defaultCameraRotation;
-        _generalHelper.zoomCamera(view3d, camera, 0, _defaultCameraLookAtDistance, _lookAtPoint,
-                                  _zoomFactor, false);
+
+        if (splitId === 1) {
+            jumpToRotation(originGizmo.quaternionForAxis(OriginGizmo.PositiveZ));
+        } else if (splitId === 2) {
+            jumpToRotation(originGizmo.quaternionForAxis(OriginGizmo.NegativeY));
+        } else if (splitId === 3) {
+            jumpToRotation(originGizmo.quaternionForAxis(OriginGizmo.NegativeX));
+        } else {
+            camera.position = _defaultCameraPosition;
+            camera.eulerRotation = _defaultCameraRotation;
+            _generalHelper.zoomCamera(view3d, camera, 0, _defaultCameraLookAtDistance, _lookAtPoint,
+                                      _zoomFactor, false);
+        }
     }
 
     function storeCameraState(delay)
@@ -63,9 +79,8 @@ Item {
         cameraState[1] = _zoomFactor;
         cameraState[2] = camera.position;
         cameraState[3] = camera.rotation;
-        _generalHelper.storeToolState(sceneId, "editCamState", cameraState, delay);
+        _generalHelper.storeToolState(sceneId, "editCamState" + splitId, cameraState, delay);
     }
-
 
     function focusObject(targetNodes, rotation, updateZoom, closeUp)
     {
@@ -86,6 +101,32 @@ Item {
         _lookAtPoint = newLookAtAndZoom.toVector3d();
         _zoomFactor = newLookAtAndZoom.w;
         storeCameraState(0);
+    }
+
+    function approachObject()
+    {
+        if (!camera)
+            return;
+
+        var pickResult = _generalHelper.pickViewAt(view3d, width / 2, height / 2);
+        var resolvedResult = _generalHelper.resolvePick(pickResult.objectHit);
+
+        if (resolvedResult) {
+            var newLookAtAndZoom = _generalHelper.approachNode(camera, _defaultCameraLookAtDistance,
+                                                               resolvedResult, view3d);
+            _lookAtPoint = newLookAtAndZoom.toVector3d();
+            _zoomFactor = newLookAtAndZoom.w;
+            storeCameraState(0);
+        }
+    }
+
+    function jumpToRotation(rotation)
+    {
+        let distance = camera.scenePosition.minus(_lookAtPoint).length()
+        let direction = _generalHelper.dirForRotation(rotation)
+
+        camera.rotation = rotation
+        camera.position = _lookAtPoint.plus(direction.times(distance))
     }
 
     function alignCameras(targetNodes)
@@ -115,7 +156,10 @@ Item {
         else
             nodes = targetNodes
 
-        _lookAtPoint = _generalHelper.alignView(camera, nodes, _lookAtPoint);
+        var newLookAtAndZoom = _generalHelper.alignView(camera, nodes, _lookAtPoint,
+                                                        _defaultCameraLookAtDistance);
+        _lookAtPoint = newLookAtAndZoom.toVector3d();
+        _zoomFactor = newLookAtAndZoom.w;
         storeCameraState(0);
     }
 
@@ -126,6 +170,61 @@ Item {
 
         _zoomFactor = _generalHelper.zoomCamera(view3d, camera, distance, _defaultCameraLookAtDistance,
                                                 _lookAtPoint, _zoomFactor, true);
+    }
+
+    function rotateCamera(angles)
+    {
+        if (flyMode)
+            showCrosshairs = true;
+        cameraCtrl._lookAtPoint = _generalHelper.rotateCamera(camera, angles, _lookAtPoint);
+    }
+
+    function moveCamera(moveVec)
+    {
+        if (flyMode)
+            showCrosshairs = true;
+        cameraCtrl._lookAtPoint = _generalHelper.moveCamera(camera, _lookAtPoint, moveVec);
+    }
+
+    function getMoveVectorForKey(key) {
+        if (flyMode) {
+            switch (key) {
+            case Qt.Key_A:
+            case Qt.Key_Left:
+                return Qt.vector3d(_keyPanAmount, 0, 0);
+            case Qt.Key_D:
+            case Qt.Key_Right:
+                return Qt.vector3d(-_keyPanAmount, 0, 0);
+            case Qt.Key_E:
+            case Qt.Key_PageUp:
+                return Qt.vector3d(0, _keyPanAmount, 0);
+            case Qt.Key_Q:
+            case Qt.Key_PageDown:
+                return Qt.vector3d(0, -_keyPanAmount, 0);
+            case Qt.Key_W:
+            case Qt.Key_Up:
+                return Qt.vector3d(0, 0, _keyPanAmount);
+            case Qt.Key_S:
+            case Qt.Key_Down:
+                return Qt.vector3d(0, 0, -_keyPanAmount);
+            default:
+                break;
+            }
+        } else {
+            switch (key) {
+            case Qt.Key_Left:
+                return Qt.vector3d(_keyPanAmount, 0, 0);
+            case Qt.Key_Right:
+                return Qt.vector3d(-_keyPanAmount, 0, 0);
+            case Qt.Key_Up:
+                return Qt.vector3d(0, _keyPanAmount, 0);
+            case Qt.Key_Down:
+                return Qt.vector3d(0, -_keyPanAmount, 0);
+            default:
+                break;
+            }
+        }
+        return Qt.vector3d(0, 0, 0);
     }
 
     onCameraChanged: {
@@ -144,31 +243,68 @@ Item {
         _prevCamera = camera;
     }
 
+    onFlyModeChanged: {
+        if (cameraCtrl._dragging) {
+            cameraCtrl._dragging = false;
+            cameraCtrl.storeCameraState(0);
+        }
+        showCrosshairs = false;
+        _generalHelper.stopAllCameraMoves();
+        _generalHelper.setCameraSpeedModifier(1.0);
+    }
+
+    on_LookAtPointChanged: {
+        viewRoot.overlayViews[splitId].lookAtGizmo.position = _lookAtPoint;
+    }
+
+    Connections {
+        target: _generalHelper
+        enabled: viewRoot.activeSplit === cameraCtrl.splitId
+
+        function onRequestCameraMove(camera, moveVec) {
+            if (camera === cameraCtrl.camera) {
+                cameraCtrl.moveCamera(moveVec);
+                _generalHelper.requestRender();
+            }
+        }
+    }
+
+    Image {
+        anchors.centerIn: parent
+        source: "qrc:///qtquickplugin/mockfiles/images/crosshair.png"
+        visible: cameraCtrl.showCrosshairs && viewRoot.activeSplit === cameraCtrl.splitId
+        opacity: 0.7
+    }
+
     MouseArea {
         id: mouseHandler
         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
         hoverEnabled: false
         anchors.fill: parent
-        onPositionChanged: (mouse)=> {
-            if (cameraCtrl.camera && mouse.modifiers === Qt.AltModifier && cameraCtrl._dragging) {
+        onPositionChanged: (mouse) => {
+            if (cameraCtrl.camera && cameraCtrl._dragging) {
                 var currentPoint = Qt.vector3d(mouse.x, mouse.y, 0);
-                if (cameraCtrl._button == Qt.LeftButton) {
+                if (cameraCtrl._button == Qt.LeftButton && mouse.modifiers === Qt.AltModifier) {
                     _generalHelper.orbitCamera(cameraCtrl.camera, cameraCtrl._startRotation,
                                                cameraCtrl._lookAtPoint, cameraCtrl._pressPoint,
                                                currentPoint);
-                } else if (cameraCtrl._button == Qt.MiddleButton) {
+                } else if ((cameraCtrl._button == Qt.MiddleButton && mouse.modifiers === Qt.AltModifier)
+                        || (cameraCtrl._button == Qt.LeftButton && mouse.modifiers === Qt.ShiftModifier)) {
                     cameraCtrl._lookAtPoint = _generalHelper.panCamera(
                                 cameraCtrl.camera, cameraCtrl._startTransform,
                                 cameraCtrl._startPosition, cameraCtrl._startLookAtPoint,
                                 cameraCtrl._pressPoint, currentPoint, _zoomFactor);
-                } else if (cameraCtrl._button == Qt.RightButton) {
+                } else if (cameraCtrl._button == Qt.RightButton && mouse.modifiers === Qt.AltModifier) {
                     cameraCtrl.zoomRelative(currentPoint.y - cameraCtrl._prevPoint.y)
                     cameraCtrl._prevPoint = currentPoint;
                 }
             }
         }
-        onPressed: (mouse)=> {
-            if (cameraCtrl.camera && mouse.modifiers === Qt.AltModifier) {
+        onPressed: (mouse) => {
+            if (cameraCtrl.flyMode)
+                return;
+            viewRoot.activeSplit = cameraCtrl.splitId
+            if (cameraCtrl.camera && (mouse.modifiers & (Qt.AltModifier | Qt.ShiftModifier))) {
                 cameraCtrl._dragging = true;
                 cameraCtrl._startRotation = cameraCtrl.camera.eulerRotation;
                 cameraCtrl._startPosition = cameraCtrl.camera.position;
@@ -182,7 +318,8 @@ Item {
             }
         }
 
-        function handleRelease() {
+        function handleRelease()
+        {
             cameraCtrl._dragging = false;
             cameraCtrl.storeCameraState(0);
         }
@@ -190,7 +327,10 @@ Item {
         onReleased: handleRelease()
         onCanceled: handleRelease()
 
-        onWheel: (wheel)=> {
+        onWheel: (wheel) => {
+            if (cameraCtrl.flyMode && cameraCtrl.splitId !== viewRoot.activeSplit)
+                return;
+            viewRoot.activeSplit = cameraCtrl.splitId;
             if (cameraCtrl.camera) {
                 // Empirically determined divisor for nice zoom
                 cameraCtrl.zoomRelative(wheel.angleDelta.y / -40);
@@ -199,33 +339,42 @@ Item {
         }
     }
 
-    Keys.onPressed: (event)=> {
-        var pressPoint = Qt.vector3d(view3d.width / 2, view3d.height / 2, 0);
-        var currentPoint;
+    function setCameraSpeed(event) {
+        if (event.modifiers === Qt.AltModifier)
+            _generalHelper.setCameraSpeedModifier(0.5);
+        else if (event.modifiers === Qt.ShiftModifier)
+            _generalHelper.setCameraSpeedModifier(2.0);
+        else
+            _generalHelper.setCameraSpeedModifier(1.0);
+    }
 
-        switch (event.key) {
-        case Qt.Key_Left:
-            currentPoint = pressPoint.plus(Qt.vector3d(_keyPanAmount, 0, 0));
-            break;
-        case Qt.Key_Right:
-            currentPoint = pressPoint.plus(Qt.vector3d(-_keyPanAmount, 0, 0));
-            break;
-        case Qt.Key_Up:
-            currentPoint = pressPoint.plus(Qt.vector3d(0, _keyPanAmount, 0));
-            break;
-        case Qt.Key_Down:
-            currentPoint = pressPoint.plus(Qt.vector3d(0, -_keyPanAmount, 0));
-            break;
-        default:
-            break;
-        }
+    Keys.onPressed: (event) => {
+        setCameraSpeed(event)
+        event.accepted = true;
+        if (cameraCtrl.flyMode && event.key === Qt.Key_Space)
+            approachObject();
+        else
+            _generalHelper.startCameraMove(cameraCtrl.camera, cameraCtrl.getMoveVectorForKey(event.key));
+    }
 
-        if (currentPoint) {
-            _lookAtPoint = _generalHelper.panCamera(
-                        camera, cameraCtrl.camera.sceneTransform,
-                        cameraCtrl.camera.position, _lookAtPoint,
-                        pressPoint, currentPoint, _zoomFactor);
-            event.accepted = true;
+    Keys.onReleased: (event) => {
+        setCameraSpeed(event)
+        event.accepted = true;
+        _generalHelper.stopCameraMove(cameraCtrl.getMoveVectorForKey(event.key));
+    }
+
+    OriginGizmo {
+        id: originGizmo
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 4
+        width: 70
+        height: 70
+        targetNode: cameraCtrl.camera
+
+        onAxisClicked: (axis) => {
+            viewRoot.activeSplit = cameraCtrl.splitId
+            cameraCtrl.jumpToRotation(quaternionForAxis(axis));
         }
     }
 }

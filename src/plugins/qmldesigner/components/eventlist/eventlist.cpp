@@ -6,7 +6,6 @@
 #include "nodelistview.h"
 
 #include "bindingproperty.h"
-#include "metainfo.h"
 #include "projectexplorer/project.h"
 #include "projectexplorer/projectmanager.h"
 #include "qmldesignerplugin.h"
@@ -14,6 +13,7 @@
 #include "utils/fileutils.h"
 #include "utils/qtcassert.h"
 #include "variantproperty.h"
+#include <nodemetainfo.h>
 
 #include <QDirIterator>
 #include <QStandardItemModel>
@@ -187,7 +187,7 @@ void EventList::initialize(EventListPluginView *parent)
         QByteArray unqualifiedTypeName = "ListModel";
         auto metaInfo = parent->model()->metaInfo(unqualifiedTypeName);
 #ifdef QDS_USE_PROJECTSTORAGE
-        m_model = Model::create(unqualifiedTypeName, -1, -1);
+        m_model = parent->model()->createModel(unqualifiedTypeName);
 #else
         QByteArray fullTypeName = metaInfo.typeName();
         int minorVersion = metaInfo.minorVersion();
@@ -195,7 +195,6 @@ void EventList::initialize(EventListPluginView *parent)
 
         m_model = Model::create(fullTypeName, majorVersion, minorVersion);
 #endif
-        m_model->setParent(parent);
     }
 
     if (!m_eventView) {

@@ -100,7 +100,7 @@ function artifactInstalledFilePath(artifact) {
   * found, an exception is thrown.
   */
 function fileTagForTargetLanguage(fileTags) {
-    var srcTags = ["c", "cpp", "objc", "objcpp", "asm", "asm_cpp"];
+    var srcTags = ["c", "cpp", "objc", "objcpp", "asm", "asm_cpp", "cppm"];
     var pchTags = ["c_pch", "cpp_pch", "objc_pch", "objcpp_pch"];
 
     var canonicalTag = undefined;
@@ -641,6 +641,8 @@ function guessTargetPlatform(m) {
             return "hurd";
         if (hasAnyOf(m, ["__HAIKU__"]))
             return "haiku";
+        if (hasAnyOf(m, ["__wasm__"]))
+            return "wasm-emscripten"
     }
 }
 

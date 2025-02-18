@@ -80,6 +80,7 @@
             May contain the values: "weak", "lazy", "reexport", and "upward"; refer to the Apple
             ld64 man page for full details. \c{undefined} uses normal linking.
             Currently only applies when linking for Apple platforms.
+            Note that \c "lazy" mode is deprecated and doesn't work with Xcode 15 and above.
     \endtable
 
     \section2 Relevant File Tags
@@ -1939,4 +1940,55 @@
 
     \windowsproperty
     \defaultvalue \c{true} for MSVC, \c{false} for clang-cl
+*/
+
+/*!
+    \qmlproperty string cpp::importPrivateLibraries
+    \since Qbs 2.4
+
+    Whether to automatically import external libraries from dependencies.
+
+    If set to true in the product that depends on the static library, the external dependencies
+    (such as \l{cpp::staticLibraries}{staticLibraries} and
+    \l{cpp::dynamicLibraries}{dynamicLibraries}) of this library are also added to products that
+    depend on this library.
+    \code
+    StaticLibrary {
+        files: "lib.cpp"
+        cpp.staticLibraries: ["l", "y"]
+    }
+    \endcode
+
+    If set to false, the explicit \l{Export} item is required:
+    \code
+    StaticLibrary {
+        files: "lib.cpp"
+        Export {
+            Depends { name: "cpp" }
+            cpp.staticLibraries: ["l", "y"]
+        }
+    }
+    \endcode
+
+    We recommend using the \l{Export} item as it provides more flexibility.
+
+    \note The default value is subject to change.
+
+    \defaultvalue \c{true}
+*/
+
+/*!
+    \qmlproperty bool cpp::forceUseCxxModules
+    \since Qbs 2.5
+
+    Set this property to \c true to force support for C++20 Modules.
+
+    On details how to use modules, see the corresponding \l{tutorial-10.html}{section} in the
+    tutorial.
+
+    By default, modules support is disabled since this feature is considered experimental.
+
+    \note The default value is subject to change.
+
+    \defaultvalue \c{false}
 */

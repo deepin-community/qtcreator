@@ -9,6 +9,7 @@
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/progressmanager/taskprogress.h>
 
+#include <utils/ansiescapecodehandler.h>
 #include <utils/qtcassert.h>
 
 using namespace Core;
@@ -24,11 +25,13 @@ DiffEditorController::DiffEditorController(IDocument *document)
 {
     QTC_ASSERT(m_document, return);
     m_document->setController(this);
-}
-
-bool DiffEditorController::isReloading() const
-{
-    return m_taskTree.get() != nullptr;
+    connect(&m_taskTreeRunner, &TaskTreeRunner::aboutToStart, this, [this](TaskTree *taskTree) {
+        auto progress = new TaskProgress(taskTree);
+        progress->setDisplayName(m_displayName);
+    });
+    connect(&m_taskTreeRunner, &TaskTreeRunner::done, this, [this](DoneWith result) {
+        m_document->endReload(result == DoneWith::Success);
+    });
 }
 
 FilePath DiffEditorController::workingDirectory() const
@@ -80,6 +83,11 @@ void DiffEditorController::setDiffFiles(const QList<FileData> &diffFileList)
     m_document->setDiffFiles(diffFileList);
 }
 
+void DiffEditorController::setAnsiEnabled(bool enabled)
+{
+    m_document->setDescriptionAnsiEnabled(enabled);
+}
+
 void DiffEditorController::setDescription(const QString &description)
 {
     m_document->setDescription(description);
@@ -109,19 +117,7 @@ IDocument *DiffEditorController::document() const
 void DiffEditorController::requestReload()
 {
     m_document->beginReload();
-    m_taskTree.reset(new TaskTree(m_reloadRecipe));
-    connect(m_taskTree.get(), &TaskTree::done, this, [this] { reloadFinished(true); });
-    connect(m_taskTree.get(), &TaskTree::errorOccurred, this, [this] { reloadFinished(false); });
-    auto progress = new TaskProgress(m_taskTree.get());
-    progress->setDisplayName(m_displayName);
-    m_taskTree->start();
-}
-
-void DiffEditorController::reloadFinished(bool success)
-{
-    if (m_taskTree)
-        m_taskTree.release()->deleteLater();
-    m_document->endReload(success);
+    m_taskTreeRunner.start(m_reloadRecipe);
 }
 
 void DiffEditorController::addExtraActions(QMenu *menu, int fileIndex, int chunkIndex,

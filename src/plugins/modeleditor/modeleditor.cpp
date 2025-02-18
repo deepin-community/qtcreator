@@ -36,6 +36,7 @@
 #include "qmt/model_controller/mselection.h"
 #include "qmt/model_ui/treemodel.h"
 #include "qmt/model_ui/treemodelmanager.h"
+#include "qmt/model_widgets_ui/modeltreefilter.h"
 #include "qmt/model_widgets_ui/modeltreeview.h"
 #include "qmt/model_widgets_ui/propertiesview.h"
 #include "qmt/stereotype/shapepaintvisitor.h"
@@ -52,7 +53,6 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/editormanager/editormanager.h>
 #include <coreplugin/minisplitter.h>
-#include <coreplugin/actionmanager/commandbutton.h>
 #include <utils/fadingindicator.h>
 #include <utils/fileutils.h>
 #include <utils/layoutbuilder.h>
@@ -62,7 +62,6 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QComboBox>
-#include <QDir>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -71,21 +70,23 @@
 #include <QImageWriter>
 #include <QLabel>
 #include <QMap>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QStackedWidget>
 #include <QStyleFactory>
 #include <QTimer>
 #include <QToolBox>
+#include <QToolButton>
 #include <QUndoStack>
 #include <QVBoxLayout>
-#include <QMenu>
-#include <QScrollBar>
 
 #include <algorithm>
 
+using namespace Core;
 using namespace Utils;
 
 namespace ModelEditor {
@@ -101,7 +102,7 @@ public:
     ActionHandler *actionHandler = nullptr;
     ModelDocument *document = nullptr;
     qmt::PropertiesView *propertiesView = nullptr;
-    Core::MiniSplitter *rightSplitter = nullptr;
+    MiniSplitter *rightSplitter = nullptr;
     QWidget *leftGroup = nullptr;
     QHBoxLayout *leftGroupLayout = nullptr;
     QToolBox *leftToolBox = nullptr;
@@ -109,7 +110,11 @@ public:
     EditorDiagramView *diagramView = nullptr;
     QLabel *noDiagramLabel = nullptr;
     DiagramsViewManager *diagramsViewManager = nullptr;
-    Core::MiniSplitter *rightHorizSplitter = nullptr;
+    QWidget *rightPanel = nullptr;
+    QVBoxLayout *rightPanelLayout = nullptr;
+    QScrollArea *viewFilterScrollArea = nullptr;
+    qmt::ModelTreeFilter *viewFilterWidget = nullptr;
+    MiniSplitter *rightHorizSplitter = nullptr;
     qmt::ModelTreeView *modelTreeView = nullptr;
     qmt::TreeModelManager *modelTreeViewServant = nullptr;
     QScrollArea *propertiesScrollArea = nullptr;
@@ -121,12 +126,13 @@ public:
     QAction *syncBrowserWithDiagramAction = nullptr;
     QAction *syncDiagramWithBrowserAction = nullptr;
     QAction *syncEachOtherAction = nullptr;
+    int formerViewFilterHeight = 0;
 };
 
 ModelEditor::ModelEditor(UiController *uiController, ActionHandler *actionHandler)
     : d(new ModelEditorPrivate)
 {
-    setContext(Core::Context(Constants::MODEL_EDITOR_ID));
+    setContext(Context(Constants::MODEL_EDITOR_ID));
     d->uiController = uiController;
     d->actionHandler = actionHandler;
     d->document = new ModelDocument(this);
@@ -141,7 +147,7 @@ ModelEditor::~ModelEditor()
     delete d;
 }
 
-Core::IDocument *ModelEditor::document() const
+IDocument *ModelEditor::document() const
 {
     return d->document;
 }
@@ -191,7 +197,7 @@ void ModelEditor::init()
     d->propertiesView = new qmt::PropertiesView(this);
 
     // create and configure editor ui
-    d->rightSplitter = new Core::MiniSplitter;
+    d->rightSplitter = new MiniSplitter;
     connect(d->rightSplitter, &QSplitter::splitterMoved,
             this, &ModelEditor::onRightSplitterMoved);
     connect(d->uiController, &UiController::rightSplitterChanged,
@@ -253,7 +259,22 @@ void ModelEditor::init()
     d->leftGroupLayout->addWidget(frame, 0);
     d->leftGroupLayout->addWidget(d->diagramStack, 1);
 
-    d->rightHorizSplitter = new Core::MiniSplitter(d->rightSplitter);
+    d->rightPanel = new QWidget(d->rightSplitter);
+    d->rightPanelLayout = new QVBoxLayout(d->rightPanel);
+    d->rightPanelLayout->setContentsMargins(0, 0, 0, 0);
+    d->rightPanelLayout->setSpacing(0);
+
+    d->viewFilterScrollArea = new QScrollArea(d->rightPanel);
+    d->viewFilterScrollArea->setFrameShape(QFrame::NoFrame);
+    d->viewFilterScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    d->viewFilterScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    d->viewFilterScrollArea->setWidgetResizable(true);
+    d->viewFilterScrollArea->setVisible(false);
+
+    d->viewFilterWidget = new qmt::ModelTreeFilter(d->viewFilterScrollArea);
+    d->viewFilterScrollArea->setWidget(d->viewFilterWidget);
+
+    d->rightHorizSplitter = new MiniSplitter(d->rightPanel);
     d->rightHorizSplitter->setOrientation(Qt::Vertical);
     connect(d->rightHorizSplitter, &QSplitter::splitterMoved,
             this, &ModelEditor::onRightHorizSplitterMoved);
@@ -262,6 +283,10 @@ void ModelEditor::init()
 
     d->modelTreeView = new qmt::ModelTreeView(d->rightHorizSplitter);
     d->modelTreeView->setFrameShape(QFrame::NoFrame);
+    connect(d->viewFilterWidget, &qmt::ModelTreeFilter::viewDataChanged,
+            d->modelTreeView, &qmt::ModelTreeView::setModelTreeViewData);
+    connect(d->viewFilterWidget, &qmt::ModelTreeFilter::filterDataChanged,
+            d->modelTreeView, &qmt::ModelTreeView::setModelTreeFilterData);
 
     d->modelTreeViewServant = new qmt::TreeModelManager(this);
     d->modelTreeViewServant->setModelTreeView(d->modelTreeView);
@@ -277,8 +302,11 @@ void ModelEditor::init()
     d->rightHorizSplitter->setStretchFactor(0, 2); // magic stretch factors for equal sizing
     d->rightHorizSplitter->setStretchFactor(1, 3);
 
+    d->rightPanelLayout->addWidget(d->viewFilterScrollArea, 0);
+    d->rightPanelLayout->addWidget(d->rightHorizSplitter, 1);
+
     d->rightSplitter->insertWidget(0, d->leftGroup);
-    d->rightSplitter->insertWidget(1, d->rightHorizSplitter);
+    d->rightSplitter->insertWidget(1, d->rightPanel);
     d->rightSplitter->setStretchFactor(0, 1);
     d->rightSplitter->setStretchFactor(1, 0);
 
@@ -296,8 +324,9 @@ void ModelEditor::init()
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
     toolbarLayout->setSpacing(0);
 
-    auto openParentButton = new Core::CommandButton(Constants::OPEN_PARENT_DIAGRAM, d->toolbar);
-    openParentButton->setDefaultAction(d->actionHandler->openParentDiagramAction());
+    auto openParentButton
+        = Command::toolButtonWithAppendedShortcut(d->actionHandler->openParentDiagramAction(),
+                                                  Constants::OPEN_PARENT_DIAGRAM);
     toolbarLayout->addWidget(openParentButton);
 
     d->diagramSelector = new QComboBox(d->toolbar);
@@ -306,31 +335,34 @@ void ModelEditor::init()
     toolbarLayout->addWidget(d->diagramSelector, 1);
     toolbarLayout->addStretch(1);
 
-    toolbarLayout->addWidget(createToolbarCommandButton(Core::Constants::ZOOM_RESET,
-                                                        [this]() { resetZoom(); },
-                                                        d->toolbar));
-    toolbarLayout->addWidget(createToolbarCommandButton(Core::Constants::ZOOM_IN,
-                                                        [this]() { zoomIn(); },
-                                                        d->toolbar));
-    toolbarLayout->addWidget(createToolbarCommandButton(Core::Constants::ZOOM_OUT,
-                                                        [this]() { zoomOut(); },
-                                                        d->toolbar));
+    toolbarLayout->addWidget(createToolbarCommandButton(
+        Core::Constants::ZOOM_RESET, [this] { resetZoom(); }, d->toolbar));
+    toolbarLayout->addWidget(createToolbarCommandButton(
+        Core::Constants::ZOOM_IN, [this] { zoomIn(); }, d->toolbar));
+    toolbarLayout->addWidget(createToolbarCommandButton(
+        Core::Constants::ZOOM_OUT, [this] { zoomOut(); }, d->toolbar));
     toolbarLayout->addWidget(createToolbarCommandButton(Constants::ACTION_ADD_PACKAGE,
-                                                        [this]() { onAddPackage(); },
+                                                        [this] { onAddPackage(); },
                                                         d->toolbar));
     toolbarLayout->addWidget(createToolbarCommandButton(Constants::ACTION_ADD_COMPONENT,
-                                                        [this]() { onAddComponent(); },
+                                                        [this] { onAddComponent(); },
                                                         d->toolbar));
     toolbarLayout->addWidget(createToolbarCommandButton(Constants::ACTION_ADD_CLASS,
-                                                        [this]() { onAddClass(); },
+                                                        [this] { onAddClass(); },
                                                         d->toolbar));
     toolbarLayout->addWidget(createToolbarCommandButton(Constants::ACTION_ADD_CANVAS_DIAGRAM,
-                                                        [this]() { onAddCanvasDiagram(); },
+                                                        [this] { onAddCanvasDiagram(); },
                                                         d->toolbar));
     toolbarLayout->addSpacing(20);
 
-    auto syncToggleButton = new Core::CommandButton(Constants::ACTION_SYNC_BROWSER, d->toolbar);
-    syncToggleButton->setDefaultAction(d->actionHandler->synchronizeBrowserAction());
+    auto toggleViewFilterButton
+        = Command::toolButtonWithAppendedShortcut(d->actionHandler->toggleViewFilterAction(),
+                                                  Constants::ACTION_TOGGLE_VIEWFILTER);
+    toolbarLayout->addWidget(toggleViewFilterButton);
+
+    auto syncToggleButton
+        = Command::toolButtonWithAppendedShortcut(d->actionHandler->synchronizeBrowserAction(),
+                                                  Constants::ACTION_SYNC_BROWSER);
     QMenu *syncMenu = new QMenu(syncToggleButton);
     QActionGroup *syncGroup = new QActionGroup(syncMenu);
     d->syncBrowserWithDiagramAction = syncMenu->addAction(Tr::tr("Synchronize Structure with Diagram"));
@@ -399,8 +431,11 @@ void ModelEditor::initDocument()
     connect(documentController->diagramSceneController(), &qmt::DiagramSceneController::newElementCreated,
             this, &ModelEditor::onNewElementCreated, Qt::QueuedConnection);
 
-    connect(Core::EditorManager::instance(), &Core::EditorManager::currentEditorChanged,
-            this, &ModelEditor::onCurrentEditorChanged, Qt::QueuedConnection);
+    connect(EditorManager::instance(),
+            &EditorManager::currentEditorChanged,
+            this,
+            &ModelEditor::onCurrentEditorChanged,
+            Qt::QueuedConnection);
 
     connect(d->diagramView, &EditorDiagramView::zoomIn,
             this, &ModelEditor::zoomInAtPos);
@@ -580,7 +615,7 @@ void ModelEditor::exportToImage(bool selectedElements)
         QString fileName = FileUtils::getSaveFilePath(
                     nullptr,
                     selectedElements ? Tr::tr("Export Selected Elements") : Tr::tr("Export Diagram"),
-                    FilePath::fromString(d->lastExportDirPath), filter).toString();
+                    FilePath::fromString(d->lastExportDirPath), filter).toFSPathString();
         if (!fileName.isEmpty()) {
             qmt::DocumentController *documentController = d->document->documentController();
             qmt::DiagramSceneModel *sceneModel = documentController->diagramsManager()->diagramSceneModel(diagram);
@@ -602,11 +637,16 @@ void ModelEditor::exportToImage(bool selectedElements)
             if (success)
                 d->lastExportDirPath = QFileInfo(fileName).canonicalPath();
             else if (selectedElements)
-                QMessageBox::critical(Core::ICore::dialogParent(), Tr::tr("Exporting Selected Elements Failed"),
-                                      Tr::tr("Exporting the selected elements of the current diagram into file<br>\"%1\"<br>failed.").arg(fileName));
+                QMessageBox::critical(ICore::dialogParent(),
+                                      Tr::tr("Exporting Selected Elements Failed"),
+                                      Tr::tr("Exporting the selected elements of the current "
+                                             "diagram into file<br>\"%1\"<br>failed.")
+                                          .arg(fileName));
             else
-                QMessageBox::critical(Core::ICore::dialogParent(), Tr::tr("Exporting Diagram Failed"),
-                                      Tr::tr("Exporting the diagram into file<br>\"%1\"<br>failed.").arg(fileName));
+                QMessageBox::critical(ICore::dialogParent(),
+                                      Tr::tr("Exporting Diagram Failed"),
+                                      Tr::tr("Exporting the diagram into file<br>\"%1\"<br>failed.")
+                                          .arg(fileName));
         }
     }
 }
@@ -658,6 +698,16 @@ void ModelEditor::resetZoom()
 {
     d->diagramView->setTransform(QTransform());
     showZoomIndicator();
+}
+
+void ModelEditor::showModelTreeFilter(bool visible)
+{
+    d->viewFilterScrollArea->setVisible(visible);
+}
+
+void ModelEditor::toggleModelTreeFilter()
+{
+    d->viewFilterScrollArea->setVisible(!d->viewFilterScrollArea->isVisible());
 }
 
 qmt::MPackage *ModelEditor::guessSelectedPackage() const
@@ -827,12 +877,12 @@ QToolButton *ModelEditor::createToolbarCommandButton(const Utils::Id &id,
                                                      const std::function<void()> &slot,
                                                      QWidget *parent)
 {
-    Core::Command *command = Core::ActionManager::command(id);
+    Command *command = ActionManager::command(id);
     QTC_CHECK(command);
     const QString text = command ? command->description() : QString();
     auto action = new QAction(text, this);
     action->setIcon(command ? command->action()->icon() : QIcon());
-    auto button = Core::Command::toolButtonWithAppendedShortcut(action, command);
+    auto button = Command::toolButtonWithAppendedShortcut(action, command);
     button->setParent(parent);
     connect(button, &QToolButton::clicked, this, slot);
     return button;
@@ -871,7 +921,7 @@ void ModelEditor::onAddPackage()
 
     qmt::MPackage *package = documentController->createNewPackage(d->modelTreeViewServant->selectedPackage());
     d->modelTreeView->selectFromSourceModelIndex(documentController->treeModel()->indexOf(package));
-    QTimer::singleShot(0, this, [this]() { onEditSelectedElement(); });
+    QTimer::singleShot(0, this, [this] { onEditSelectedElement(); });
 }
 
 void ModelEditor::onAddComponent()
@@ -880,7 +930,7 @@ void ModelEditor::onAddComponent()
 
     qmt::MComponent *component = documentController->createNewComponent(d->modelTreeViewServant->selectedPackage());
     d->modelTreeView->selectFromSourceModelIndex(documentController->treeModel()->indexOf(component));
-    QTimer::singleShot(0, this, [this]() { onEditSelectedElement(); });
+    QTimer::singleShot(0, this, [this] { onEditSelectedElement(); });
 }
 
 void ModelEditor::onAddClass()
@@ -889,7 +939,7 @@ void ModelEditor::onAddClass()
 
     qmt::MClass *klass = documentController->createNewClass(d->modelTreeViewServant->selectedPackage());
     d->modelTreeView->selectFromSourceModelIndex(documentController->treeModel()->indexOf(klass));
-    QTimer::singleShot(0, this, [this]() { onEditSelectedElement(); });
+    QTimer::singleShot(0, this, [this] { onEditSelectedElement(); });
 }
 
 void ModelEditor::onAddCanvasDiagram()
@@ -898,10 +948,10 @@ void ModelEditor::onAddCanvasDiagram()
 
     qmt::MDiagram *diagram = documentController->createNewCanvasDiagram(d->modelTreeViewServant->selectedPackage());
     d->modelTreeView->selectFromSourceModelIndex(documentController->treeModel()->indexOf(diagram));
-    QTimer::singleShot(0, this, [this]() { onEditSelectedElement(); });
+    QTimer::singleShot(0, this, [this] { onEditSelectedElement(); });
 }
 
-void ModelEditor::onCurrentEditorChanged(Core::IEditor *editor)
+void ModelEditor::onCurrentEditorChanged(IEditor *editor)
 {
     if (this == editor) {
         QUndoStack *undoStack = d->document->documentController()->undoController()->undoStack();
@@ -914,13 +964,13 @@ void ModelEditor::onCurrentEditorChanged(Core::IEditor *editor)
 
 void ModelEditor::onCanUndoChanged(bool canUndo)
 {
-    if (this == Core::EditorManager::currentEditor())
+    if (this == EditorManager::currentEditor())
         d->actionHandler->undoAction()->setEnabled(canUndo);
 }
 
 void ModelEditor::onCanRedoChanged(bool canRedo)
 {
-    if (this == Core::EditorManager::currentEditor())
+    if (this == EditorManager::currentEditor())
         d->actionHandler->redoAction()->setEnabled(canRedo);
 }
 
@@ -951,7 +1001,7 @@ void ModelEditor::onTreeViewDoubleClicked(const QModelIndex &index)
     QModelIndex treeModelIndex = d->modelTreeView->mapToSourceModelIndex(index);
     qmt::MElement *melement = documentController->treeModel()->element(treeModelIndex);
     // double click on package is already used for toggeling tree
-    if (melement && !dynamic_cast<qmt::MPackage *>(melement))
+    if (melement && !d->modelTreeView->model()->hasChildren(index))
         documentController->elementTasks()->openElement(melement);
 }
 
@@ -975,7 +1025,7 @@ void ModelEditor::onDiagramClipboardChanged(bool isEmpty)
 {
     Q_UNUSED(isEmpty)
 
-    if (this == Core::EditorManager::currentEditor())
+    if (this == EditorManager::currentEditor())
         updateSelectedArea(d->selectedArea);
 }
 
@@ -987,7 +1037,7 @@ void ModelEditor::onNewElementCreated(qmt::DElement *element, qmt::MDiagram *dia
         documentController->diagramsManager()->diagramSceneModel(diagram)->selectElement(element);
         qmt::MElement *melement = documentController->modelController()->findElement(element->modelUid());
         if (!(melement && melement->flags().testFlag(qmt::MElement::ReverseEngineered)))
-            QTimer::singleShot(0, this, [this]() { onEditSelectedElement(); });
+            QTimer::singleShot(0, this, [this] { onEditSelectedElement(); });
     }
 }
 
@@ -1100,8 +1150,13 @@ void ModelEditor::initToolbars()
                 if (!tool.m_stereotype.isEmpty() && stereotypeIconElement != qmt::StereotypeIcon::ElementAny) {
                     const qmt::Style *style = documentController->styleController()->adaptStyle(styleEngineElementType);
                     icon = stereotypeController->createIcon(
-                                stereotypeIconElement, {tool.m_stereotype},
-                                QString(), style, QSize(128, 128), QMarginsF(6.0, 4.0, 6.0, 8.0), 8.0);
+                        stereotypeIconElement,
+                        {tool.m_stereotype},
+                        {},
+                        style,
+                        QSize(128, 128),
+                        QMarginsF(6.0, 4.0, 6.0, 8.0),
+                        8.0);
                     if (!icon.isNull()) {
                         QString stereotypeIconId = stereotypeController->findStereotypeIconId(
                                     stereotypeIconElement, {tool.m_stereotype});
@@ -1358,9 +1413,9 @@ void ModelEditor::storeToolbarIdInDiagram(qmt::MDiagram *diagram)
 
 void ModelEditor::addToNavigationHistory(const qmt::MDiagram *diagram)
 {
-    if (Core::EditorManager::currentEditor() == this) {
-        Core::EditorManager::cutForwardNavigationHistory();
-        Core::EditorManager::addCurrentPositionToNavigationHistory(saveState(diagram));
+    if (EditorManager::currentEditor() == this) {
+        EditorManager::cutForwardNavigationHistory();
+        EditorManager::addCurrentPositionToNavigationHistory(saveState(diagram));
     }
 }
 

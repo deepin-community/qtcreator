@@ -28,8 +28,8 @@ CustomWidgetWizardDialog::CustomWidgetWizardDialog(const Core::BaseFileWizardFac
     setWindowIcon(icon);
     setWindowTitle(templateName);
 
-    setIntroDescription(Tr::tr("This wizard generates a Qt Designer Custom Widget "
-                               "or a Qt Designer Custom Widget Collection project."));
+    setIntroDescription(Tr::tr("This wizard generates a Qt Widgets Designer Custom Widget "
+                               "or a Qt Widgets Designer Custom Widget Collection project."));
 
     if (!parameters.extraValues().contains(QLatin1String(ProjectExplorer::Constants::PROJECT_KIT_IDS)))
         addTargetSetupPage();
@@ -57,9 +57,9 @@ void CustomWidgetWizardDialog::slotCurrentIdChanged(int id)
         m_pluginPage->init(m_widgetsPage);
 }
 
-QSharedPointer<PluginOptions> CustomWidgetWizardDialog::pluginOptions() const
+std::shared_ptr<PluginOptions> CustomWidgetWizardDialog::pluginOptions() const
 {
-    QSharedPointer<PluginOptions> rc = m_pluginPage->basicPluginOptions();
+    std::shared_ptr<PluginOptions> rc = m_pluginPage->basicPluginOptions();
     rc->widgetOptions = m_widgetsPage->widgetOptions();
     return rc;
 }

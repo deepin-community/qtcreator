@@ -9,17 +9,27 @@
 #include <QtTest>
 #include <QVariant>
 
-Q_DECLARE_METATYPE(QmlPreview::TestFileLoader)
-Q_DECLARE_METATYPE(QmlPreview::TestFpsHandler)
+typedef QByteArray (*TestFileLoader)(const QString &, bool *);
+typedef void (*TestFpsHandler)(quint16[8]);
+
+Q_DECLARE_METATYPE(TestFileLoader)
+Q_DECLARE_METATYPE(TestFpsHandler)
 
 namespace QmlPreview {
 
-QmlPreviewPluginTest::QmlPreviewPluginTest(QObject *parent) : QObject(parent)
-{ }
+class QmlPreviewPluginTest : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void testFileLoaderProperty();
+    void testZoomFactorProperty();
+    void testFpsHandlerProperty();
+};
 
 static ExtensionSystem::IPlugin *getPlugin()
 {
-    const QVector<ExtensionSystem::PluginSpec *> plugins = ExtensionSystem::PluginManager::plugins();
+    const ExtensionSystem::PluginSpecs plugins = ExtensionSystem::PluginManager::plugins();
     auto it = std::find_if(plugins.begin(), plugins.end(), [](ExtensionSystem::PluginSpec *spec) {
         return spec->name() == "QmlPreview";
     });
@@ -66,4 +76,11 @@ void QmlPreviewPluginTest::testFpsHandlerProperty()
     handler(stats);
 }
 
+QObject *createQmlPreviewPluginTest()
+{
+    return new QmlPreviewPluginTest;
+}
+
 } // namespace QmlPreview
+
+#include "qmlpreviewplugin_test.moc"

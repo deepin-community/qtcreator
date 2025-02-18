@@ -3,14 +3,18 @@
 
 import QtQuick
 import QtQuick.Layouts
-import QtQuickDesignerTheme 1.0
-import HelperWidgets 2.0
-import StudioTheme 1.0 as StudioTheme
+import HelperWidgets
+import StudioTheme as StudioTheme
 
 PropertyEditorPane {
     id: itemPane
 
     ComponentSection {}
+
+    DynamicPropertiesSection {
+        propertiesModel: SelectionDynamicPropertiesModel {}
+        visible: !hasMultiSelection
+    }
 
     Column {
         anchors.left: parent.left

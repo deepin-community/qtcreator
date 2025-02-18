@@ -49,7 +49,7 @@ public:
         BoolType
     };
 
-    PropertyTreeModel(ConnectionView *parent = nullptr);
+    PropertyTreeModel(ConnectionView *view);
 
     void resetModel();
 
@@ -84,6 +84,12 @@ public:
 
     QHash<int, QByteArray> roleNames() const override;
 
+    static std::vector<PropertyName> sortedAndFilteredSignalNames(const NodeMetaInfo &metaInfo,
+                                                                  bool recursive = false);
+
+    static std::vector<PropertyName> sortedAndFilteredSlotNames(const NodeMetaInfo &metaInfo,
+                                                                bool recursive = false);
+
 private:
     QModelIndex ensureModelIndex(const ModelNode &node, int row) const;
     QModelIndex ensureModelIndex(const ModelNode &node, const PropertyName &name, int row) const;
@@ -93,14 +99,10 @@ private:
         const ModelNode &modelNode) const;
 
     const std::vector<PropertyName> getDynamicProperties(const ModelNode &modelNode) const;
+    const std::vector<PropertyName> getDynamicSignals(const ModelNode &modelNode) const;
+
     const std::vector<PropertyName> sortedAndFilteredPropertyNames(const NodeMetaInfo &metaInfo,
                                                                    bool recursive = false) const;
-
-    const std::vector<PropertyName> sortedAndFilteredSignalNames(const NodeMetaInfo &metaInfo,
-                                                                 bool recursive = false) const;
-
-    const std::vector<PropertyName> sortedAndFilteredSlotNames(const NodeMetaInfo &metaInfo,
-                                                               bool recursive = false) const;
 
     const std::vector<PropertyName> sortedDotPropertyNames(const NodeMetaInfo &metaInfo,
                                                            const PropertyName &propertyName) const;
@@ -185,7 +187,7 @@ class PropertyTreeModelDelegate : public QObject
     Q_PROPERTY(StudioQmlComboBoxBackend *id READ idCombboBox CONSTANT)
 
 public:
-    explicit PropertyTreeModelDelegate(ConnectionView *parent = nullptr);
+    explicit PropertyTreeModelDelegate(ConnectionView *view);
     void setPropertyType(PropertyTreeModel::PropertyTypes type);
     void setup(const QString &id, const QString &name, bool *nameExists = nullptr);
     void setupNameComboBox(const QString &id, const QString &name, bool *nameExists);

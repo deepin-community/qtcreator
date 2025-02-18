@@ -41,13 +41,17 @@ public:
     TestBlackboxProviders();
 
 private slots:
+    void allowedValues();
+    void allowedValues_data();
     void brokenProvider();
-    void fallbackModuleProvider_data();
-    void fallbackModuleProvider();
+    void conanProvider();
+    void conanProvider_data();
     void moduleProviders();
     void moduleProvidersCache();
     void nonEagerModuleProvider();
     void probeInModuleProvider();
+    void providersCondition();
+    void providersConditionProbes();
     void providersProperties();
     void qbsModulePropertiesInProviders();
     void qbsModuleProviders_data();

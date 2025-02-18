@@ -12,11 +12,16 @@
 
 #include <coreplugin/editormanager/documentmodel.h>
 #include <coreplugin/icore.h>
+#include <coreplugin/messagemanager.h>
+#include <coreplugin/progressmanager/progressmanager.h>
 
-#include <texteditor/codeassist/textdocumentmanipulatorinterface.h>
 #include <texteditor/refactoringchanges.h>
 #include <texteditor/textdocument.h>
 #include <texteditor/texteditor.h>
+
+#include <utils/environment.h>
+#include <utils/infobar.h>
+#include <utils/qtcprocess.h>
 #include <utils/textutils.h>
 #include <utils/treeviewcombobox.h>
 #include <utils/utilsicons.h>
@@ -25,6 +30,7 @@
 #include <QFile>
 #include <QMenu>
 #include <QTextDocument>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 
@@ -89,31 +95,21 @@ bool applyTextEdits(const Client *client,
 {
     if (edits.isEmpty())
         return true;
-    RefactoringChangesData * const backend = client->createRefactoringChangesBackend();
-    RefactoringChanges changes(backend);
-    RefactoringFilePtr file;
-    file = changes.file(filePath);
-    file->setChangeSet(editsToChangeSet(edits, file->document()));
-    if (backend) {
-        for (const TextEdit &edit : edits)
-            file->appendIndentRange(convertRange(file->document(), edit.range()));
-    }
-    return file->apply();
+    const RefactoringFilePtr file = client->createRefactoringFile(filePath);
+    return file->apply(editsToChangeSet(edits, file->document()));
 }
 
-void applyTextEdit(TextDocumentManipulatorInterface &manipulator,
-                   const TextEdit &edit,
-                   bool newTextIsSnippet)
+void applyTextEdit(TextEditorWidget *editorWidget, const TextEdit &edit, bool newTextIsSnippet)
 {
     const Range range = edit.range();
-    const QTextDocument *doc = manipulator.textCursorAt(manipulator.currentPosition()).document();
+    const QTextDocument *doc = editorWidget->document();
     const int start = Text::positionInText(doc, range.start().line() + 1, range.start().character() + 1);
     const int end = Text::positionInText(doc, range.end().line() + 1, range.end().character() + 1);
     if (newTextIsSnippet) {
-        manipulator.replace(start, end - start, {});
-        manipulator.insertCodeSnippet(start, edit.newText(), &parseSnippet);
+        editorWidget->replace(start, end - start, {});
+        editorWidget->insertCodeSnippet(start, edit.newText(), &parseSnippet);
     } else {
-        manipulator.replace(start, end - start, edit.newText());
+        editorWidget->replace(start, end - start, edit.newText());
     }
 }
 
@@ -235,8 +231,8 @@ void updateEditorToolBar(Core::IEditor *editor)
     TextDocument *document = textEditor->textDocument();
     Client *client = LanguageClientManager::clientForDocument(textEditor->textDocument());
 
-    ClientExtras *extras = widget->findChild<ClientExtras *>(clientExtrasName,
-                                                             Qt::FindDirectChildrenOnly);
+    ClientExtras *extras = dynamic_cast<ClientExtras *>(
+        widget->findChild<QObject *>(clientExtrasName, Qt::FindDirectChildrenOnly));
     if (!extras) {
         if (!client)
             return;
@@ -257,7 +253,7 @@ void updateEditorToolBar(Core::IEditor *editor)
             auto menu = new QMenu;
             auto clientsGroup = new QActionGroup(menu);
             clientsGroup->setExclusive(true);
-            for (auto client : LanguageClientManager::clientsSupportingDocument(document)) {
+            for (auto client : LanguageClientManager::clientsSupportingDocument(document, false)) {
                 auto action = clientsGroup->addAction(client->name());
                 auto reopen = [action, client = QPointer(client), document] {
                     if (!client)
@@ -267,6 +263,10 @@ void updateEditorToolBar(Core::IEditor *editor)
                 };
                 action->setCheckable(true);
                 action->setChecked(client == LanguageClientManager::clientForDocument(document));
+                action->setEnabled(client->reachable());
+                QObject::connect(client, &Client::stateChanged, action, [action, client] {
+                    action->setEnabled(client->reachable());
+                });
                 QObject::connect(action, &QAction::triggered, reopen);
             }
             menu->addActions(clientsGroup->actions());
@@ -349,13 +349,12 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
     if (!client)
         return false;
 
-    if (std::holds_alternative<TextDocumentEdit>(change)) {
-        return applyTextDocumentEdit(client, std::get<TextDocumentEdit>(change));
-    } else if (std::holds_alternative<CreateFileOperation>(change)) {
-        const auto createOperation = std::get<CreateFileOperation>(change);
-        const FilePath filePath = createOperation.uri().toFilePath(client->hostPathMapper());
+    if (const auto e = std::get_if<TextDocumentEdit>(&change)) {
+        return applyTextDocumentEdit(client, *e);
+    } else if (const auto createOperation = std::get_if<CreateFileOperation>(&change)) {
+        const FilePath filePath = createOperation->uri().toFilePath(client->hostPathMapper());
         if (filePath.exists()) {
-            if (const std::optional<CreateFileOptions> options = createOperation.options()) {
+            if (const std::optional<CreateFileOptions> options = createOperation->options()) {
                 if (options->overwrite().value_or(false)) {
                     if (!filePath.removeFile())
                         return false;
@@ -365,16 +364,15 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
             }
         }
         return filePath.ensureExistingFile();
-    } else if (std::holds_alternative<RenameFileOperation>(change)) {
-        const RenameFileOperation renameOperation = std::get<RenameFileOperation>(change);
-        const FilePath oldPath = renameOperation.oldUri().toFilePath(client->hostPathMapper());
+    } else if (const auto renameOperation = std::get_if<RenameFileOperation>(&change)) {
+        const FilePath oldPath = renameOperation->oldUri().toFilePath(client->hostPathMapper());
         if (!oldPath.exists())
             return false;
-        const FilePath newPath = renameOperation.newUri().toFilePath(client->hostPathMapper());
+        const FilePath newPath = renameOperation->newUri().toFilePath(client->hostPathMapper());
         if (oldPath == newPath)
             return true;
         if (newPath.exists()) {
-            if (const std::optional<CreateFileOptions> options = renameOperation.options()) {
+            if (const std::optional<CreateFileOptions> options = renameOperation->options()) {
                 if (options->overwrite().value_or(false)) {
                     if (!newPath.removeFile())
                         return false;
@@ -383,19 +381,241 @@ bool applyDocumentChange(const Client *client, const DocumentChange &change)
                 }
             }
         }
-        return oldPath.renameFile(newPath);
-    } else if (std::holds_alternative<DeleteFileOperation>(change)) {
-        const auto deleteOperation = std::get<DeleteFileOperation>(change);
-        const FilePath filePath = deleteOperation.uri().toFilePath(client->hostPathMapper());
-        if (const std::optional<DeleteFileOptions> options = deleteOperation.options()) {
+        return bool(oldPath.renameFile(newPath));
+    } else if (const auto deleteOperation = std::get_if<DeleteFileOperation>(&change)) {
+        const FilePath filePath = deleteOperation->uri().toFilePath(client->hostPathMapper());
+        if (const std::optional<DeleteFileOptions> options = deleteOperation->options()) {
             if (!filePath.exists())
                 return options->ignoreIfNotExists().value_or(false);
             if (filePath.isDir() && options->recursive().value_or(false))
                 return filePath.removeRecursively();
         }
-        return filePath.removeFile();
+        return bool(filePath.removeFile());
     }
     return false;
 }
 
+constexpr char installJsonLsInfoBarId[] = "LanguageClient::InstallJsonLs";
+constexpr char installYamlLsInfoBarId[] = "LanguageClient::InstallYamlLs";
+constexpr char installBashLsInfoBarId[] = "LanguageClient::InstallBashLs";
+
+const char npmInstallTaskId[] = "LanguageClient::npmInstallTask";
+
+class NpmInstallTask : public QObject
+{
+    Q_OBJECT
+public:
+    NpmInstallTask(const FilePath &npm,
+                   const FilePath &workingDir,
+                   const QString &package,
+                   QObject *parent = nullptr)
+        : QObject(parent)
+        , m_package(package)
+    {
+        m_process.setCommand(CommandLine(npm, {"install", package}));
+        m_process.setWorkingDirectory(workingDir);
+        m_process.setTerminalMode(TerminalMode::Run);
+        connect(&m_process, &Process::done, this, &NpmInstallTask::handleDone);
+        connect(&m_killTimer, &QTimer::timeout, this, &NpmInstallTask::cancel);
+        connect(&m_watcher, &QFutureWatcher<void>::canceled, this, &NpmInstallTask::cancel);
+        m_watcher.setFuture(m_future.future());
+    }
+    void run()
+    {
+        const QString taskTitle = Tr::tr("Install npm Package");
+        Core::ProgressManager::addTask(m_future.future(), taskTitle, npmInstallTaskId);
+
+        m_process.start();
+
+        Core::MessageManager::writeSilently(
+            Tr::tr("Running \"%1\" to install %2.")
+                .arg(m_process.commandLine().toUserOutput(), m_package));
+
+        m_killTimer.setSingleShot(true);
+        m_killTimer.start(5 /*minutes*/ * 60 * 1000);
+    }
+
+signals:
+    void finished(bool success);
+
+private:
+    void cancel()
+    {
+        m_process.stop();
+        m_process.waitForFinished();
+        Core::MessageManager::writeFlashing(
+            m_killTimer.isActive()
+                ? Tr::tr("The installation of \"%1\" was canceled by timeout.").arg(m_package)
+                : Tr::tr("The installation of \"%1\" was canceled by the user.")
+                      .arg(m_package));
+    }
+    void handleDone()
+    {
+        m_future.reportFinished();
+        const bool success = m_process.result() == ProcessResult::FinishedWithSuccess;
+        if (!success) {
+            Core::MessageManager::writeFlashing(Tr::tr("Installing \"%1\" failed with exit code %2.")
+                                                    .arg(m_package)
+                                                    .arg(m_process.exitCode()));
+        }
+        emit finished(success);
+    }
+
+    QString m_package;
+    Utils::Process m_process;
+    QFutureInterface<void> m_future;
+    QFutureWatcher<void> m_watcher;
+    QTimer m_killTimer;
+};
+
+constexpr char YAML_MIME_TYPE[]{"application/x-yaml"};
+constexpr char SHELLSCRIPT_MIME_TYPE[]{"application/x-shellscript"};
+constexpr char JSON_MIME_TYPE[]{"application/json"};
+
+static void setupNpmServer(TextDocument *document,
+                           const Id &infoBarId,
+                           const QString &languageServer,
+                           const QString &languageServerArgs,
+                           const QString &language,
+                           const QStringList &serverMimeTypes)
+{
+    InfoBar *infoBar = document->infoBar();
+    if (!infoBar->canInfoBeAdded(infoBarId))
+        return;
+
+    // check if it is already configured
+    const QList<BaseSettings *> settings = LanguageClientManager::currentSettings();
+    for (BaseSettings *setting : settings) {
+        if (setting->isValid() && setting->m_languageFilter.isSupported(document))
+            return;
+    }
+
+    // check for npm
+    const FilePath npm = Environment::systemEnvironment().searchInPath("npm");
+    if (!npm.isExecutableFile())
+        return;
+
+    FilePath lsExecutable;
+
+    Process process;
+    process.setCommand(CommandLine(npm, {"list", "-g", languageServer}));
+    process.start();
+    process.waitForFinished();
+    if (process.exitCode() == 0) {
+        const FilePath lspath = FilePath::fromUserInput(process.stdOutLines().value(0));
+        lsExecutable = lspath.pathAppended(languageServer);
+        if (HostOsInfo::isWindowsHost())
+            lsExecutable = lsExecutable.stringAppended(".cmd");
+    }
+
+    const bool install = !lsExecutable.isExecutableFile();
+
+    const QString message = install ? Tr::tr("Install %1 language server via npm.").arg(language)
+                                    : Tr::tr("Setup %1 language server (%2).")
+                                          .arg(language)
+                                          .arg(lsExecutable.toUserOutput());
+    InfoBarEntry info(infoBarId, message, InfoBarEntry::GlobalSuppression::Enabled);
+    info.addCustomButton(install ? Tr::tr("Install") : Tr::tr("Setup"), [=]() {
+        const QList<Core::IDocument *> &openedDocuments = Core::DocumentModel::openedDocuments();
+        for (Core::IDocument *doc : openedDocuments)
+            doc->infoBar()->removeInfo(infoBarId);
+
+        auto setupStdIOSettings = [=](const FilePath &executable) {
+            auto settings = new StdIOSettings();
+
+            settings->m_executable = executable;
+            settings->m_arguments = languageServerArgs;
+            settings->m_name = Tr::tr("%1 Language Server").arg(language);
+            settings->m_languageFilter.mimeTypes = serverMimeTypes;
+            LanguageClientSettings::addSettings(settings);
+            LanguageClientManager::applySettings();
+        };
+
+        if (install) {
+            const FilePath lsPath = Core::ICore::userResourcePath(languageServer);
+            if (!lsPath.ensureWritableDir())
+                return;
+            auto install = new NpmInstallTask(npm,
+                                              lsPath,
+                                              languageServer,
+                                              LanguageClientManager::instance());
+
+            auto handleInstall = [=](const bool success) {
+                install->deleteLater();
+                if (!success)
+                    return;
+                FilePath relativePath = FilePath::fromPathPart(
+                    QString("node_modules/.bin/" + languageServer));
+                if (HostOsInfo::isWindowsHost())
+                    relativePath = relativePath.withSuffix(".cmd");
+                FilePath lsExecutable = lsPath.resolvePath(relativePath);
+                if (lsExecutable.isExecutableFile()) {
+                    setupStdIOSettings(lsExecutable);
+                    return;
+                }
+                Process process;
+                process.setCommand(CommandLine(npm, {"list", languageServer}));
+                process.setWorkingDirectory(lsPath);
+                process.start();
+                process.waitForFinished();
+                const QStringList output = process.stdOutLines();
+                // we are expecting output in the form of:
+                // tst@ C:\tmp\tst
+                // `-- vscode-json-languageserver@1.3.4
+                for (const QString &line : output) {
+                    const qsizetype splitIndex = line.indexOf('@');
+                    if (splitIndex == -1)
+                        continue;
+                    lsExecutable = FilePath::fromUserInput(line.mid(splitIndex + 1).trimmed())
+                                       .resolvePath(relativePath);
+                    if (lsExecutable.isExecutableFile()) {
+                        setupStdIOSettings(lsExecutable);
+                        return;
+                    }
+                }
+            };
+
+            QObject::connect(install,
+                             &NpmInstallTask::finished,
+                             LanguageClientManager::instance(),
+                             handleInstall);
+
+            install->run();
+        } else {
+            setupStdIOSettings(lsExecutable);
+        }
+    });
+    infoBar->addInfo(info);
+}
+
+void autoSetupLanguageServer(TextDocument *document)
+{
+    const MimeType mimeType = Utils::mimeTypeForName(document->mimeType());
+
+    if (mimeType.inherits(JSON_MIME_TYPE)) {
+        setupNpmServer(document,
+                       installJsonLsInfoBarId,
+                       "vscode-json-languageserver",
+                       "--stdio",
+                       QString("JSON"),
+                       {JSON_MIME_TYPE});
+    } else if (mimeType.inherits(YAML_MIME_TYPE)) {
+        setupNpmServer(document,
+                       installYamlLsInfoBarId,
+                       "yaml-language-server",
+                       "--stdio",
+                       QString("YAML"),
+                       {YAML_MIME_TYPE});
+    } else if (mimeType.inherits(SHELLSCRIPT_MIME_TYPE)) {
+        setupNpmServer(document,
+                       installBashLsInfoBarId,
+                       "bash-language-server",
+                       "start",
+                       QString("Bash"),
+                       {SHELLSCRIPT_MIME_TYPE});
+    }
+}
+
 } // namespace LanguageClient
+
+#include "languageclientutils.moc"

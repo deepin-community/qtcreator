@@ -73,18 +73,6 @@ const char G_FILE_OPEN[]          = "ProjectFile.Group.Open";
 const char G_FILE_OTHER[]         = "ProjectFile.Group.Other";
 const char G_FILE_CONFIG[]        = "ProjectFile.Group.Config";
 
-// Mime types
-const char C_SOURCE_MIMETYPE[]    = "text/x-csrc";
-const char C_HEADER_MIMETYPE[]    = "text/x-chdr";
-const char CPP_SOURCE_MIMETYPE[]  = "text/x-c++src";
-const char CPP_HEADER_MIMETYPE[]  = "text/x-c++hdr";
-const char LINGUIST_MIMETYPE[]    = "text/vnd.trolltech.linguist";
-const char FORM_MIMETYPE[]        = "application/x-designer";
-const char QML_MIMETYPE[]         = "text/x-qml"; // separate def also in qmljstoolsconstants.h
-const char QMLUI_MIMETYPE[]       = "application/x-qt.ui+qml";
-const char RESOURCE_MIMETYPE[]    = "application/vnd.qt.xml.resource";
-const char SCXML_MIMETYPE[]       = "application/scxml+xml";
-
 // Kits settings category
 const char KITS_SETTINGS_CATEGORY[]  = "A.Kits";
 
@@ -100,6 +88,7 @@ const char BUILD_AND_RUN_SETTINGS_CATEGORY[]  = "K.BuildAndRun";
 
 // Build and Run page
 const char BUILD_AND_RUN_SETTINGS_PAGE_ID[] = "A.ProjectExplorer.BuildAndRunOptions";
+const char SHOW_ALL_KITS_SETTINGS_KEY[] = "ProjectExplorer/Settings/ShowAllKits";
 
 // Device settings page
 const char DEVICE_SETTINGS_CATEGORY[] = "AM.Devices";
@@ -126,6 +115,8 @@ const char PREFERRED_PROJECT_NODE_PATH[] = "ProjectExplorer.PreferredProjectPath
 const char PROJECT_POINTER[] = "ProjectExplorer.Project";
 const char PROJECT_KIT_IDS[] = "ProjectExplorer.Profile.Ids";
 const char QT_KEYWORDS_ENABLED[] = "ProjectExplorer.QtKeywordsEnabled";
+const char PROJECT_ISSUBPROJECT[] = "IsSubproject"; // Used inside wizard, no prefix!
+const char PROJECT_ENABLESUBPROJECT[] = "ProjectExplorer.EnableSubproject";
 
 // Build step lists ids:
 const char BUILDSTEPS_CLEAN[] = "ProjectExplorer.BuildSteps.Clean";
@@ -135,6 +126,7 @@ const char BUILDSTEPS_DEPLOY[] = "ProjectExplorer.BuildSteps.Deploy";
 const char COPY_FILE_STEP[] = "ProjectExplorer.CopyFileStep";
 const char COPY_DIRECTORY_STEP[] = "ProjectExplorer.CopyDirectoryStep";
 const char DEVICE_CHECK_STEP[] =  "ProjectExplorer.DeviceCheckBuildStep";
+const char CUSTOM_PROCESS_STEP[] =  "ProjectExplorer.ProcessStep";
 
 // Language
 
@@ -156,6 +148,8 @@ const char CUSTOM_TOOLCHAIN_TYPEID[] = "ProjectExplorer.ToolChain.Custom";
 // Default directory to run custom (build) commands in.
 const char DEFAULT_WORKING_DIR[] = "%{buildDir}";
 const char DEFAULT_WORKING_DIR_ALTERNATE[] = "%{sourceDir}";
+
+const char QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE[] = "QTC_DEFAULT_BUILD_DIRECTORY_TEMPLATE";
 
 // Desktop Device related ids:
 const char DESKTOP_DEVICE_ID[] = "Desktop Device";
@@ -180,6 +174,7 @@ const char NORMAL_RUN_MODE[]="RunConfiguration.NormalRunMode";
 const char DEBUG_RUN_MODE[]="RunConfiguration.DebugRunMode";
 const char DAP_CMAKE_DEBUG_RUN_MODE[]="RunConfiguration.CmakeDebugRunMode";
 const char DAP_GDB_DEBUG_RUN_MODE[]="RunConfiguration.DapGdbDebugRunMode";
+const char DAP_LLDB_DEBUG_RUN_MODE[]="RunConfiguration.DapLldbDebugRunMode";
 const char DAP_PY_DEBUG_RUN_MODE[]="RunConfiguration.DapPyDebugRunMode";
 const char QML_PROFILER_RUN_MODE[]="RunConfiguration.QmlProfilerRunMode";
 const char QML_PROFILER_RUNNER[]="RunConfiguration.QmlProfilerRunner";
@@ -187,6 +182,16 @@ const char QML_PREVIEW_RUN_MODE[]="RunConfiguration.QmlPreviewRunMode";
 const char QML_PREVIEW_RUNNER[]="RunConfiguration.QmlPreviewRunner";
 const char PERFPROFILER_RUN_MODE[]="PerfProfiler.RunMode";
 const char PERFPROFILER_RUNNER[]="PerfProfiler.Runner";
+
+// RunWorkerFactory
+const char QML_PROFILER_RUN_FACTORY[] = "RunWorkerFactory.LocalQmlProfilerSupport";
+const char QML_PREVIEW_RUN_FACTORY[] = "RunWorkerFactory.LocalQmlPreviewSupport";
+
+// RunConfig
+const char QMAKE_RUNCONFIG_ID[] = "Qt4ProjectManager.Qt4RunConfiguration:";
+const char QBS_RUNCONFIG_ID[]   = "Qbs.RunConfiguration:";
+const char CMAKE_RUNCONFIG_ID[] = "CMakeProjectManager.CMakeRunConfiguration.";
+const char CUSTOM_EXECUTABLE_RUNCONFIG_ID[] = "ProjectExplorer.CustomExecutableRunConfiguration";
 
 // Navigation Widget
 const char PROJECTTREE_ID[] = "Projects";
@@ -219,6 +224,7 @@ const char USER_ENVIRONMENT_CHANGES_KEY[] = "ProjectExplorer.BuildConfiguration.
 // Called "RemoteLinux." for backwards compatibility
 const char SUPPORTS_RSYNC[] = "RemoteLinux.SupportsRSync";
 const char SUPPORTS_SFTP[] = "RemoteLinux.SupportsSftp";
+const char SSH_FORWARD_DEBUGSERVER_PORT[] = "RemoteLinux.SshForwardDebugServerPort";
 
 // UI texts
 PROJECTEXPLORER_EXPORT QString msgAutoDetected();

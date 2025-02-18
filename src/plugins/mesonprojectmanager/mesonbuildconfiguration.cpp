@@ -7,7 +7,6 @@
 #include "mesonbuildsystem.h"
 #include "mesonpluginconstants.h"
 #include "mesonprojectmanagertr.h"
-#include "mesonwrapper.h"
 #include "ninjabuildstep.h"
 
 #include <coreplugin/find/itemviewfind.h>
@@ -28,7 +27,7 @@
 #include <utils/headerviewstretcher.h>
 #include <utils/itemviews.h>
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/progressindicator.h>
 #include <utils/utilsicons.h>
 
@@ -64,7 +63,7 @@ static FilePath shadowBuildDirectory(const FilePath &projectFilePath,
 
     const QString projectName = projectFilePath.parentDir().fileName();
     return MesonBuildConfiguration::buildDirectoryFromTemplate(
-        Project::projectDirectory(projectFilePath), projectFilePath,
+        projectFilePath.absolutePath(), projectFilePath,
         projectName, k, bcName, buildType, "meson");
 }
 
@@ -191,7 +190,7 @@ public:
         Column {
             noMargin,
             Form {
-                 Tr::tr("Parameters:"), parametersLineEdit, br,
+                Tr::tr("Parameters:"), parametersLineEdit, br,
                 buildCfg->buildDirectoryAspect(), br
             },
             optionsFilterLineEdit,
@@ -351,32 +350,39 @@ BuildInfo createBuildInfo(MesonBuildType type)
     return bInfo;
 }
 
-MesonBuildConfigurationFactory::MesonBuildConfigurationFactory()
-{
-    registerBuildConfiguration<MesonBuildConfiguration>(Constants::MESON_BUILD_CONFIG_ID);
-    setSupportedProjectType(Constants::Project::ID);
-    setSupportedProjectMimeTypeName(Constants::Project::MIMETYPE);
-    setBuildGenerator(
-        [](const ProjectExplorer::Kit *k, const Utils::FilePath &projectPath, bool forSetup) {
-            QList<ProjectExplorer::BuildInfo> result;
+// MesonBuildConfigurationFactory
 
-            Utils::FilePath path = forSetup
-                                       ? Project::projectDirectory(projectPath)
-                                       : projectPath;
-            for (const auto &bType : {MesonBuildType::debug,
-                                      MesonBuildType::release,
-                                      MesonBuildType::debugoptimized,
-                                      MesonBuildType::minsize}) {
-                auto bInfo = createBuildInfo(bType);
-                if (forSetup)
-                    bInfo.buildDirectory = shadowBuildDirectory(projectPath,
-                                                                k,
-                                                                bInfo.typeName,
-                                                                bInfo.buildType);
-                result << bInfo;
-            }
-            return result;
-        });
+class MesonBuildConfigurationFactory final : public BuildConfigurationFactory
+{
+public:
+    MesonBuildConfigurationFactory()
+    {
+        registerBuildConfiguration<MesonBuildConfiguration>(Constants::MESON_BUILD_CONFIG_ID);
+        setSupportedProjectType(Constants::Project::ID);
+        setSupportedProjectMimeTypeName(Constants::Project::MIMETYPE);
+        setBuildGenerator(
+            [](const Kit *k, const FilePath &projectPath, bool forSetup) {
+                QList<BuildInfo> result;
+                for (const MesonBuildType bType : {MesonBuildType::debug,
+                                                   MesonBuildType::release,
+                                                   MesonBuildType::debugoptimized,
+                                                   MesonBuildType::minsize}) {
+                    BuildInfo bInfo = createBuildInfo(bType);
+                    if (forSetup)
+                        bInfo.buildDirectory = shadowBuildDirectory(projectPath,
+                                                                    k,
+                                                                    bInfo.typeName,
+                                                                    bInfo.buildType);
+                    result << bInfo;
+                }
+                return result;
+            });
+    }
+};
+
+void setupMesonBuildConfiguration()
+{
+    static MesonBuildConfigurationFactory theMesonBuildConfigurationFactory;
 }
 
 } // MesonProjectManager::Internal

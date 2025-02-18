@@ -21,7 +21,7 @@
 
 #include <utils/aspects.h>
 #include <utils/layoutbuilder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QComboBox>
@@ -93,7 +93,7 @@ PerfConfigWidget::PerfConfigWidget(PerfSettings *settings, Target *target)
             this, &PerfConfigWidget::readTracePoints);
 
     auto addEventButton = new QPushButton(Tr::tr("Add Event"), this);
-    connect(addEventButton, &QPushButton::pressed, this, [this]() {
+    connect(addEventButton, &QPushButton::pressed, this, [this] {
         auto model = eventsView->model();
         model->insertRow(model->rowCount());
     });
@@ -106,7 +106,7 @@ PerfConfigWidget::PerfConfigWidget(PerfSettings *settings, Target *target)
     });
 
     auto resetButton = new QPushButton(Tr::tr("Reset"), this);
-    connect(resetButton, &QPushButton::pressed, m_settings, &PerfSettings::resetToDefault);
+    connect(resetButton, &QPushButton::pressed, m_settings, &PerfSettings::reset);
 
     using namespace Layouting;
     Column {
@@ -127,7 +127,7 @@ PerfConfigWidget::PerfConfigWidget(PerfSettings *settings, Target *target)
     if (target)
         device = DeviceKitAspect::device(target->kit());
 
-    if (device.isNull()) {
+    if (!device) {
         useTracePointsButton->setEnabled(false);
         return;
     }
@@ -165,9 +165,8 @@ void PerfConfigWidget::handleProcessDone()
         useTracePointsButton->setEnabled(true);
         return;
     }
-    const QList<QByteArray> lines =
-            m_process->readAllRawStandardOutput().append(m_process->readAllRawStandardError())
-            .split('\n');
+    const QList<QByteArray> lines
+        = m_process->rawStdOut().append(m_process->rawStdErr()).split('\n');
     auto model = eventsView->model();
     const int previousRows = model->rowCount();
     QHash<QByteArray, QByteArray> tracePoints;
@@ -372,6 +371,8 @@ PerfSettings &globalSettings()
 PerfSettings::PerfSettings(ProjectExplorer::Target *target)
 {
     setAutoApply(false);
+    setId(Constants::PerfSettingsId);
+
     period.setSettingsKey("Analyzer.Perf.Frequency");
     period.setRange(250, 2147483647);
     period.setDefaultValue(250);
@@ -449,7 +450,13 @@ void PerfSettings::writeGlobalSettings() const
     settings->endGroup();
 }
 
-void PerfSettings::addPerfRecordArguments(CommandLine *cmd) const
+void PerfSettings::toMap(Store &map) const
+{
+    AspectContainer::toMap(map);
+    map[Constants::PerfRecordArgsId] = perfRecordArguments();
+}
+
+QString PerfSettings::perfRecordArguments() const
 {
     QString callgraphArg = callgraphMode.itemValue().toString();
     if (callgraphArg == Constants::PerfCallgraphDwarf)
@@ -464,19 +471,13 @@ void PerfSettings::addPerfRecordArguments(CommandLine *cmd) const
         }
     }
 
-    cmd->addArgs({"-e", events,
-                  "--call-graph", callgraphArg,
-                  sampleMode.itemValue().toString(),
-                  QString::number(period())});
-    cmd->addArgs(extraArguments(), CommandLine::Raw);
-}
-
-void PerfSettings::resetToDefault()
-{
-    PerfSettings defaults;
-    Store map;
-    defaults.toMap(map);
-    fromMap(map);
+    CommandLine cmd;
+    cmd.addArgs({"-e", events,
+                 "--call-graph", callgraphArg,
+                 sampleMode.itemValue().toString(),
+                 QString::number(period())});
+    cmd.addArgs(extraArguments(), CommandLine::Raw);
+    return cmd.arguments();
 }
 
 QWidget *PerfSettings::createPerfConfigWidget(Target *target)

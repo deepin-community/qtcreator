@@ -15,8 +15,8 @@
 #include <utils/stringutils.h>
 
 #include <QAction>
+#include <QApplication>
 #include <QEvent>
-#include <QGuiApplication>
 #include <QMenu>
 #include <QWidget>
 #include <QWindowStateChangeEvent>
@@ -28,24 +28,22 @@ namespace Internal {
 
 Q_GLOBAL_STATIC(WindowList, m_windowList)
 
-WindowSupport::WindowSupport(QWidget *window, const Context &context)
-    : QObject(window),
-      m_window(window)
+WindowSupport::WindowSupport(QWidget *window, const Context &context, const Context &actionContext)
+    : QObject(window)
+    , m_window(window)
 {
     m_window->installEventFilter(this);
 
-    m_contextObject = new IContext(this);
-    m_contextObject->setWidget(window);
-    m_contextObject->setContext(context);
-    ICore::addContextObject(m_contextObject);
+    IContext::attach(window, context);
+    const Context ac = actionContext.isEmpty() ? context : actionContext;
 
     if (useMacShortcuts) {
         m_minimizeAction = new QAction(this);
-        ActionManager::registerAction(m_minimizeAction, Constants::MINIMIZE_WINDOW, context);
+        ActionManager::registerAction(m_minimizeAction, Constants::MINIMIZE_WINDOW, ac);
         connect(m_minimizeAction, &QAction::triggered, m_window, &QWidget::showMinimized);
 
         m_zoomAction = new QAction(this);
-        ActionManager::registerAction(m_zoomAction, Constants::ZOOM_WINDOW, context);
+        ActionManager::registerAction(m_zoomAction, Constants::ZOOM_WINDOW, ac);
         connect(m_zoomAction, &QAction::triggered, m_window, [this] {
             if (m_window->isMaximized()) {
                 // similar to QWidget::showMaximized
@@ -58,13 +56,16 @@ WindowSupport::WindowSupport(QWidget *window, const Context &context)
         });
 
         m_closeAction = new QAction(this);
-        ActionManager::registerAction(m_closeAction, Constants::CLOSE_WINDOW, context);
+        ActionManager::registerAction(m_closeAction, Constants::CLOSE_WINDOW, ac);
         connect(m_closeAction, &QAction::triggered, m_window, &QWidget::close, Qt::QueuedConnection);
     }
 
-    m_toggleFullScreenAction = new QAction(this);
+    auto cmd = ActionManager::command(Constants::TOGGLE_FULLSCREEN); // created in registerDefaultActions()
+    if (QTC_GUARD(cmd))
+        m_toggleFullScreenAction = cmd->action();
+    else
+        m_toggleFullScreenAction = new QAction(this);
     updateFullScreenAction();
-    ActionManager::registerAction(m_toggleFullScreenAction, Constants::TOGGLE_FULLSCREEN, context);
     connect(m_toggleFullScreenAction, &QAction::triggered, this, &WindowSupport::toggleFullScreen);
 
     m_windowList->addWindow(window);
@@ -105,11 +106,8 @@ bool WindowSupport::eventFilter(QObject *obj, QEvent *event)
         updateFullScreenAction();
     } else if (event->type() == QEvent::WindowActivate) {
         m_windowList->setActiveWindow(m_window);
-    } else if (event->type() == QEvent::Hide) {
-        // minimized windows are hidden, but we still want to show them
-        m_windowList->setWindowVisible(m_window, m_window->isMinimized());
-    } else if (event->type() == QEvent::Show) {
-        m_windowList->setWindowVisible(m_window, true);
+    } else if (event->type() == QEvent::Hide || event->type() == QEvent::Show) {
+        m_windowList->updateVisibility(m_window);
     }
     return false;
 }
@@ -126,15 +124,12 @@ void WindowSupport::toggleFullScreen()
 void WindowSupport::updateFullScreenAction()
 {
     if (m_window->isFullScreen()) {
-        if (Utils::HostOsInfo::isMacHost())
-            m_toggleFullScreenAction->setText(Tr::tr("Exit Full Screen"));
-        else
-            m_toggleFullScreenAction->setChecked(true);
+        m_toggleFullScreenAction->setText(Tr::tr("Exit Full Screen"));
     } else {
         if (Utils::HostOsInfo::isMacHost())
             m_toggleFullScreenAction->setText(Tr::tr("Enter Full Screen"));
         else
-            m_toggleFullScreenAction->setChecked(false);
+            m_toggleFullScreenAction->setText(Tr::tr("Full Screen"));
     }
 }
 
@@ -178,18 +173,34 @@ void WindowList::activateWindow(QAction *action)
     int index = m_windowActions.indexOf(action);
     QTC_ASSERT(index >= 0, return);
     QTC_ASSERT(index < m_windows.size(), return);
-    ICore::raiseWindow(m_windows.at(index));
+    QWidget *window = m_windows.at(index);
+    if (window->isMinimized())
+        window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
+    ICore::raiseWindow(window);
 }
 
-void WindowList::updateTitle(QWidget *window)
+void WindowList::updateTitle(QWidget *window, int i)
 {
-    int index = m_windows.indexOf(window);
+    const int index = i < 0 ? m_windows.indexOf(window) : i;
     QTC_ASSERT(index >= 0, return);
     QTC_ASSERT(index < m_windowActions.size(), return);
     QString title = window->windowTitle();
     if (title.endsWith(QStringLiteral("- ") + QGuiApplication::applicationDisplayName()))
         title.chop(12);
     m_windowActions.at(index)->setText(Utils::quoteAmpersands(title.trimmed()));
+}
+
+void WindowList::updateVisibility(QWidget *window)
+{
+    updateVisibility(window, m_windows.indexOf(window));
+}
+
+void WindowList::updateVisibility(QWidget *window, int index)
+{
+    QTC_ASSERT(index >= 0, return);
+    QTC_ASSERT(index < m_windowActions.size(), return);
+    // minimized windows are hidden, but we still want to show them
+    m_windowActions.at(index)->setVisible(window->isVisible() || window->isMinimized());
 }
 
 void WindowList::removeWindow(QWidget *window)
@@ -206,22 +217,18 @@ void WindowList::removeWindow(QWidget *window)
 
     m_windows.removeOne(window);
 
-    for (int i = index; i < m_windows.size(); ++i)
-        updateTitle(m_windows.at(i));
+    for (int i = index; i < m_windows.size(); ++i) {
+        QWidget *window = m_windows.at(i);
+        updateTitle(window, i);
+        updateVisibility(window, i);
+    }
+    setActiveWindow(QApplication::activeWindow());
 }
 
 void WindowList::setActiveWindow(QWidget *window)
 {
     for (int i = 0; i < m_windows.size(); ++i)
         m_windowActions.at(i)->setChecked(m_windows.at(i) == window);
-}
-
-void WindowList::setWindowVisible(QWidget *window, bool visible)
-{
-    int index = m_windows.indexOf(window);
-    QTC_ASSERT(index >= 0, return);
-    QTC_ASSERT(index < m_windowActions.size(), return);
-    m_windowActions.at(index)->setVisible(visible);
 }
 
 } // Internal

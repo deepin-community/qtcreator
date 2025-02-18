@@ -1,51 +1,44 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-import QtQuick 2.15
-import QtQuick.Layouts 1.15
-import QtQuickDesignerTheme 1.0
-import HelperWidgets 2.0
+import QtQuick
 import QtQuick.Controls
-
-import StudioTheme 1.0 as StudioTheme
+import HelperWidgets as HelperWidgets
+import StudioTheme as StudioTheme
 import ContentLibraryBackend
-
-import WebFetcher 1.0
+import WebFetcher
 
 Item {
     id: root
 
-    signal showContextMenu()
+    // Download states: "" (exists not downloaded), "unavailable", "downloading", "downloaded", "failed"
+    property string downloadState: ContentLibraryBackend.materialsModel.isMaterialDownloaded(modelData)
+                                   ? "downloaded" : ""
 
-    // Download states: "" (ie default, not downloaded), "unavailable", "downloading", "downloaded",
-    //                  "failed"
-    property string downloadState: modelData.isDownloaded() ? "downloaded" : ""
+    signal showContextMenu()
+    signal addToProject()
 
     visible: modelData.bundleMaterialVisible
 
     MouseArea {
         id: mouseArea
 
-        enabled: root.downloadState !== "downloading"
+        enabled: !ContentLibraryBackend.rootView.importerRunning && root.downloadState == "downloaded"
         hoverEnabled: true
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton | Qt.RightButton
 
         onPressed: (mouse) => {
-            if (mouse.button === Qt.LeftButton && !materialsModel.importerRunning) {
-                if (root.downloadState === "downloaded")
-                    ContentLibraryBackend.rootView.startDragMaterial(modelData, mapToGlobal(mouse.x, mouse.y))
-            } else if (mouse.button === Qt.RightButton && root.downloadState === "downloaded") {
+            if (mouse.button === Qt.LeftButton)
+                ContentLibraryBackend.rootView.startDragMaterial(modelData, mapToGlobal(mouse.x, mouse.y))
+            else if (mouse.button === Qt.RightButton)
                 root.showContextMenu()
-            }
         }
     }
 
     Column {
         anchors.fill: parent
         spacing: 1
-
-        Item { width: 1; height: 5 } // spacer
 
         DownloadPane {
             id: downloadPane
@@ -59,7 +52,7 @@ Item {
         Image {
             id: img
 
-            width: root.width - 10
+            width: root.width
             height: img.width
             anchors.horizontalCenter: parent.horizontalCenter
             source: modelData.bundleMaterialIcon
@@ -76,7 +69,7 @@ Item {
                 color: "#00ff00"
                 border.color: "#555555"
                 border.width: 1
-                visible: modelData.bundleMaterialImported
+                visible: modelData.bundleItemImported
 
                 ToolTip {
                     visible: indicatorMouseArea.containsMouse
@@ -91,7 +84,7 @@ Item {
                 }
             }
 
-            IconButton {
+            HelperWidgets.IconButton {
                 icon: StudioTheme.Constants.plus
                 tooltip: qsTr("Add an instance to project")
                 buttonSize: 22
@@ -101,16 +94,16 @@ Item {
                 pressColor: Qt.hsla(c.hslHue, c.hslSaturation, c.hslLightness, .4)
                 anchors.right: img.right
                 anchors.bottom: img.bottom
-                enabled: !ContentLibraryBackend.materialsModel.importerRunning
+                enabled: !ContentLibraryBackend.rootView.importerRunning
                 visible: root.downloadState === "downloaded"
                          && (containsMouse || mouseArea.containsMouse)
 
                 onClicked: {
-                    ContentLibraryBackend.materialsModel.addToProject(modelData)
+                    root.addToProject()
                 }
-            } // IconButton
+            }
 
-            IconButton {
+            HelperWidgets.IconButton {
                 id: downloadIcon
                 icon: root.downloadState === "unavailable"
                       ? StudioTheme.Constants.downloadUnavailable
@@ -154,29 +147,22 @@ Item {
                     root.downloadState = ""
                     downloader.start()
                 }
-            } // IconButton
-        } // Image
+            }
+        }
 
-        TextInput {
+        Text {
             id: matName
 
-            text: modelData.bundleMaterialName
-
             width: img.width
-            clip: true
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: TextInput.AlignHCenter
 
+            text: modelData.bundleMaterialName
+            elide: Text.ElideRight
             font.pixelSize: StudioTheme.Values.myFontSize
-
-            readOnly: true
-            selectByMouse: !matName.readOnly
-
             color: StudioTheme.Values.themeTextColor
-            selectionColor: StudioTheme.Values.themeTextSelectionColor
-            selectedTextColor: StudioTheme.Values.themeTextSelectedTextColor
         }
-    } // Column
+    }
 
     Timer {
         id: delayedFinish
@@ -192,10 +178,10 @@ Item {
     MultiFileDownloader {
         id: downloader
 
-        baseUrl: modelData.bundleMaterialBaseWebUrl
+        baseUrl: ContentLibraryBackend.materialsModel.baseWebUrl
         files: modelData.bundleMaterialFiles
 
-        targetDirPath: modelData.bundleMaterialParentPath
+        targetDirPath: ContentLibraryBackend.materialsModel.bundlePath
 
         onDownloadStarting: {
             root.downloadState = "downloading"
@@ -223,6 +209,6 @@ Item {
             probeUrl: false
             downloadEnabled: true
             targetFilePath: downloader.nextTargetPath
-        } // FileDownloader
-    } // MultiFileDownloader
+        }
+    }
 }

@@ -8,6 +8,7 @@ QtcPlugin {
 
     Depends { name: "Core" }
     Depends { name: "CppEditor" }
+    Depends { name: "Debugger" }
     Depends { name: "QmlJS" }
     Depends { name: "ProjectExplorer" }
     Depends { name: "TextEditor" }
@@ -19,6 +20,8 @@ QtcPlugin {
         "cmake_global.h",
         "cmakeabstractprocessstep.cpp",
         "cmakeabstractprocessstep.h",
+        "cmakeautogenparser.cpp",
+        "cmakeautogenparser.h",
         "cmakebuildconfiguration.cpp",
         "cmakebuildconfiguration.h",
         "cmakebuildstep.cpp",
@@ -40,8 +43,8 @@ QtcPlugin {
         "cmakekitaspect.cpp",
         "cmakelocatorfilter.cpp",
         "cmakelocatorfilter.h",
-        "cmakeparser.cpp",
-        "cmakeparser.h",
+        "cmakeoutputparser.cpp",
+        "cmakeoutputparser.h",
         "cmakeprocess.cpp",
         "cmakeprocess.h",
         "cmakeproject.cpp",
@@ -56,7 +59,6 @@ QtcPlugin {
         "cmakeprojectnodes.cpp",
         "cmakeprojectnodes.h",
         "cmakeprojectplugin.cpp",
-        "cmakeprojectplugin.h",
         "cmaketool.cpp",
         "cmaketool.h",
         "cmaketoolmanager.cpp",
@@ -86,7 +88,9 @@ QtcPlugin {
         "presetsmacros.cpp",
         "presetsmacros.h",
         "projecttreehelper.cpp",
-        "projecttreehelper.h"
+        "projecttreehelper.h",
+        "targethelper.cpp",
+        "targethelper.h",
     ]
 
     Group {

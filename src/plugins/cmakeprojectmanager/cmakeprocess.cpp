@@ -4,10 +4,12 @@
 #include "cmakeprocess.h"
 
 #include "builddirparameters.h"
-#include "cmakeparser.h"
+#include "cmakeautogenparser.h"
+#include "cmakeoutputparser.h"
 #include "cmakeprojectconstants.h"
 #include "cmakeprojectmanagertr.h"
 #include "cmakespecificsettings.h"
+#include "cmaketoolmanager.h"
 
 #include <coreplugin/progressmanager/processprogress.h>
 #include <projectexplorer/buildsystem.h>
@@ -19,7 +21,8 @@
 #include <extensionsystem/pluginmanager.h>
 
 #include <utils/algorithm.h>
-#include <utils/process.h>
+#include <utils/macroexpander.h>
+#include <utils/qtcprocess.h>
 #include <utils/processinfo.h>
 #include <utils/processinterface.h>
 #include <utils/stringutils.h>
@@ -57,11 +60,15 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
 
     const FilePath cmakeExecutable = cmake->cmakeExecutable();
 
+    const QString mountHint = ::CMakeProjectManager::Tr::tr(
+        "You may need to add the project directory to the list of directories that are mounted by "
+        "the build device.");
+
     if (!cmakeExecutable.ensureReachable(parameters.sourceDirectory)) {
         const QString msg = ::CMakeProjectManager::Tr::tr(
                 "The source directory %1 is not reachable by the CMake executable %2.")
             .arg(parameters.sourceDirectory.displayName()).arg(cmakeExecutable.displayName());
-        BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), msg}).join('\n'));
+        BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), msg, mountHint}).join('\n'));
         emit finished(failedToStartExitCode);
         return;
     }
@@ -70,7 +77,7 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
         const QString msg = ::CMakeProjectManager::Tr::tr(
                 "The build directory %1 is not reachable by the CMake executable %2.")
             .arg(parameters.buildDirectory.displayName()).arg(cmakeExecutable.displayName());
-        BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), msg}).join('\n'));
+        BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), msg, mountHint}).join('\n'));
         emit finished(failedToStartExitCode);
         return;
     }
@@ -98,7 +105,7 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
     }
 
     // Copy the "package-manager" CMake code from the ${IDE:ResourcePath} to the build directory
-    if (settings().packageManagerAutoSetup()) {
+    if (settings(parameters.project).packageManagerAutoSetup()) {
         const FilePath localPackageManagerDir = buildDirectory.pathAppended(Constants::PACKAGE_MANAGER_DIR);
         const FilePath idePackageManagerDir = FilePath::fromString(
             parameters.expander->expand(QStringLiteral("%{IDE:ResourcePath}/package-manager")));
@@ -107,9 +114,10 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
             idePackageManagerDir.copyRecursively(localPackageManagerDir);
     }
 
-    const auto parser = new CMakeParser;
+    const auto parser = new CMakeOutputParser;
     parser->setSourceDirectory(parameters.sourceDirectory);
-    m_parser.addLineParser(parser);
+    m_parser.addLineParsers({new CMakeAutogenParser, parser});
+    m_parser.addLineParsers(parameters.outputParsers());
 
     // Always use the sourceDir: If we are triggered because the build directory is getting deleted
     // then we are racing against CMakeCache.txt also getting deleted.
@@ -130,11 +138,24 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
     });
 
     connect(m_process.get(), &Process::done, this, [this] {
-        handleProcessDone(m_process->resultData());
+        if (m_process->result() != ProcessResult::FinishedWithSuccess) {
+            const QString message = m_process->exitMessage();
+            BuildSystem::appendBuildSystemOutput(addCMakePrefix({{}, message}).join('\n'));
+            TaskHub::addTask(BuildSystemTask(Task::Error, message));
+        }
+
+        emit finished(m_process->exitCode());
+
+        const QString elapsedTime = Utils::formatElapsedTime(m_elapsed.elapsed());
+        BuildSystem::appendBuildSystemOutput(addCMakePrefix({{}, elapsedTime}).join('\n'));
     });
 
     CommandLine commandLine(cmakeExecutable);
-    commandLine.addArgs({"-S", sourceDirectory.path(), "-B", buildDirectory.path()});
+    commandLine.addArgs(
+        {"-S",
+         CMakeToolManager::mappedFilePath(parameters.project, sourceDirectory).path(),
+         "-B",
+         CMakeToolManager::mappedFilePath(parameters.project, buildDirectory).path()});
     commandLine.addArgs(arguments);
 
     TaskHub::clearTasks(ProjectExplorer::Constants::TASK_CATEGORY_BUILDSYSTEM);
@@ -146,7 +167,6 @@ void CMakeProcess::run(const BuildDirParameters &parameters, const QStringList &
     ProcessProgress *progress = new ProcessProgress(m_process.get());
     progress->setDisplayName(::CMakeProjectManager::Tr::tr("Configuring \"%1\"")
                              .arg(parameters.projectName));
-    m_process->setTimeoutS(10); // for process progress timeout estimation
     m_process->setCommand(commandLine);
     m_elapsed.start();
     m_process->start();
@@ -158,44 +178,11 @@ void CMakeProcess::stop()
         m_process->stop();
 }
 
-void CMakeProcess::handleProcessDone(const Utils::ProcessResultData &resultData)
-{
-    const int code = resultData.m_exitCode;
-    QString msg;
-    if (resultData.m_error == QProcess::FailedToStart) {
-        msg = ::CMakeProjectManager::Tr::tr("CMake process failed to start.");
-    } else if (resultData.m_exitStatus != QProcess::NormalExit) {
-        if (resultData.m_canceledByUser)
-            msg = ::CMakeProjectManager::Tr::tr("CMake process was canceled by the user.");
-        else
-            msg = ::CMakeProjectManager::Tr::tr("CMake process crashed.");
-    } else if (code != 0) {
-        msg = ::CMakeProjectManager::Tr::tr("CMake process exited with exit code %1.").arg(code);
-    }
-
-    if (!msg.isEmpty()) {
-        BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), msg}).join('\n'));
-        TaskHub::addTask(BuildSystemTask(Task::Error, msg));
-    }
-
-    emit finished(code);
-
-    const QString elapsedTime = Utils::formatElapsedTime(m_elapsed.elapsed());
-    BuildSystem::appendBuildSystemOutput(addCMakePrefix({QString(), elapsedTime}).join('\n'));
-}
-
 QString addCMakePrefix(const QString &str)
 {
-    auto qColorToAnsiCode = [] (const QColor &color) {
-        return QString::fromLatin1("\033[38;2;%1;%2;%3m")
-            .arg(color.red()).arg(color.green()).arg(color.blue());
-    };
-    static const QColor bgColor = creatorTheme()->color(Theme::BackgroundColorNormal);
-    static const QColor fgColor = creatorTheme()->color(Theme::TextColorNormal);
-    static const QColor grey = StyleHelper::mergedColors(fgColor, bgColor, 80);
-    static const QString prefixString = qColorToAnsiCode(grey) + Constants::OUTPUT_PREFIX
-                                        + qColorToAnsiCode(fgColor);
-    return QString("%1%2").arg(prefixString, str);
+    static const QString prefix
+        = ansiColoredText(Constants::OUTPUT_PREFIX, creatorColor(Theme::Token_Text_Muted));
+    return prefix + str;
 }
 
 QStringList addCMakePrefix(const QStringList &list)

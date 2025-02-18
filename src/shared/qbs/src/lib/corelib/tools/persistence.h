@@ -54,6 +54,7 @@
 #include <QtCore/qvariant.h>
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -145,8 +146,9 @@ private:
     template<typename T> QHash<T, PersistentObjectId> &idMap();
     template<typename T> PersistentObjectId &lastStoredId();
 
-    static const PersistentObjectId ValueNotFoundId = -1;
-    static const PersistentObjectId EmptyValueId = -2;
+    static const inline PersistentObjectId ValueNotFoundId = -1;
+    static const inline PersistentObjectId EmptyValueId = -2;
+    static const inline PersistentObjectId NullValueId = -3;
 
     std::unique_ptr<QIODevice> m_file;
     QDataStream m_stream;
@@ -271,8 +273,13 @@ template<typename T> inline T PersistentPool::idLoadValue()
 {
     int id;
     m_stream >> id;
-    if (id == EmptyValueId)
+    if (id == NullValueId)
         return T();
+    if (id == EmptyValueId) {
+        if constexpr (std::is_same_v<T, QString>)
+            return QString(0, QChar());
+        return T();
+    }
     QBS_CHECK(id >= 0);
     if (id >= static_cast<int>(idStorage<T>().size())) {
         T value;
@@ -287,6 +294,12 @@ template<typename T> inline T PersistentPool::idLoadValue()
 template<typename T>
 void PersistentPool::idStoreValue(const T &value)
 {
+    if constexpr (std::is_same_v<T, QString>) {
+        if (value.isNull()) {
+            m_stream << NullValueId;
+            return;
+        }
+    }
     if (value.isEmpty()) {
         m_stream << EmptyValueId;
         return;
@@ -539,6 +552,29 @@ struct PPHelper<std::unordered_map<K, V, H>>
         const auto count = pool->load<quint32>();
         for (std::size_t i = 0; i < count; ++i)
             map.insert(pool->load<std::pair<K, V>>());
+    }
+};
+
+template<typename T>
+struct PPHelper<std::optional<T>>
+{
+    static const inline int ValueMarker = -2;
+    static const inline int NoValueMarker = -1;
+
+    static void store(const std::optional<T> &v, PersistentPool *pool)
+    {
+        if (v) {
+            pool->store(ValueMarker);
+            pool->store(*v);
+        } else {
+            pool->store(NoValueMarker);
+        }
+    }
+    static void load(std::optional<T> &v, PersistentPool *pool)
+    {
+        const int marker = pool->load<int>();
+        if (marker == ValueMarker)
+            v = pool->load<T>();
     }
 };
 

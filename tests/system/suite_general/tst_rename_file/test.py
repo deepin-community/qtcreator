@@ -38,7 +38,7 @@ def main():
         previous = filenames[-1]
         for filename in filenames:
             tempFiletype = filetype
-            if filetype == "QML" and not previous.endswith(".qml"):
+            if filetype == "QML" and not fileExtMatchesQml(previous):
                 tempFiletype = "Other files"
             renameFile(templateDir, usedProFile, projectName + "." + tempFiletype,
                        previous, filename)
@@ -61,6 +61,15 @@ def verifyRenamedIncludes(templateDir, file, oldname, newname):
                         'Verify that new filename is included in %s' % file)):
         test.log(grep("include", fileText))
 
+
+def fileExtMatchesQml(fileName):
+    if platform.system() == "Linux":
+        return fileName.endswith(".qml")
+    else:
+        # On case ignoring file systems, ".QML" is the same as ".qml"
+        return fileName.lower().endswith(".qml")
+
+
 def renameFile(projectDir, proFile, branch, oldname, newname):
     oldFilePath = os.path.join(projectDir, oldname)
     newFilePath = os.path.join(projectDir, newname)
@@ -79,7 +88,12 @@ def renameFile(projectDir, proFile, branch, oldname, newname):
         menu = ":Qt Creator.Project.Menu.Folder_QMenu"
     else:
         menu = ":Qt Creator.Project.Menu.File_QMenu"
-    activateItem(waitForObjectItem(menu, "Rename..."))
+    try:
+        activateItem(waitForObjectItem(menu, "Rename...", 5000))
+    except:
+        # Try getting an enabled item by reopening the menu
+        openItemContextMenu(treeview, oldItemText, 5, 5, 0)
+        activateItem(waitForObjectItem(menu, "Rename...", 5000))
     replaceEdit = waitForObject(":Qt Creator_Utils::NavigationTreeView::QExpandingLineEdit")
     test.compare(replaceEdit.selectedText, oldname.rsplit(".", 1)[0],
                  "Only the filename without the extension is selected?")
@@ -110,7 +124,7 @@ def renameFile(projectDir, proFile, branch, oldname, newname):
         test.verify(oldname not in os.listdir(projectDir),
                     "Verify that file with old name does not exist: %s" % oldFilePath)
 
-    if newItemText.endswith("\\.qml"):
+    if fileExtMatchesQml(newItemText):
         newItemText = newItemText.replace(".Other files.", ".QML.")
     else:
         newItemText = newItemText.replace(".QML.", ".Other files.")

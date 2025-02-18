@@ -4,7 +4,6 @@
 #include "autogenstep.h"
 #include "autoreconfstep.h"
 #include "autotoolsbuildconfiguration.h"
-#include "autotoolsbuildsystem.h"
 #include "autotoolsprojectconstants.h"
 #include "configurestep.h"
 #include "makestep.h"
@@ -14,9 +13,10 @@
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectmanager.h>
-#include <projectexplorer/target.h>
 
 #include <extensionsystem/iplugin.h>
+
+#include <utils/mimeconstants.h>
 
 using namespace ProjectExplorer;
 
@@ -34,15 +34,12 @@ class AutotoolsProject : public Project
 {
 public:
     explicit AutotoolsProject(const Utils::FilePath &fileName)
-        : Project(Constants::MAKEFILE_MIMETYPE, fileName)
+        : Project(Utils::Constants::MAKEFILE_MIMETYPE, fileName)
     {
         setId(Constants::AUTOTOOLS_PROJECT_ID);
         setProjectLanguages(Core::Context(ProjectExplorer::Constants::CXX_LANGUAGE_ID));
         setDisplayName(projectDirectory().fileName());
-
         setHasMakeInstallEquivalent(true);
-
-        setBuildSystemCreator([](Target *t) { return new AutotoolsBuildSystem(t); });
     }
 };
 
@@ -67,22 +64,10 @@ public:
  * - MakefileEditorFactory: Provides a specialized editor with automatic
  *   syntax highlighting for Makefile.am files.
  *
- * - AutotoolsTargetFactory: Our current target is desktop.
- *
  * - AutotoolsBuildConfigurationFactory: Creates build configurations that
  *   contain the steps (make, autogen, autoreconf or configure) that will
  *   be executed in the build process)
  */
-
-class AutotoolsProjectPluginPrivate
-{
-public:
-    AutotoolsBuildConfigurationFactory buildConfigFactory;
-    MakeStepFactory makeStepFactory;
-    AutogenStepFactory autogenStepFactory;
-    ConfigureStepFactory configureStepFactory;
-    AutoreconfStepFactory autoreconfStepFactory;
-};
 
 class AutotoolsProjectPlugin final : public ExtensionSystem::IPlugin
 {
@@ -91,10 +76,14 @@ class AutotoolsProjectPlugin final : public ExtensionSystem::IPlugin
 
     void initialize() final
     {
-        d = std::make_unique<AutotoolsProjectPluginPrivate>();
-    }
+        ProjectManager::registerProjectType<AutotoolsProject>(Utils::Constants::MAKEFILE_MIMETYPE);
 
-    std::unique_ptr<AutotoolsProjectPluginPrivate> d;
+        setupAutogenStep();
+        setupConfigureStep();
+        setupAutoreconfStep();
+        setupAutotoolsMakeStep();
+        setupAutotoolsBuildConfiguration();
+    }
 };
 
 } // AutotoolsProjectManager::Internal

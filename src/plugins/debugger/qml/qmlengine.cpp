@@ -38,7 +38,7 @@
 
 #include <utils/basetreeview.h>
 #include <utils/fileinprojectfinder.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 #include <utils/treemodel.h>
 
@@ -141,7 +141,7 @@ public:
     void evaluate(const QString expr, qint64 context, const QmlCallback &cb);
     void lookup(const LookupItems &items);
     void backtrace();
-    void updateLocals();
+    void updateLocals(bool focusOnFrame = true);
     void scope(int number, int frameNumber = -1);
     void scripts(int types = 4, const QList<int> ids = QList<int>(),
                  bool includeSource = false, const QVariant filter = QVariant());
@@ -215,6 +215,8 @@ public:
     QHash<int, QmlCallback> callbackForToken;
 
     FileInProjectFinder fileFinder;
+
+    bool skipFocusOnNextHandleFrame = false;
 
 private:
     ConsoleItem *constructLogItemTree(const QmlV8ObjectData &objectData, QList<int> &seenHandles);
@@ -377,6 +379,9 @@ void QmlEngine::beginConnection()
 
 void QmlEngine::connectionStartupFailed()
 {
+    if (isDying())
+        return;
+
     if (d->retryOnConnectFail) {
         // retry after 3 seconds ...
         QTimer::singleShot(3000, this, [this] { beginConnection(); });
@@ -403,7 +408,9 @@ void QmlEngine::appStartupFailed(const QString &errorMessage)
 {
     QString error = Tr::tr("Could not connect to the in-process QML debugger. %1").arg(errorMessage);
 
-    if (companionEngine()) {
+    if (companionEngines().isEmpty()) {
+        debuggerConsole()->printItem(ConsoleItem::WarningType, error);
+    } else {
         auto infoBox = new QMessageBox(ICore::dialogParent());
         infoBox->setIcon(QMessageBox::Critical);
         infoBox->setWindowTitle(QGuiApplication::applicationDisplayName());
@@ -413,8 +420,6 @@ void QmlEngine::appStartupFailed(const QString &errorMessage)
         connect(infoBox, &QDialog::finished,
                 this, &QmlEngine::errorMessageBoxFinished);
         infoBox->show();
-    } else {
-        debuggerConsole()->printItem(ConsoleItem::WarningType, error);
     }
 
     notifyEngineRunFailed();
@@ -473,12 +478,11 @@ void QmlEngine::gotoLocation(const Location &location)
 
 void QmlEngine::closeConnection()
 {
-    if (d->connectionTimer.isActive()) {
-        d->connectionTimer.stop();
-    } else {
-        if (QmlDebugConnection *connection = d->connection())
-            connection->close();
-    }
+    d->automaticConnect = false;
+    d->retryOnConnectFail = false;
+    d->connectionTimer.stop();
+    if (QmlDebugConnection *connection = d->connection())
+        connection->close();
 }
 
 void QmlEngine::startProcess()
@@ -496,8 +500,7 @@ void QmlEngine::startProcess()
 
 void QmlEngine::stopProcess()
 {
-    if (d->process.isRunning())
-        d->process.close();
+    d->process.close();
 }
 
 void QmlEngine::shutdownInferior()
@@ -511,8 +514,8 @@ void QmlEngine::shutdownInferior()
     d->runCommand({DISCONNECT});
 
     resetLocation();
-    stopProcess();
     closeConnection();
+    stopProcess();
 
     notifyInferiorShutdownFinished();
 }
@@ -534,7 +537,7 @@ void QmlEngine::setupEngine()
     notifyEngineSetupOk();
 
     // we won't get any debug output
-    if (!terminal()) {
+    if (!usesTerminal()) {
         d->retryOnConnectFail = true;
         d->automaticConnect = true;
     }
@@ -543,9 +546,10 @@ void QmlEngine::setupEngine()
 
     if (isPrimaryEngine()) {
         // QML only.
-        if (runParameters().startMode == AttachToRemoteServer)
+        const DebuggerStartMode startMode = runParameters().startMode;
+        if (startMode == AttachToQmlServer || startMode == AttachToRemoteServer)
             tryToConnect();
-        else if (runParameters().startMode == AttachToRemoteProcess)
+        else if (startMode == AttachToRemoteProcess)
             beginConnection();
         else
             startProcess();
@@ -569,6 +573,10 @@ void QmlEngine::continueInferior()
 
 void QmlEngine::interruptInferior()
 {
+    if (isDying()) {
+        notifyInferiorStopOk();
+        return;
+    }
     showMessage(INTERRUPT, LogInput);
     d->runDirectCommand(INTERRUPT);
     showStatusMessage(Tr::tr("Waiting for JavaScript engine to interrupt on next statement."));
@@ -775,7 +783,7 @@ void QmlEngine::assignValueInDebugger(WatchItem *item,
     const QString &expression, const QVariant &editValue)
 {
     if (!expression.isEmpty()) {
-        QTC_CHECK(editValue.typeId() == QVariant::String);
+        QTC_CHECK(editValue.typeId() == QMetaType::QString);
         QVariant value;
         QString val = editValue.toString();
         if (item->type == "boolean")
@@ -791,7 +799,7 @@ void QmlEngine::assignValueInDebugger(WatchItem *item,
             StackHandler *handler = stackHandler();
             QString exp = QString("%1 = %2;").arg(expression).arg(value.toString());
             if (handler->isContentsValid() && handler->currentFrame().isUsable()) {
-                d->evaluate(exp, -1, [this](const QVariantMap &) { d->updateLocals(); });
+                d->evaluate(exp, -1, [this](const QVariantMap &) { d->updateLocals(false); });
             } else {
                 showMessage(Tr::tr("Cannot evaluate %1 in current stack frame.")
                             .arg(expression), ConsoleOutput);
@@ -853,7 +861,7 @@ static ConsoleItem *constructLogItemTree(const QVariant &result, const QString &
 
     QString text;
     ConsoleItem *item = nullptr;
-    if (result.typeId() == QVariant::Map) {
+    if (result.typeId() == QMetaType::QVariantMap) {
         if (key.isEmpty())
             text = "Object";
         else
@@ -877,7 +885,7 @@ static ConsoleItem *constructLogItemTree(const QVariant &result, const QString &
                 item->appendChild(child);
         }
 
-    } else if (result.typeId() == QVariant::List) {
+    } else if (result.typeId() == QMetaType::QVariantList) {
         if (key.isEmpty())
             text = "List";
         else
@@ -896,7 +904,7 @@ static ConsoleItem *constructLogItemTree(const QVariant &result, const QString &
             if (child)
                 item->appendChild(child);
         }
-    } else if (result.canConvert(QVariant::String)) {
+    } else if (result.canConvert(QMetaType(QMetaType::QString))) {
         item = new ConsoleItem(ConsoleItem::DefaultType, result.toString());
     } else {
         item = new ConsoleItem(ConsoleItem::DefaultType, "Unknown Value");
@@ -931,18 +939,9 @@ bool QmlEngine::hasCapability(unsigned cap) const
         | AddWatcherCapability;*/
 }
 
-void QmlEngine::quitDebugger()
-{
-    d->automaticConnect = false;
-    d->retryOnConnectFail = false;
-    stopProcess();
-    closeConnection();
-}
-
 void QmlEngine::doUpdateLocals(const UpdateParameters &params)
 {
-    Q_UNUSED(params)
-    d->updateLocals();
+    d->updateLocals(params.qmlFocusOnFrame);
 }
 
 Context QmlEngine::languageContext() const
@@ -952,6 +951,8 @@ Context QmlEngine::languageContext() const
 
 void QmlEngine::disconnected()
 {
+    if (isDying())
+        return;
     showMessage(Tr::tr("QML Debugger disconnected."), StatusBar);
     notifyInferiorExited();
 }
@@ -1028,7 +1029,7 @@ bool QmlEngine::companionPreventsActions() const
 {
     // We need a C++ Engine in a Running state to do anything sensible
     // as otherwise the debugger services in the debuggee are unresponsive.
-    if (DebuggerEngine *companion = companionEngine())
+    if (DebuggerEngine *companion = companionEngines().value(0))
         return companion->state() != InferiorRunOk;
 
     return false;
@@ -1126,6 +1127,8 @@ bool QmlEngine::isConnected() const
 
 void QmlEngine::showConnectionStateMessage(const QString &message)
 {
+    if (isDying())
+        return;
     showMessage("QML Debugger: " + message, LogStatus);
 }
 
@@ -1292,13 +1295,14 @@ void QmlEnginePrivate::backtrace()
     runCommand(cmd, CB(handleBacktrace));
 }
 
-void QmlEnginePrivate::updateLocals()
+void QmlEnginePrivate::updateLocals(bool focusOnFrame)
 {
     //    { "seq"       : <number>,
     //      "type"      : "request",
     //      "command"   : "frame",
     //      "arguments" : { "number" : <frame number> }
     //    }
+    skipFocusOnNextHandleFrame = focusOnFrame;
 
     DebuggerCommand cmd(FRAME);
     cmd.arg(NUMBER, stackIndexLookup.value(engine->stackHandler()->currentIndex()));
@@ -1352,9 +1356,9 @@ void QmlEnginePrivate::scripts(int types, const QList<int> ids, bool includeSour
     if (includeSource)
         cmd.arg(INCLUDESOURCE, includeSource);
 
-    if (filter.typeId() == QVariant::String)
+    if (filter.typeId() == QMetaType::QString)
         cmd.arg(FILTER, filter.toString());
-    else if (filter.typeId() == QVariant::Int)
+    else if (filter.typeId() == QMetaType::Int)
         cmd.arg(FILTER, filter.toInt());
     else
         QTC_CHECK(!filter.isValid());
@@ -2037,7 +2041,7 @@ StackFrame QmlEnginePrivate::extractStackFrame(const QVariant &bodyVal)
     }
 
     auto extractString = [this](const QVariant &item) {
-        return (item.typeId() == QVariant::String ? item : extractData(item).value).toString();
+        return (item.typeId() == QMetaType::QString ? item : extractData(item).value).toString();
     };
 
     stackFrame.function = extractString(body.value("func"));
@@ -2136,7 +2140,9 @@ void QmlEnginePrivate::handleFrame(const QVariantMap &response)
         currentFrameScopes.append(scopeIndex);
         this->scope(scopeIndex);
     }
-    engine->gotoLocation(stackHandler->currentFrame());
+
+    if (skipFocusOnNextHandleFrame)
+        engine->gotoLocation(stackHandler->currentFrame());
 
     // Send watchers list
     if (stackHandler->isContentsValid() && stackHandler->currentFrame().isUsable()) {

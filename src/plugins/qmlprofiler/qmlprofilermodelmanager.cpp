@@ -88,12 +88,9 @@ public:
     int resolveStackTop();
 };
 
-QmlProfilerModelManager::QmlProfilerModelManager(QObject *parent) :
-    Timeline::TimelineTraceManager(
-        std::make_unique<QmlProfilerEventStorage>(
-            std::bind(&Timeline::TimelineTraceManager::error, this, std::placeholders::_1)),
-        std::make_unique<QmlProfilerEventTypeStorage>(), parent),
-    d(new QmlProfilerModelManagerPrivate)
+QmlProfilerModelManager::QmlProfilerModelManager(QObject *parent)
+    : Timeline::TimelineTraceManager({}, std::make_unique<QmlProfilerEventTypeStorage>(), parent)
+    , d(new QmlProfilerModelManagerPrivate)
 {
     setNotesModel(new QmlProfilerNotesModel(this));
     d->textMarkModel = new Internal::QmlProfilerTextMarkModel(this);
@@ -103,6 +100,10 @@ QmlProfilerModelManager::QmlProfilerModelManager(QObject *parent) :
             this, &QmlProfilerModelManager::setTypeDetails);
     connect(d->detailsRewriter, &Internal::QmlProfilerDetailsRewriter::eventDetailsChanged,
             this, &QmlProfilerModelManager::typeDetailsFinished);
+    auto storage = new QmlProfilerEventStorage(QmlProfilerEventStorage::ErrorHandler());
+    storage->setErrorHandler([this](const QString &message) { emit error(message); });
+    std::unique_ptr<Timeline::TraceEventStorage> storagePtr(storage);
+    swapEventStorage(storagePtr);
 }
 
 QmlProfilerModelManager::~QmlProfilerModelManager()
@@ -359,11 +360,17 @@ bool QmlProfilerModelManager::isRestrictedToRange() const
 QmlProfilerModelManager::QmlEventFilter
 QmlProfilerModelManager::rangeFilter(qint64 rangeStart, qint64 rangeEnd) const
 {
-    return [rangeStart, rangeEnd, this] (QmlEventLoader loader) {
+    return [this, rangeStart, rangeEnd] (QmlEventLoader loader) {
+        // TODO: It seems that below 2 variables are passed by copy to the lambda body,
+        //       thus changing their values inside the lambda body are local to the body only.
+        //       Setting "crossedRangeStart = true" inside the lambda looks no-op.
+        //       Passing always empty "stack" into the lambda also looks no-op.
+        //       Was the intention to pass these variables by reference?
         QStack<QmlEvent> stack;
         bool crossedRangeStart = false;
 
-        return [=](const QmlEvent &event, const QmlEventType &type) mutable {
+        return [this, rangeStart, rangeEnd, loader, crossedRangeStart, stack](
+                   const QmlEvent &event, const QmlEventType &type) mutable {
 
             // No restrictions: load all events
             if (rangeStart == -1 || rangeEnd == -1) {
@@ -480,7 +487,7 @@ QmlProfilerEventStorage::QmlProfilerEventStorage(
         const std::function<void (const QString &)> &errorHandler)
     : m_file("qmlprofiler-data"), m_errorHandler(errorHandler)
 {
-    if (!m_file.open())
+    if (!m_file.open() && m_errorHandler)
         errorHandler(Tr::tr("Cannot open temporary trace file to store events."));
 }
 
@@ -500,13 +507,13 @@ void QmlProfilerEventStorage::clear()
 {
     m_size = 0;
     m_file.clear();
-    if (!m_file.open())
+    if (!m_file.open() && m_errorHandler)
         m_errorHandler(Tr::tr("Failed to reset temporary trace file."));
 }
 
 void QmlProfilerEventStorage::finalize()
 {
-    if (!m_file.flush())
+    if (!m_file.flush() && m_errorHandler)
         m_errorHandler(Tr::tr("Failed to flush temporary trace file."));
 }
 
@@ -528,13 +535,15 @@ bool QmlProfilerEventStorage::replay(
     case Timeline::TraceStashFile<QmlEvent>::ReplaySuccess:
         return true;
     case Timeline::TraceStashFile<QmlEvent>::ReplayOpenFailed:
-        m_errorHandler(Tr::tr("Could not re-open temporary trace file."));
+        if (m_errorHandler)
+            m_errorHandler(Tr::tr("Could not re-open temporary trace file."));
         break;
     case Timeline::TraceStashFile<QmlEvent>::ReplayLoadFailed:
         // Happens if the loader rejects an event. Not an actual error
         break;
     case Timeline::TraceStashFile<QmlEvent>::ReplayReadPastEnd:
-        m_errorHandler(Tr::tr("Read past end in temporary trace file."));
+        if (m_errorHandler)
+            m_errorHandler(Tr::tr("Read past end in temporary trace file."));
         break;
     }
     return false;

@@ -12,6 +12,7 @@
 
 #include <cplusplus/CppDocument.h>
 #include <cplusplus/Macro.h>
+#include <cplusplus/Overview.h>
 #include <cplusplus/TranslationUnit.h>
 
 #include <utils/async.h>
@@ -25,6 +26,51 @@ using namespace CPlusPlus;
 namespace CppEditor {
 using SemanticUses = QList<SemanticInfo::Use>;
 namespace {
+
+static bool isOwnershipRAIIName(const QString &name)
+{
+    static const QSet<QString> knownNames{
+        // Qt
+        "QMutexLocker",
+        "QReadLocker",
+        "QScopedArrayPointer",
+        "QScopedPointer",
+        "QWriteLocker",
+
+        // Standard C++
+        "auto_ptr",
+        "unique_ptr",
+
+        // Boost
+        "scoped_array",
+        "scoped_ptr",
+    };
+    return knownNames.contains(name);
+}
+
+static bool isOwnershipRAIIType(Symbol *symbol, const LookupContext &context)
+{
+    if (!symbol)
+        return false;
+
+    // This is not a "real" comparison of types. What we do is to resolve the symbol
+    // in question and then try to match its name with already known ones.
+    if (symbol->asDeclaration()) {
+        Declaration *declaration = symbol->asDeclaration();
+        const NamedType *namedType = declaration->type()->asNamedType();
+        if (namedType) {
+            ClassOrNamespace *clazz
+                = context.lookupType(namedType->name(), declaration->enclosingScope());
+            if (clazz && !clazz->symbols().isEmpty()) {
+                Overview overview;
+                Symbol *symbol = clazz->symbols().at(0);
+                return isOwnershipRAIIName(overview.prettyName(symbol->name()));
+            }
+        }
+    }
+
+    return false;
+}
 
 CursorInfo::Range toRange(const SemanticInfo::Use &use)
 {
@@ -135,17 +181,28 @@ private:
 class FindUses
 {
 public:
-    static CursorInfo find(const Document::Ptr document, const Snapshot &snapshot,
-                           int line, int column, Scope *scope, const QString &expression)
+    static CursorInfo find(const Document::Ptr document,
+                           const QString &content,
+                           const Snapshot &snapshot,
+                           int line,
+                           int column,
+                           Scope *scope,
+                           const QString &expression)
     {
-        FindUses findUses(document, snapshot, line, column, scope, expression);
+        FindUses findUses(document, content, snapshot, line, column, scope, expression);
         return findUses.doFind();
     }
 
 private:
-    FindUses(const Document::Ptr document, const Snapshot &snapshot, int line, int column,
-             Scope *scope, const QString &expression)
+    FindUses(const Document::Ptr document,
+             const QString &content,
+             const Snapshot &snapshot,
+             int line,
+             int column,
+             Scope *scope,
+             const QString &expression)
         : m_document(document)
+        , m_content(content)
         , m_line(line)
         , m_column(column)
         , m_scope(scope)
@@ -160,7 +217,7 @@ private:
 
         // findLocalUses operates with 1-based line and 0-based column
         const SemanticInfo::LocalUseMap localUses
-                = BuiltinCursorInfo::findLocalUses(m_document, m_line, m_column - 1);
+                = BuiltinCursorInfo::findLocalUses(m_document, m_content, m_line, m_column - 1);
         result.localUses = localUses;
         splitLocalUses(localUses, &result.useRanges, &result.unusedVariablesRanges);
 
@@ -229,6 +286,8 @@ private:
 private:
     // Shared
     Document::Ptr m_document;
+
+    const QString m_content;
 
     // For local use calculation
     int m_line;
@@ -322,11 +381,20 @@ QFuture<CursorInfo> BuiltinCursorInfo::run(const CursorInfoParams &cursorInfoPar
     QString expression;
     Scope *scope = canonicalSymbol.getScopeAndExpression(textCursor, &expression);
 
-    return Utils::asyncRun(&FindUses::find, document, snapshot, line, column + 1, scope, expression);
+    return Utils::asyncRun(&FindUses::find,
+                           document,
+                           textCursor.document()->toPlainText(),
+                           snapshot,
+                           line,
+                           column + 1,
+                           scope,
+                           expression);
 }
 
-SemanticInfo::LocalUseMap
-BuiltinCursorInfo::findLocalUses(const Document::Ptr &document, int line, int column)
+SemanticInfo::LocalUseMap BuiltinCursorInfo::findLocalUses(const Document::Ptr &document,
+                                                           const QString &content,
+                                                           int line,
+                                                           int column)
 {
     if (!document || !document->translationUnit() || !document->translationUnit()->ast())
         return SemanticInfo::LocalUseMap();
@@ -334,7 +402,7 @@ BuiltinCursorInfo::findLocalUses(const Document::Ptr &document, int line, int co
     AST *ast = document->translationUnit()->ast();
     FunctionDefinitionUnderCursor functionDefinitionUnderCursor(document->translationUnit());
     DeclarationAST *declaration = functionDefinitionUnderCursor(ast, line, column);
-    return Internal::LocalSymbols(document, declaration).uses;
+    return Internal::LocalSymbols(document, content, declaration).uses;
 }
 
 } // namespace CppEditor

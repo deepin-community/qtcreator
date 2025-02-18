@@ -59,12 +59,12 @@ public:
         connect(target->project(), &Project::displayNameChanged, this, &RunConfiguration::update);
     }
 
-    bool isEnabled() const override
+    bool isEnabled(Utils::Id runMode) const override
     {
         if (disabled)
             return false;
 
-        return RunConfiguration::isEnabled();
+        return RunConfiguration::isEnabled(runMode);
     }
 
     static bool disabled;
@@ -81,7 +81,7 @@ public:
     {
         setStartModifier([this, runControl] {
             const Target *target = runControl->target();
-            setCommandLine({cmakeFilePath(target), runControl->aspect<StringAspect>()->value,
+            setCommandLine({cmakeFilePath(target), runControl->aspectData<StringAspect>()->value,
                             CommandLine::Raw});
             setWorkingDirectory(target->activeBuildConfiguration()->buildDirectory());
             setEnvironment(target->activeBuildConfiguration()->environment());

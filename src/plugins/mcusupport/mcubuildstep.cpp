@@ -7,6 +7,8 @@
 #include "mculegacyconstants.h"
 #include "mcusupportconstants.h"
 
+#include <coreplugin/icore.h>
+
 #include <cmakeprojectmanager/cmakekitaspect.h>
 
 #include <projectexplorer/abstractprocessstep.h>
@@ -27,6 +29,7 @@
 
 #include <utils/aspects.h>
 
+#include <QMessageBox>
 #include <QTemporaryDir>
 #include <QVersionNumber>
 
@@ -64,12 +67,12 @@ DeployMcuProcessStep::DeployMcuProcessStep(ProjectExplorer::BuildStepList *bc, I
     , m_tmpDir()
 {
     if (!buildSystem()) {
-        showError(QmlProjectManager::Tr::tr("Failed to find valid build system"));
+        showError(QmlProjectManager::Tr::tr("Cannot find a valid build system."));
         return;
     }
 
     if (!m_tmpDir.isValid()) {
-        showError(QmlProjectManager::Tr::tr("Failed to create valid build directory"));
+        showError(QmlProjectManager::Tr::tr("Cannot create a valid build directory."));
         return;
     }
 
@@ -85,14 +88,15 @@ DeployMcuProcessStep::DeployMcuProcessStep(ProjectExplorer::BuildStepList *bc, I
     cmd.setLabelText(QmlProjectManager::Tr::tr("Command:"));
     cmd.setValue(rootPath.pathAppended("/bin/qmlprojectexporter"));
 
-    const char *importPathConstant = QtSupport::Constants::KIT_QML_IMPORT_PATH;
+    const Id importPathConstant = QtSupport::Constants::KIT_QML_IMPORT_PATH;
     const FilePath qulIncludeDir = FilePath::fromVariant(kit->value(importPathConstant));
     QStringList includeDirs {
         ProcessArgs::quoteArg(qulIncludeDir.toString()),
-        ProcessArgs::quoteArg(qulIncludeDir.pathAppended("Timeline").toString())
+        ProcessArgs::quoteArg(qulIncludeDir.pathAppended("Timeline").toString()),
+        ProcessArgs::quoteArg(qulIncludeDir.pathAppended("Shapes").toString())
     };
 
-    const char *toolChainConstant = Internal::Constants::KIT_MCUTARGET_TOOLCHAIN_KEY;
+    const Id toolChainConstant = Internal::Constants::KIT_MCUTARGET_TOOLCHAIN_KEY;
     QStringList arguments = {
         ProcessArgs::quoteArg(buildSystem()->projectFilePath().toString()),
         "--platform", findKitInformation(kit, "QUL_PLATFORM"),
@@ -161,6 +165,27 @@ void MCUBuildStepFactory::updateDeployStep(ProjectExplorer::Target *target, bool
         return;
 
     ProjectExplorer::DeployConfiguration *deployConfiguration = target->activeDeployConfiguration();
+
+    // Return if the kit is currupted or is an MCU kit (unsupported in Design Studio)
+    if (!deployConfiguration
+        || (target->kit() && target->kit()->hasValue(Constants::KIT_MCUTARGET_KITVERSION_KEY))) {
+        // This branch is called multiple times when selecting the run configuration
+        // Show the message only once when the kit changes (avoid repitition)
+        static ProjectExplorer::Kit *previousSelectedKit = nullptr;
+        if (previousSelectedKit && previousSelectedKit == target->kit())
+            return;
+        previousSelectedKit = target->kit();
+
+        //TODO use DeployMcuProcessStep::showError instead when the Issues panel
+        // supports poping up on new entries
+        QMessageBox::warning(
+            Core::ICore::dialogParent(),
+            QmlProjectManager::Tr::tr("The Selected Kit Is Not Supported"),
+            QmlProjectManager::Tr::tr(
+                "You cannot use the selected kit to preview Qt for MCUs applications."));
+        return;
+    }
+
     ProjectExplorer::BuildStepList *stepList = deployConfiguration->stepList();
     ProjectExplorer::BuildStep *step = stepList->firstStepWithId(DeployMcuProcessStep::id);
     if (!step && enabled) {
@@ -168,12 +193,12 @@ void MCUBuildStepFactory::updateDeployStep(ProjectExplorer::Target *target, bool
             stepList->appendStep(DeployMcuProcessStep::id);
         } else {
             DeployMcuProcessStep::showError(
-                QmlProjectManager::Tr::tr("Failed to find valid Qt for MCUs kit"));
+                QmlProjectManager::Tr::tr("Cannot find a valid Qt for MCUs kit."));
         }
     } else {
         if (!step)
             return;
-        step->setEnabled(enabled);
+        step->setStepEnabled(enabled);
     }
 }
 

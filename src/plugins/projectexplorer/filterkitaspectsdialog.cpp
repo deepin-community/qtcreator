@@ -3,6 +3,7 @@
 
 #include "filterkitaspectsdialog.h"
 
+#include "kitaspect.h"
 #include "kitmanager.h"
 #include "projectexplorertr.h"
 
@@ -82,12 +83,9 @@ public:
     {
         setHeader({Tr::tr("Setting"), Tr::tr("Visible")});
         for (const KitAspectFactory * const factory : KitManager::kitAspectFactories()) {
-            if (kit && !factory->isApplicableToKit(kit))
-                continue;
-            const QSet<Utils::Id> irrelevantAspects = kit ? kit->irrelevantAspects()
-                                                         : KitManager::irrelevantAspects();
-            auto * const item = new FilterTreeItem(factory,
-                                                   !irrelevantAspects.contains(factory->id()));
+            const bool enabled = kit ? kit->isAspectRelevant(factory->id())
+                                     : !KitManager::irrelevantAspects().contains(factory->id());
+            auto * const item = new FilterTreeItem(factory, enabled);
             rootItem()->appendChild(item);
         }
         static const auto cmp = [](const TreeItem *item1, const TreeItem *item2) {

@@ -22,7 +22,8 @@
 #include <coreplugin/vcsmanager.h>
 
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/fileutils.h>
+#include <utils/qtcprocess.h>
 #include <utils/processinterface.h>
 
 #include <vcsbase/vcsoutputwindow.h>
@@ -39,12 +40,12 @@ using namespace Git::Internal;
 
 enum { debug = 0 };
 
-namespace Gerrit {
+namespace Gerrit::Internal {
+
 namespace Constants {
 const char GERRIT_OPEN_VIEW[] = "Gerrit.OpenView";
 const char GERRIT_PUSH[] = "Gerrit.Push";
 }
-namespace Internal {
 
 enum FetchMode
 {
@@ -60,7 +61,7 @@ class FetchContext : public QObject
 {
      Q_OBJECT
 public:
-    FetchContext(const QSharedPointer<GerritChange> &change,
+    FetchContext(const std::shared_ptr<GerritChange> &change,
                  const FilePath &repository, const FilePath &git,
                  const GerritServer &server,
                  FetchMode fm, QObject *parent = nullptr);
@@ -73,7 +74,7 @@ private:
     void cherryPick();
     void checkout();
 
-    const QSharedPointer<GerritChange> m_change;
+    const std::shared_ptr<GerritChange> m_change;
     const FilePath m_repository;
     const FetchMode m_fetchMode;
     const Utils::FilePath m_git;
@@ -81,7 +82,7 @@ private:
     Process m_process;
 };
 
-FetchContext::FetchContext(const QSharedPointer<GerritChange> &change,
+FetchContext::FetchContext(const std::shared_ptr<GerritChange> &change,
                            const FilePath &repository, const FilePath &git,
                            const GerritServer &server,
                            FetchMode fm, QObject *parent)
@@ -101,7 +102,7 @@ FetchContext::FetchContext(const QSharedPointer<GerritChange> &change,
         VcsBase::VcsOutputWindow::append(QString::fromLocal8Bit(m_process.readAllRawStandardOutput()));
     });
     m_process.setWorkingDirectory(repository);
-    m_process.setEnvironment(gitClient().processEnvironment());
+    m_process.setEnvironment(gitClient().processEnvironment(repository));
 }
 
 void FetchContext::start()
@@ -119,7 +120,7 @@ void FetchContext::processDone()
     deleteLater();
 
     if (m_process.result() != ProcessResult::FinishedWithSuccess) {
-        if (!m_process.resultData().m_canceledByUser)
+        if (m_process.result() != ProcessResult::Canceled)
             VcsBase::VcsOutputWindow::appendError(m_process.exitMessage());
         return;
     }
@@ -153,13 +154,11 @@ void FetchContext::checkout()
 }
 
 GerritPlugin::GerritPlugin()
-    : m_parameters(new GerritParameters)
-    , m_server(new GerritServer)
+    : m_server(new GerritServer)
 {
-    m_parameters->fromSettings(ICore::settings());
+    gerritSettings().fromSettings();
 
-    m_gerritOptionsPage = new GerritOptionsPage(m_parameters,
-        [this] {
+    m_gerritOptionsPage = new GerritOptionsPage([this] {
         if (m_dialog)
             m_dialog->scheduleUpdateRemotes();
     });
@@ -206,7 +205,7 @@ void GerritPlugin::addToLocator(CommandLocator *locator)
 void GerritPlugin::push(const FilePath &topLevel)
 {
     // QScopedPointer is required to delete the dialog when leaving the function
-    GerritPushDialog dialog(topLevel, m_reviewers, m_parameters, ICore::dialogParent());
+    GerritPushDialog dialog(topLevel, m_reviewers, ICore::dialogParent());
 
     const QString initErrorMessage = dialog.initErrorMessage();
     if (!initErrorMessage.isEmpty()) {
@@ -224,28 +223,28 @@ void GerritPlugin::push(const FilePath &topLevel)
 
 static FilePath currentRepository()
 {
-    return GitPlugin::currentState().topLevel();
+    return currentState().topLevel();
 }
 
 // Open or raise the Gerrit dialog window.
 void GerritPlugin::openView()
 {
     if (m_dialog.isNull()) {
-        while (!m_parameters->isValid()) {
+        while (!gerritSettings().isValid()) {
             QMessageBox::warning(Core::ICore::dialogParent(), Git::Tr::tr("Error"),
                                  Git::Tr::tr("Invalid Gerrit configuration. Host, user and ssh binary are mandatory."));
             if (!ICore::showOptionsDialog("Gerrit"))
                 return;
         }
-        GerritDialog *gd = new GerritDialog(m_parameters, m_server, currentRepository(), ICore::dialogParent());
+        GerritDialog *gd = new GerritDialog(m_server, currentRepository(), ICore::dialogParent());
         gd->setModal(false);
         ICore::registerWindow(gd, Context("Git.Gerrit"));
         connect(gd, &GerritDialog::fetchDisplay, this,
-                [this](const QSharedPointer<GerritChange> &change) { fetch(change, FetchDisplay); });
+                [this](const std::shared_ptr<GerritChange> &change) { fetch(change, FetchDisplay); });
         connect(gd, &GerritDialog::fetchCherryPick, this,
-                [this](const QSharedPointer<GerritChange> &change) { fetch(change, FetchCherryPick); });
+                [this](const std::shared_ptr<GerritChange> &change) { fetch(change, FetchCherryPick); });
         connect(gd, &GerritDialog::fetchCheckout, this,
-                [this](const QSharedPointer<GerritChange> &change) { fetch(change, FetchCheckout); });
+                [this](const std::shared_ptr<GerritChange> &change) { fetch(change, FetchCheckout); });
         connect(this, &GerritPlugin::fetchStarted, gd, &GerritDialog::fetchStarted);
         connect(this, &GerritPlugin::fetchFinished, gd, &GerritDialog::fetchFinished);
         m_dialog = gd;
@@ -265,21 +264,10 @@ void GerritPlugin::push()
     push(currentRepository());
 }
 
-Utils::FilePath GerritPlugin::gitBinDirectory()
-{
-    return gitClient().gitBinDirectory();
-}
-
-// Find the branch of a repository.
-QString GerritPlugin::branch(const FilePath &repository)
-{
-    return gitClient().synchronousCurrentLocalBranch(repository);
-}
-
-void GerritPlugin::fetch(const QSharedPointer<GerritChange> &change, int mode)
+void GerritPlugin::fetch(const std::shared_ptr<GerritChange> &change, int mode)
 {
     // Locate git.
-    const Utils::FilePath git = gitClient().vcsBinary();
+    const Utils::FilePath git = gitClient().vcsBinary(m_dialog->repositoryPath());
     if (git.isEmpty()) {
         VcsBase::VcsOutputWindow::appendError(Git::Tr::tr("Git is not available."));
         return;
@@ -287,7 +275,7 @@ void GerritPlugin::fetch(const QSharedPointer<GerritChange> &change, int mode)
 
     FilePath repository;
     bool verifiedRepository = false;
-    if (!m_dialog.isNull() && !m_parameters.isNull() && m_dialog->repositoryPath().exists())
+    if (m_dialog && m_dialog->repositoryPath().exists())
         repository = m_dialog->repositoryPath();
 
     if (!repository.isEmpty()) {
@@ -362,7 +350,7 @@ void GerritPlugin::fetch(const QSharedPointer<GerritChange> &change, int mode)
 // Try to find a matching repository for a project by asking the VcsManager.
 FilePath GerritPlugin::findLocalRepository(const QString &project, const QString &branch) const
 {
-    const FilePaths gitRepositories = VcsManager::repositories(GitPlugin::versionControl());
+    const FilePaths gitRepositories = VcsManager::repositories(versionControl());
     // Determine key (file name) to look for (qt/qtbase->'qtbase').
     const int slashPos = project.lastIndexOf('/');
     const QString fixedProject = (slashPos < 0) ? project : project.mid(slashPos + 1);
@@ -387,7 +375,9 @@ FilePath GerritPlugin::findLocalRepository(const QString &project, const QString
             if (branch.isEmpty())  {
                 return repository;
             } else {
-                const QString repositoryBranch = GerritPlugin::branch(repository);
+                // Find the branch of a repository.
+                const QString repositoryBranch =
+                        gitClient().synchronousCurrentLocalBranch(repository);
                 if (repositoryBranch.isEmpty() || repositoryBranch == branch)
                     return repository;
             } // !branch.isEmpty()
@@ -400,7 +390,6 @@ FilePath GerritPlugin::findLocalRepository(const QString &project, const QString
     return FilePath::currentWorkingPath();
 }
 
-} // namespace Internal
-} // namespace Gerrit
+} // Gerrit::Internal
 
 #include "gerritplugin.moc"

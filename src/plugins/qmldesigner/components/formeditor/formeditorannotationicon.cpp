@@ -182,11 +182,11 @@ void FormEditorAnnotationIcon::mouseReleaseEvent(QGraphicsSceneMouseEvent * even
 void FormEditorAnnotationIcon::contextMenuEvent(QGraphicsSceneContextMenuEvent *event)
 {
     QMenu menu;
-    menu.addAction(tr("Edit Annotation"), [this]() {
+    menu.addAction(tr("Edit Annotation"), [this] {
         createAnnotationEditor();
     });
 
-    menu.addAction(tr("Remove Annotation"), [this]() {
+    menu.addAction(tr("Remove Annotation"), [this] {
         removeAnnotationDialog();
     });
 
@@ -302,9 +302,9 @@ QGraphicsItem *FormEditorAnnotationIcon::createCommentBubble(QRectF rect, const 
                                                              const QString &author, const QString &text,
                                                              const QString &date, QGraphicsItem *parent)
 {
-    static QColor textColor = Utils::creatorTheme()->color(Utils::Theme::DStextColor);
-    static QColor backgroundColor = Utils::creatorTheme()->color(Utils::Theme::QmlDesigner_BackgroundColorDarker);
-    static QColor frameColor = Utils::creatorTheme()->color(Utils::Theme::QmlDesigner_BackgroundColor);
+    static QColor textColor = Utils::creatorColor(Utils::Theme::DStextColor);
+    static QColor backgroundColor = Utils::creatorColor(Utils::Theme::QmlDesigner_BackgroundColorDarker);
+    static QColor frameColor = Utils::creatorColor(Utils::Theme::QmlDesigner_BackgroundColor);
     QFont font;
     font.setBold(true);
 
@@ -405,9 +405,9 @@ QGraphicsItem *FormEditorAnnotationIcon::createCommentBubble(QRectF rect, const 
 
 QGraphicsItem *FormEditorAnnotationIcon::createTitleBubble(const QRectF &rect, const QString &text, QGraphicsItem *parent)
 {
-    static QColor textColor = Utils::creatorTheme()->color(Utils::Theme::DStextColor);
-    static QColor backgroundColor = Utils::creatorTheme()->color(Utils::Theme::QmlDesigner_BackgroundColorDarker);
-    static QColor frameColor = Utils::creatorTheme()->color(Utils::Theme::QmlDesigner_BackgroundColor);
+    static QColor textColor = Utils::creatorColor(Utils::Theme::DStextColor);
+    static QColor backgroundColor = Utils::creatorColor(Utils::Theme::QmlDesigner_BackgroundColorDarker);
+    static QColor frameColor = Utils::creatorColor(Utils::Theme::QmlDesigner_BackgroundColor);
     QFont font;
     font.setBold(true);
 

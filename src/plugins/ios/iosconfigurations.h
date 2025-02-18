@@ -69,15 +69,6 @@ private:
 using DevelopmentTeamPtr = std::shared_ptr<DevelopmentTeam>;
 using DevelopmentTeams = QList<DevelopmentTeamPtr>;
 
-class IosToolChainFactory : public ProjectExplorer::ToolChainFactory
-{
-public:
-    IosToolChainFactory();
-
-    ProjectExplorer::Toolchains autoDetect(
-            const ProjectExplorer::ToolchainDetector &detector) const final;
-};
-
 class IosConfigurations : public QObject
 {
     Q_OBJECT
@@ -87,8 +78,6 @@ public:
     static void initialize();
     static bool ignoreAllDevices();
     static void setIgnoreAllDevices(bool ignoreDevices);
-    static void setScreenshotDir(const Utils::FilePath &path);
-    static Utils::FilePath screenshotDir();
     static Utils::FilePath developerPath();
     static QVersionNumber xcodeVersion();
     static Utils::FilePath lldbPath();
@@ -112,7 +101,6 @@ private:
     void loadProvisioningData(bool notify = true);
 
     Utils::FilePath m_developerPath;
-    Utils::FilePath m_screenshotDir;
     QVersionNumber m_xcodeVersion;
     bool m_ignoreAllDevices;
     QFileSystemWatcher *m_provisioningDataWatcher = nullptr;
@@ -122,5 +110,7 @@ private:
 
 QDebug &operator<<(QDebug &stream, std::shared_ptr<ProvisioningProfile> profile);
 QDebug &operator<<(QDebug &stream, std::shared_ptr<DevelopmentTeam> team);
+
+void setupIosToolchain();
 
 } // Ios::Internal

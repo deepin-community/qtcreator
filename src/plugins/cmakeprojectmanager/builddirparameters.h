@@ -8,7 +8,16 @@
 #include <utils/environment.h>
 #include <utils/filepath.h>
 
-namespace Utils { class MacroExpander; }
+#include <functional>
+
+namespace Utils {
+class MacroExpander;
+class OutputLineParser;
+} // namespace Utils
+
+namespace ProjectExplorer {
+class Project;
+}
 
 namespace CMakeProjectManager::Internal {
 
@@ -24,6 +33,7 @@ public:
     CMakeTool *cmakeTool() const;
 
     QString projectName;
+    ProjectExplorer::Project *project = nullptr;
 
     Utils::FilePath sourceDirectory;
     Utils::FilePath buildDirectory;
@@ -38,6 +48,12 @@ public:
     QStringList additionalCMakeArguments;
 
     Utils::MacroExpander* expander = nullptr;
+
+    QList<Utils::OutputLineParser*> outputParsers() const;
+
+private:
+    using OutputParserGenerator = std::function<QList<Utils::OutputLineParser*>()>;
+    OutputParserGenerator outputParserGenerator;
 };
 
 } // CMakeProjectManager::Internal

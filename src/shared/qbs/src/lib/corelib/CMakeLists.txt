@@ -57,6 +57,8 @@ set(BUILD_GRAPH_SOURCES
     buildgraphloader.cpp
     buildgraphloader.h
     buildgraphvisitor.h
+    cppmodulesscanner.cpp
+    cppmodulesscanner.h
     cycledetector.cpp
     cycledetector.h
     dependencyparametersscriptvalue.cpp
@@ -412,6 +414,7 @@ set(TOOLS_HEADERS
     generateoptions.h
     installoptions.h
     joblimits.h
+    mutexdata.h
     preferences.h
     processresult.h
     profile.h
@@ -425,6 +428,20 @@ set(TOOLS_HEADERS
     version.h
     )
 list_transform_prepend(TOOLS_HEADERS tools/)
+
+set(CPPSCANNER_SOURCES
+    Lexer.cpp
+    Token.cpp
+    cppscanner.cpp
+)
+list_transform_prepend(CPPSCANNER_SOURCES cppscanner/)
+
+set(CPPSCANNER_HEADERS
+    Lexer.h
+    Token.h
+    cppscanner.h
+)
+list_transform_prepend(CPPSCANNER_HEADERS cppscanner/)
 
 set(EXTERNAL_DEPENDS "")
 if(APPLE)
@@ -445,6 +462,7 @@ add_qbs_library(qbscore
         "QBS_VERSION=\"${QBS_VERSION}\""
         "QBS_RELATIVE_LIBEXEC_PATH=\"${QBS_RELATIVE_LIBEXEC_PATH}\""
         "QBS_LIBRARY"
+        "CPLUSPLUS_NO_PARSER"
         ${QBS_UNIT_TESTS_DEFINES}
     DEPENDS
         Qt${QT_VERSION_MAJOR}::CorePrivate
@@ -455,6 +473,7 @@ add_qbs_library(qbscore
         qbsquickjs
     PUBLIC_DEPENDS
         Qt${QT_VERSION_MAJOR}::Core
+        span
         ${EXTERNAL_DEPENDS}
     INCLUDES
         "${CMAKE_CURRENT_SOURCE_DIR}/../.."
@@ -477,6 +496,8 @@ add_qbs_library(qbscore
         ${PARSER_SOURCES}
         ${TOOLS_SOURCES}
         ${TOOLS_HEADERS}
+        ${CPPSCANNER_SOURCES}
+        ${CPPSCANNER_HEADERS}
         ${TOOLS_MACOS_SOURCES}
     )
 

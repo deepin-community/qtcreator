@@ -6,44 +6,39 @@
 #include "annotationhighlighter.h"
 #include "constants.h"
 #include "fossilclient.h"
-#include "fossilplugin.h"
 #include "fossiltr.h"
 
 #include <utils/qtcassert.h>
 
+#include <vcsbase/vcsbaseeditor.h>
+
 #include <QRegularExpression>
 #include <QTextCursor>
 
-namespace Fossil {
-namespace Internal {
+namespace Fossil::Internal {
 
-class FossilEditorWidgetPrivate
+class FossilEditorWidget final : public VcsBase::VcsBaseEditorWidget
 {
 public:
-    FossilEditorWidgetPrivate() :
-        m_exactChangesetId(Constants::CHANGESET_ID_EXACT)
+    FossilEditorWidget()
+        : m_exactChangesetId(Constants::CHANGESET_ID_EXACT)
     {
-        QTC_ASSERT(m_exactChangesetId.isValid(), return);
+        QTC_CHECK(m_exactChangesetId.isValid());
+        setAnnotateRevisionTextFormat(Tr::tr("&Annotate %1"));
+        setAnnotatePreviousRevisionTextFormat(Tr::tr("Annotate &Parent Revision %1"));
+        setDiffFilePattern(Constants::DIFFFILE_ID_EXACT);
+        setLogEntryPattern("^.*\\[([0-9a-f]{5,40})\\]");
+        setAnnotationEntryPattern(QString("^") + Constants::CHANGESET_ID + " ");
     }
 
+private:
+    QString changeUnderCursor(const QTextCursor &cursor) const final;
+    QString decorateVersion(const QString &revision) const final;
+    QStringList annotationPreviousVersions(const QString &revision) const final;
+    VcsBase::BaseAnnotationHighlighterCreator annotationHighlighterCreator() const final;
 
     const QRegularExpression m_exactChangesetId;
 };
-
-FossilEditorWidget::FossilEditorWidget() :
-    d(new FossilEditorWidgetPrivate)
-{
-    setAnnotateRevisionTextFormat(Tr::tr("&Annotate %1"));
-    setAnnotatePreviousRevisionTextFormat(Tr::tr("Annotate &Parent Revision %1"));
-    setDiffFilePattern(Constants::DIFFFILE_ID_EXACT);
-    setLogEntryPattern("^.*\\[([0-9a-f]{5,40})\\]");
-    setAnnotationEntryPattern(QString("^") + Constants::CHANGESET_ID + " ");
-}
-
-FossilEditorWidget::~FossilEditorWidget()
-{
-    delete d;
-}
 
 QString FossilEditorWidget::changeUnderCursor(const QTextCursor &cursorIn) const
 {
@@ -51,7 +46,7 @@ QString FossilEditorWidget::changeUnderCursor(const QTextCursor &cursorIn) const
     cursor.select(QTextCursor::WordUnderCursor);
     if (cursor.hasSelection()) {
         const QString change = cursor.selectedText();
-        const QRegularExpressionMatch exactChangesetIdMatch = d->m_exactChangesetId.match(change);
+        const QRegularExpressionMatch exactChangesetIdMatch = m_exactChangesetId.match(change);
         if (exactChangesetIdMatch.hasMatch())
             return change;
     }
@@ -64,9 +59,8 @@ QString FossilEditorWidget::decorateVersion(const QString &revision) const
     static const int maxTextSize(120);
 
     const Utils::FilePath workingDirectory = source().parentDir();
-    const FossilClient *client = FossilPlugin::client();
-    const RevisionInfo revisionInfo = client->synchronousRevisionQuery(workingDirectory, revision,
-                                                                       true);
+    const RevisionInfo revisionInfo =
+        fossilClient().synchronousRevisionQuery(workingDirectory, revision, true);
     // format: 'revision (committer "comment...")'
     QString output = revision.left(shortChangesetIdSize)
             + " (" + revisionInfo.committer
@@ -83,8 +77,8 @@ QString FossilEditorWidget::decorateVersion(const QString &revision) const
 QStringList FossilEditorWidget::annotationPreviousVersions(const QString &revision) const
 {
     const Utils::FilePath workingDirectory = source().parentDir();
-    const FossilClient *client = FossilPlugin::client();
-    const RevisionInfo revisionInfo = client->synchronousRevisionQuery(workingDirectory, revision);
+    const RevisionInfo revisionInfo =
+        fossilClient().synchronousRevisionQuery(workingDirectory, revision);
     if (revisionInfo.parentId.isEmpty())
         return {};
 
@@ -93,11 +87,14 @@ QStringList FossilEditorWidget::annotationPreviousVersions(const QString &revisi
     return revisions;
 }
 
-VcsBase::BaseAnnotationHighlighter *FossilEditorWidget::createAnnotationHighlighter(
-        const QSet<QString> &changes) const
+VcsBase::BaseAnnotationHighlighterCreator FossilEditorWidget::annotationHighlighterCreator() const
 {
-    return new FossilAnnotationHighlighter(changes);
+    return VcsBase::getAnnotationHighlighterCreator<FossilAnnotationHighlighter>();
 }
 
-} // namespace Internal
-} // namespace Fossil
+QWidget *createFossilEditorWidget()
+{
+    return new FossilEditorWidget;
+}
+
+} // namespace Fossil::Internal

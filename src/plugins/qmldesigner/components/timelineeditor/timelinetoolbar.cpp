@@ -324,12 +324,11 @@ void TimelineToolBar::createCenterControls()
 
     addSpacing(10);
 
-    auto *loopAnimation = createAction(
-        TimelineConstants::C_LOOP_PLAYBACK,
-        Theme::iconFromName(Theme::Icon::loopPlayback_medium),
-        tr("Loop Playback"),
-        QKeySequence((Qt::ControlModifier | Qt::ShiftModifier)
-                     + Qt::Key_Space)); // TODO: Toggles looping. Select shortcut for this QDS-4941
+    // TODO: Toggles looping. Select shortcut for this QDS-4941
+    auto *loopAnimation = createAction(TimelineConstants::C_LOOP_PLAYBACK,
+                                       Theme::iconFromName(Theme::Icon::loopPlayback_medium),
+                                       tr("Loop Playback"),
+                                       Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_Space);
 
     loopAnimation->setCheckable(true);
     connect(loopAnimation, &QAction::toggled, [&](bool value) { emit loopPlaybackToggled(value);} );
@@ -359,7 +358,7 @@ void TimelineToolBar::createCenterControls()
     m_currentFrame = createToolBarLineEdit(this);
     addWidget(m_currentFrame);
 
-    auto emitCurrentChanged = [this]() { emit currentFrameChanged(m_currentFrame->text().toInt()); };
+    auto emitCurrentChanged = [this] { emit currentFrameChanged(m_currentFrame->text().toInt()); };
     connect(m_currentFrame, &QLineEdit::editingFinished, emitCurrentChanged);
 
     addSeparator();
@@ -419,7 +418,7 @@ void TimelineToolBar::createRightControls()
     m_firstFrame = createToolBarLineEdit(this);
     addWidget(m_firstFrame);
 
-    auto emitStartChanged = [this]() { emit startFrameChanged(m_firstFrame->text().toInt()); };
+    auto emitStartChanged = [this] { emit startFrameChanged(m_firstFrame->text().toInt()); };
     connect(m_firstFrame, &QLineEdit::editingFinished, emitStartChanged);
 
     addSeparator();
@@ -431,7 +430,7 @@ void TimelineToolBar::createRightControls()
                                  tr("Zoom Out"),
                                  QKeySequence(QKeySequence::ZoomOut));
 
-    connect(zoomOut, &QAction::triggered, [this]() {
+    connect(zoomOut, &QAction::triggered, [this] {
         m_scale->setValue(m_scale->value() - m_scale->pageStep());
     });
     addAction(zoomOut);
@@ -458,7 +457,7 @@ void TimelineToolBar::createRightControls()
                                 tr("Zoom In"),
                                 QKeySequence(QKeySequence::ZoomIn));
 
-    connect(zoomIn, &QAction::triggered, [this]() {
+    connect(zoomIn, &QAction::triggered, [this] {
         m_scale->setValue(m_scale->value() + m_scale->pageStep());
     });
     addAction(zoomIn);
@@ -470,7 +469,7 @@ void TimelineToolBar::createRightControls()
     m_lastFrame = createToolBarLineEdit(this);
     addWidget(m_lastFrame);
 
-    auto emitEndChanged = [this]() { emit endFrameChanged(m_lastFrame->text().toInt()); };
+    auto emitEndChanged = [this] { emit endFrameChanged(m_lastFrame->text().toInt()); };
     connect(m_lastFrame, &QLineEdit::editingFinished, emitEndChanged);
 
     addSeparator();

@@ -28,13 +28,11 @@ public:
     QString cpuDir() const;
 
     Utils::Store toMap() const override;
-    void fromMap(const Utils::Store &map,
-                 const Utils::FilePath &filePath,
-                 bool forceRefreshCache) override;
+    void fromMap(const Utils::Store &map, const Utils::FilePath &filePath) override;
 
     ProjectExplorer::Abis detectQtAbis() const override;
 
-    void addToEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const override;
+    void addToBuildEnvironment(const ProjectExplorer::Kit *k, Utils::Environment &env) const override;
     void setupQmakeRunEnvironment(Utils::Environment &env) const override;
 
     QtSupport::QtConfigWidget *createConfigurationWidget() const override;
@@ -57,10 +55,6 @@ private:
     mutable Utils::EnvironmentItems m_qnxEnv;
 };
 
-class QnxQtVersionFactory : public QtSupport::QtVersionFactory
-{
-public:
-    QnxQtVersionFactory();
-};
+void setupQnxQtVersion();
 
 } // Qnx::Internal

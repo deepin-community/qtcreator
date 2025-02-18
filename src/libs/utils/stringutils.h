@@ -9,6 +9,7 @@
 #include <QList>
 #include <QString>
 #include <QSyntaxHighlighter>
+#include <QTextDocument>
 
 #include <functional>
 
@@ -32,34 +33,13 @@ QTCREATOR_UTILS_EXPORT QString commonPrefix(const QStringList &strings);
 QTCREATOR_UTILS_EXPORT QString stripAccelerator(const QString &text);
 // Quotes all ampersands
 QTCREATOR_UTILS_EXPORT QString quoteAmpersands(const QString &text);
+// Convert non-ascii characters into foobar
+QTCREATOR_UTILS_EXPORT QString asciify(const QString &input);
 
 QTCREATOR_UTILS_EXPORT bool readMultiLineString(const QJsonValue &value, QString *out);
 
 // Compare case insensitive and use case sensitive comparison in case of that being equal.
 QTCREATOR_UTILS_EXPORT int caseFriendlyCompare(const QString &a, const QString &b);
-
-class QTCREATOR_UTILS_EXPORT AbstractMacroExpander
-{
-public:
-    virtual ~AbstractMacroExpander() {}
-    // Not const, as it may change the state of the expander.
-    //! Find an expando to replace and provide a replacement string.
-    //! \param str The string to scan
-    //! \param pos Position to start scan on input, found position on output
-    //! \param ret Replacement string on output
-    //! \return Length of string part to replace, zero if no (further) matches found
-    virtual int findMacro(const QString &str, int *pos, QString *ret);
-    //! Provide a replacement string for an expando
-    //! \param name The name of the expando
-    //! \param ret Replacement string on output
-    //! \return True if the expando was found
-    virtual bool resolveMacro(const QString &name, QString *ret, QSet<AbstractMacroExpander *> &seen) = 0;
-private:
-    bool expandNestedMacros(const QString &str, int *pos, QString *ret);
-};
-
-QTCREATOR_UTILS_EXPORT void expandMacros(QString *str, AbstractMacroExpander *mx);
-QTCREATOR_UTILS_EXPORT QString expandMacros(const QString &str, AbstractMacroExpander *mx);
 
 QTCREATOR_UTILS_EXPORT int parseUsedPortFromNetstatOutput(const QByteArray &line);
 
@@ -127,7 +107,7 @@ class QTCREATOR_UTILS_EXPORT MarkdownHighlighter : public QSyntaxHighlighter
 {
 public:
     MarkdownHighlighter(QTextDocument *parent);
-    void highlightBlock(const QString &text);
+    void highlightBlock(const QString &text) override;
 
 private:
     QBrush codeBgBrush();
@@ -135,5 +115,7 @@ private:
     QBrush h2Brush;
     QBrush m_codeBgBrush;
 };
+
+QTCREATOR_UTILS_EXPORT QString ansiColoredText(const QString &text, const QColor &color);
 
 } // namespace Utils

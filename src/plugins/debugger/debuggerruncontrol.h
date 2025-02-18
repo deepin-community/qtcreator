@@ -6,8 +6,8 @@
 #include "debugger_global.h"
 #include "debuggerconstants.h"
 #include "debuggerengine.h"
-#include "terminal.h"
 
+#include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/runconfiguration.h>
 #include <projectexplorer/devicesupport/deviceusedportsgatherer.h>
 
@@ -15,12 +15,9 @@
 
 namespace Debugger {
 
-namespace Internal {
-class TerminalRunner;
-class DebuggerRunToolPrivate;
-} // Internal
+namespace Internal { class DebuggerRunToolPrivate; }
 
-class DebugServerPortsGatherer;
+class SubChannelProvider;
 
 class DEBUGGER_EXPORT DebuggerRunTool : public ProjectExplorer::RunWorker
 {
@@ -65,6 +62,7 @@ public:
     void setContinueAfterAttach(bool on);
     void setBreakOnMain(bool on);
     void setUseTerminal(bool on);
+    void setUseDebugServer(Utils::ProcessHandle attachPid, bool essential, bool useMulti);
 
     void setCommandsAfterConnect(const QString &commands);
     void setCommandsForReset(const QString &commands);
@@ -72,14 +70,14 @@ public:
     void setDebugInfoLocation(const Utils::FilePath &debugInfoLocation);
 
     void setQmlServer(const QUrl &qmlServer);
-    QUrl qmlServer() const; // Used in GammaRay integration.
 
     void setCoreFilePath(const Utils::FilePath &core, bool isSnapshot = false);
 
     void setTestCase(int testCase);
     void setOverrideStartScript(const Utils::FilePath &script);
 
-    Internal::TerminalRunner *terminalRunner() const;
+    void kickoffTerminalProcess();
+    void interruptTerminal();
 
     Internal::DebuggerRunParameters &runParameters() { return m_runParameters; }
 
@@ -88,7 +86,6 @@ protected:
     bool isQmlDebugging() const;
 
     void setUsePortsGatherer(bool useCpp, bool useQml);
-    DebugServerPortsGatherer *portsGatherer() const;
 
     void addSolibSearchDir(const QString &str);
     void addQmlServerInferiorCommandLineArgumentIfNeeded();
@@ -114,51 +111,37 @@ private:
     void handleEngineStarted(Internal::DebuggerEngine *engine);
     void handleEngineFinished(Internal::DebuggerEngine *engine);
 
+    void startCoreFileSetupIfNeededAndContinueStartup();
+    void continueAfterCoreFileSetup();
+
+    void startTerminalIfNeededAndContinueStartup();
+    void continueAfterTerminalStart();
+
+    void startDebugServerIfNeededAndContinueStartup();
+    void continueAfterDebugServerStart();
+
     Internal::DebuggerRunToolPrivate *d;
-    QPointer<Internal::DebuggerEngine> m_engine;
-    QPointer<Internal::DebuggerEngine> m_engine2;
+    QList<QPointer<Internal::DebuggerEngine>> m_engines;
     Internal::DebuggerRunParameters m_runParameters;
-};
-
-class DEBUGGER_EXPORT DebugServerPortsGatherer : public ProjectExplorer::ChannelProvider
-{
-public:
-    explicit DebugServerPortsGatherer(ProjectExplorer::RunControl *runControl);
-    ~DebugServerPortsGatherer() override;
-
-    void setUseGdbServer(bool useIt) { m_useGdbServer = useIt; }
-    bool useGdbServer() const { return m_useGdbServer; }
-    QUrl gdbServer() const;
-
-    void setUseQmlServer(bool useIt) { m_useQmlServer = useIt; }
-    bool useQmlServer() const { return m_useQmlServer; }
-    QUrl qmlServer() const;
-
-private:
-    bool m_useGdbServer = false;
-    bool m_useQmlServer = false;
-};
-
-class DEBUGGER_EXPORT DebugServerRunner : public ProjectExplorer::SimpleTargetRunner
-{
-public:
-    explicit DebugServerRunner(ProjectExplorer::RunControl *runControl,
-                               DebugServerPortsGatherer *portsGatherer);
-
-    ~DebugServerRunner() override;
-
-    void setUseMulti(bool on);
-    void setAttachPid(Utils::ProcessHandle pid);
-
-private:
-    Utils::ProcessHandle m_pid;
-    bool m_useMulti = true;
 };
 
 class DebuggerRunWorkerFactory final : public ProjectExplorer::RunWorkerFactory
 {
 public:
     DebuggerRunWorkerFactory();
+};
+
+class SimpleDebugRunnerFactory final : public ProjectExplorer::RunWorkerFactory
+{
+public:
+    explicit SimpleDebugRunnerFactory(const QList<Utils::Id> &runConfigs, const QList<Utils::Id> &extraRunModes = {})
+    {
+        cloneProduct(Constants::DEBUGGER_RUN_FACTORY);
+        addSupportedRunMode(ProjectExplorer::Constants::DEBUG_RUN_MODE);
+        for (const Utils::Id &id : extraRunModes)
+            addSupportedRunMode(id);
+        setSupportedRunConfigs(runConfigs);
+    }
 };
 
 extern DEBUGGER_EXPORT const char DebugServerRunnerWorkerId[];

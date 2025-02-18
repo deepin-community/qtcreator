@@ -69,33 +69,40 @@ private:
     QList<Utils::Id> m_typeIds;
 };
 
-namespace Internal {
-
-class FileGeneratorFactory : public JsonWizardGeneratorFactory
+template <typename Generator>
+class JsonWizardGeneratorTypedFactory : public JsonWizardGeneratorFactory
 {
-    Q_OBJECT
-
 public:
-    FileGeneratorFactory();
+    JsonWizardGeneratorTypedFactory(const QString &suffix) { setTypeIdsSuffix(suffix); }
 
     JsonWizardGenerator *create(Utils::Id typeId, const QVariant &data,
                                 const QString &path, Utils::Id platform,
-                                const QVariantMap &variables) override;
-    bool validateData(Utils::Id typeId, const QVariant &data, QString *errorMessage) override;
+                                const QVariantMap &variables) final
+    {
+        Q_UNUSED(path)
+        Q_UNUSED(platform)
+        Q_UNUSED(variables)
+        QTC_ASSERT(canCreate(typeId), return nullptr);
+
+        auto gen = new Generator;
+        QString errorMessage;
+        gen->setup(data, &errorMessage);
+
+        if (!errorMessage.isEmpty()) {
+            qWarning() << "JsonWizardGeneratorTypedFactory for " << typeId << "setup error:"
+                       << errorMessage;
+            delete gen;
+            return nullptr;
+        }
+        return gen;
+    }
+
+    bool validateData(Utils::Id typeId, const QVariant &data, QString *errorMessage) final
+    {
+        QTC_ASSERT(canCreate(typeId), return false);
+        QScopedPointer<Generator> gen(new Generator);
+        return gen->setup(data, errorMessage);
+    }
 };
 
-class ScannerGeneratorFactory : public JsonWizardGeneratorFactory
-{
-    Q_OBJECT
-
-public:
-    ScannerGeneratorFactory();
-
-    JsonWizardGenerator *create(Utils::Id typeId, const QVariant &data,
-                                const QString &path, Utils::Id platform,
-                                const QVariantMap &variables) override;
-    bool validateData(Utils::Id typeId, const QVariant &data, QString *errorMessage) override;
-};
-
-} // namespace Internal
 } // namespace ProjectExplorer

@@ -222,11 +222,26 @@ inline QString relativeProductBuildDir(const QString &productName,
     return relativeBuildDir(configurationName) + '/' + dirName;
 }
 
-inline QString relativeExecutableFilePath(const QString &productName,
-                                          const QString &configName = QString())
+inline QString appendExecSuffix(const QString &productName, const QByteArray &output)
 {
-    return relativeProductBuildDir(productName, configName) + '/'
-            + qbs::Internal::HostOsInfo::appendExecutableSuffix(productName);
+    const QByteArray marker = "executable suffix: ";
+    const int markerOffset = output.indexOf(marker);
+    if (markerOffset == -1)
+        return ".error";
+    const int suffixOffset = markerOffset + marker.size();
+    const int newlineOffset = output.indexOf('\n', suffixOffset);
+    if (newlineOffset == -1)
+        return ".error";
+    return productName
+           + QString::fromLocal8Bit(
+               output.mid(suffixOffset, newlineOffset - suffixOffset).trimmed());
+}
+
+inline QString relativeExecutableFilePath(
+    const QString &productName, const QByteArray &output, const QString &configName = QString())
+{
+    const auto relativeDir = relativeProductBuildDir(productName, configName) + QLatin1Char('/');
+    return relativeDir + appendExecSuffix(productName, output);
 }
 
 inline void waitForNewTimestamp(const QString &testDir)
@@ -274,24 +289,17 @@ inline void copyFileAndUpdateTimestamp(const QString &source, const QString &tar
     touch(target);
 }
 
-inline QStringList profileToolchain(const qbs::Profile &profile)
+inline QString parsedObjectSuffix(const QByteArray &output)
 {
-    const auto toolchainType = profile.value(QStringLiteral("qbs.toolchainType")).toString();
-    if (!toolchainType.isEmpty())
-        return qbs::canonicalToolchain(toolchainType);
-    return profile.value(QStringLiteral("qbs.toolchain")).toStringList();
-}
-
-inline QString objectFileName(const QString &baseName, const QString &profileName)
-{
-    const SettingsPtr s = settings();
-    qbs::Profile profile(profileName, s.get());
-
-    const auto tcList = profileToolchain(profile);
-    const bool isMsvc = tcList.contains("msvc")
-            || (tcList.isEmpty() && qbs::Internal::HostOsInfo::isWindowsHost());
-    const QString suffix = isMsvc ? "obj" : "o";
-    return baseName + '.' + suffix;
+    const QByteArray marker = "object suffix: ";
+    const int markerOffset = output.indexOf(marker);
+    if (markerOffset == -1)
+        return ".fail";
+    const int suffixOffset = markerOffset + marker.size();
+    const int newlineOffset = output.indexOf('\n', suffixOffset);
+    if (newlineOffset == -1)
+        return ".fail";
+    return QString::fromLocal8Bit(output.mid(suffixOffset, newlineOffset - suffixOffset).trimmed());
 }
 
 inline QString inputDirHash(const QString &dir)
@@ -343,26 +351,6 @@ inline bool copyDllExportHeader(const QString &srcDataDir, const QString &target
     const QString targetPath = targetDataDir + "/dllexport.h";
     QFile::remove(targetPath);
     return sourceFile.copy(targetPath);
-}
-
-inline qbs::Internal::HostOsInfo::HostOs targetOs()
-{
-    const SettingsPtr s = settings();
-    const qbs::Profile buildProfile(profileName(), s.get());
-    const QString targetPlatform = buildProfile.value("qbs.targetPlatform").toString();
-    if (!targetPlatform.isEmpty()) {
-        const auto targetOS = qbs::Internal::HostOsInfo::canonicalOSIdentifiers(targetPlatform);
-        if (qbs::Internal::contains(targetOS, "windows"))
-            return qbs::Internal::HostOsInfo::HostOsWindows;
-        if (qbs::Internal::contains(targetOS, "linux"))
-            return qbs::Internal::HostOsInfo::HostOsLinux;
-        if (qbs::Internal::contains(targetOS, "macos"))
-            return qbs::Internal::HostOsInfo::HostOsMacos;
-        if (qbs::Internal::contains(targetOS, "unix"))
-            return qbs::Internal::HostOsInfo::HostOsOtherUnix;
-        return qbs::Internal::HostOsInfo::HostOsOther;
-    }
-    return qbs::Internal::HostOsInfo::hostOs();
 }
 
 #endif // Include guard.

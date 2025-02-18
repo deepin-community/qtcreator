@@ -39,7 +39,7 @@ NimParser::Result NimParser::handleLine(const QString &lne, OutputFormat)
     const CompileTask t(type, message, absoluteFilePath(FilePath::fromUserInput(filename)),
                         lineNumber);
     LinkSpecs linkSpecs;
-    addLinkSpecForAbsoluteFilePath(linkSpecs, t.file, t.line, match, 1);
+    addLinkSpecForAbsoluteFilePath(linkSpecs, t.file, t.line, t.column, match, 1);
     scheduleTask(t, 1);
     return {Status::Done, linkSpecs};
 }
@@ -48,15 +48,13 @@ NimParser::Result NimParser::handleLine(const QString &lne, OutputFormat)
 
 #ifdef WITH_TESTS
 
-#include "nimplugin.h"
-
 #include <projectexplorer/outputparser_test.h>
 
 #include <QTest>
 
 namespace Nim {
 
-void NimPlugin::testNimParser_data()
+void NimParserTest::testNimParser_data()
 {
     QTest::addColumn<QString>("input");
     QTest::addColumn<OutputParserTester::Channel>("inputChannel");
@@ -97,7 +95,7 @@ void NimPlugin::testNimParser_data()
             << QString();
 }
 
-void NimPlugin::testNimParser()
+void NimParserTest::testNimParser()
 {
     OutputParserTester testbench;
     testbench.addLineParser(new NimParser);
@@ -113,5 +111,6 @@ void NimPlugin::testNimParser()
                           outputLines);
 }
 
-}
+} // Nim
+
 #endif

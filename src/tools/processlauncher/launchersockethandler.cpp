@@ -4,8 +4,8 @@
 #include "launchersockethandler.h"
 #include "launcherlogging.h"
 
+#include <utils/processhelper.h>
 #include <utils/processreaper.h>
-#include <utils/processutils.h>
 
 #include <QCoreApplication>
 #include <QLocalSocket>
@@ -181,7 +181,8 @@ void LauncherSocketHandler::handleStartPacket()
     process->setStandardInputFile(packet.standardInputFile);
     ProcessStartHandler *handler = process->processStartHandler();
     handler->setWindowsSpecificStartupFlags(packet.belowNormalPriority,
-                                            packet.createConsoleOnWindows);
+                                            packet.createConsoleOnWindows,
+                                            packet.forceDefaultErrorMode);
     handler->setProcessMode(packet.processMode);
     handler->setWriteData(packet.writeData);
     handler->setNativeArguments(packet.nativeArguments);
@@ -274,7 +275,7 @@ void LauncherSocketHandler::removeProcess(quintptr token)
 
     ProcessWithToken *process = it.value();
     m_processes.erase(it);
-    ProcessReaper::reap(process, process->reaperTimeout());
+    ProcessReaper::reap(process, std::chrono::milliseconds(process->reaperTimeout()));
 }
 
 } // namespace Internal

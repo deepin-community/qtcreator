@@ -14,19 +14,38 @@
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <utils/fancymainwindow.h>
+
+#include <aggregation/aggregate.h>
+
 #include <QDebug>
 #include <QPointer>
 #include <QStackedWidget>
 #include <QStringList>
 
+using namespace Utils;
+
+/*!
+    \class Core::DesignMode
+    \inmodule QtCreator
+
+    \brief The DesignMode class implements the mode for the Design mode, which is
+    for example used by \QMLD and \QD.
+
+    Other plugins can register themselves with registerDesignWidget(),
+    giving a list of MIME types that the editor understands, as well as an instance
+    to the main editor widget itself.
+*/
+
 namespace Core {
 
 struct DesignEditorInfo
 {
-    int widgetIndex;
+    int widgetIndex = -1;
     QStringList mimeTypes;
     Context context;
-    QWidget *widget;
+    QWidget *widget = nullptr;
+    FancyMainWindow *mainWindow = nullptr;
 };
 
 class DesignModePrivate
@@ -67,8 +86,7 @@ DesignMode::DesignMode()
     setContext(Context(Constants::C_DESIGN_MODE));
     setWidget(d->m_stackWidget);
     setDisplayName(Tr::tr("Design"));
-    setIcon(Utils::Icon::modeIcon(Icons::MODE_DESIGN_CLASSIC,
-                                  Icons::MODE_DESIGN_FLAT, Icons::MODE_DESIGN_FLAT_ACTIVE));
+    setIcon(Icon::sideBarIcon(Icons::MODE_DESIGN_CLASSIC, Icons::MODE_DESIGN_FLAT));
     setPriority(Constants::P_MODE_DESIGN);
     setId(Constants::MODE_DESIGN);
 
@@ -103,16 +121,17 @@ void DesignMode::setDesignModeIsRequired()
   */
 void DesignMode::registerDesignWidget(QWidget *widget,
                                       const QStringList &mimeTypes,
-                                      const Context &context)
+                                      const Context &context,
+                                      Utils::FancyMainWindow *mainWindow)
 {
     setDesignModeIsRequired();
     int index = d->m_stackWidget->addWidget(widget);
-
     auto info = new DesignEditorInfo;
     info->mimeTypes = mimeTypes;
     info->context = context;
     info->widgetIndex = index;
     info->widget = widget;
+    info->mainWindow = mainWindow;
     d->m_editors.append(info);
 }
 
@@ -143,6 +162,7 @@ void DesignMode::currentEditorChanged(IEditor *editor)
                 for (const QString &mime : editorInfo->mimeTypes) {
                     if (mime == mimeType) {
                         d->m_stackWidget->setCurrentIndex(editorInfo->widgetIndex);
+                        setMainWindow(editorInfo->mainWindow);
                         setActiveContext(editorInfo->context);
                         mimeEditorAvailable = true;
                         setEnabled(true);

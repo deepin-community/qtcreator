@@ -41,14 +41,13 @@ static Range toRange(const QTextDocument *doc, DiagnosticRange locations)
 
 void ClangToolQuickFixOperation::perform()
 {
-    TextEditor::RefactoringChanges changes;
-    QMap<QString, TextEditor::RefactoringFilePtr> refactoringFiles;
+    TextEditor::PlainRefactoringFileFactory changes;
+    QMap<Utils::FilePath, TextEditor::RefactoringFilePtr> refactoringFiles;
 
     for (const ExplainingStep &step : m_diagnostic.explainingSteps) {
         if (!step.isFixIt)
             continue;
-        TextEditor::RefactoringFilePtr &refactoringFile
-            = refactoringFiles[step.location.filePath.toString()];
+        TextEditor::RefactoringFilePtr &refactoringFile = refactoringFiles[step.location.filePath];
         if (refactoringFile.isNull())
             refactoringFile = changes.file(step.location.filePath);
         Utils::ChangeSet changeSet = refactoringFile->changeSet();
@@ -65,8 +64,8 @@ DocumentQuickFixFactory::DocumentQuickFixFactory(DocumentQuickFixFactory::Runner
     : m_runnerCollector(runnerCollector)
 {}
 
-void DocumentQuickFixFactory::match(const CppEditor::Internal::CppQuickFixInterface &interface,
-                                    QuickFixOperations &result)
+void DocumentQuickFixFactory::doMatch(const CppEditor::Internal::CppQuickFixInterface &interface,
+                                      QuickFixOperations &result)
 {
     QTC_ASSERT(m_runnerCollector, return );
     if (DocumentClangToolRunner *runner = m_runnerCollector(interface.filePath())) {

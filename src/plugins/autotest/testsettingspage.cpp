@@ -10,6 +10,8 @@
 #include "testsettings.h"
 #include "testtreemodel.h"
 
+#include <coreplugin/dialogs/ioptionspage.h>
+
 #include <utils/algorithm.h>
 #include <utils/id.h>
 #include <utils/infolabel.h>
@@ -48,8 +50,6 @@ private:
 
 TestSettingsWidget::TestSettingsWidget()
 {
-    auto timeoutLabel = new QLabel(Tr::tr("Timeout:"));
-    timeoutLabel->setToolTip(Tr::tr("Timeout used when executing each test case."));
     auto scanThreadLabel = new QLabel(Tr::tr("Scan threads:"));
     scanThreadLabel->setToolTip("Number of worker threads used when scanning for tests.");
 
@@ -75,9 +75,9 @@ TestSettingsWidget::TestSettingsWidget()
 
     PushButton resetChoicesButton {
         text(Tr::tr("Reset Cached Choices")),
-        tooltip(Tr::tr("Clear all cached choices of run configurations for "
+        Layouting::toolTip(Tr::tr("Clear all cached choices of run configurations for "
                        "tests where the executable could not be deduced.")),
-        onClicked([] { AutotestPlugin::clearChoiceCache(); }, this)
+        onClicked(&clearChoiceCache, this)
     };
 
     TestSettings &s = Internal::testSettings();
@@ -96,7 +96,7 @@ TestSettingsWidget::TestSettingsWidget()
             s.displayApplication,
             s.processArgs,
             Row { Tr::tr("Automatically run"), s.runAfterBuild, st },
-            Row { timeoutLabel, s.timeout, st },
+            Row { s.useTimeout, s.timeout, st },
             Row { resetChoicesButton, st }
          }
     };
@@ -151,6 +151,8 @@ TestSettingsWidget::TestSettingsWidget()
         if (!changedIds.isEmpty())
             TestTreeModel::instance()->rebuild(changedIds);
     });
+
+    setOnCancel([] { Internal::testSettings().cancel(); });
 }
 
 enum TestBaseInfo
@@ -253,14 +255,23 @@ void TestSettingsWidget::onFrameworkItemChanged()
 
 // TestSettingsPage
 
-TestSettingsPage::TestSettingsPage()
+class TestSettingsPage final : public Core::IOptionsPage
 {
-    setId(Constants::AUTOTEST_SETTINGS_ID);
-    setDisplayName(Tr::tr("General"));
-    setCategory(Constants::AUTOTEST_SETTINGS_CATEGORY);
-    setDisplayCategory(Tr::tr("Testing"));
-    setCategoryIconPath(":/autotest/images/settingscategory_autotest.png");
-    setWidgetCreator([] { return new TestSettingsWidget; });
+public:
+    TestSettingsPage()
+    {
+        setId(Constants::AUTOTEST_SETTINGS_ID);
+        setDisplayName(Tr::tr("General"));
+        setCategory(Constants::AUTOTEST_SETTINGS_CATEGORY);
+        setDisplayCategory(Tr::tr("Testing"));
+        setCategoryIconPath(":/autotest/images/settingscategory_autotest.png");
+        setWidgetCreator([] { return new TestSettingsWidget; });
+    }
+};
+
+void setupTestSettingsPage()
+{
+    static TestSettingsPage theTestSettingsPage;
 }
 
 } // Autotest::Internal

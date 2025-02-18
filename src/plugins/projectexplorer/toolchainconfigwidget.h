@@ -5,9 +5,16 @@
 
 #include "projectexplorer_export.h"
 
+#include "toolchain.h"
+
 #include <QScrollArea>
 
+#include <utility>
+
+namespace Utils { class PathChooser; }
+
 QT_BEGIN_NAMESPACE
+class QCheckBox;
 class QFormLayout;
 class QLineEdit;
 class QLabel;
@@ -15,20 +22,18 @@ QT_END_NAMESPACE
 
 namespace ProjectExplorer {
 
-class ToolChain;
-
 // --------------------------------------------------------------------------
 // ToolChainConfigWidget
 // --------------------------------------------------------------------------
 
-class PROJECTEXPLORER_EXPORT ToolChainConfigWidget : public QScrollArea
+class PROJECTEXPLORER_EXPORT ToolchainConfigWidget : public QScrollArea
 {
     Q_OBJECT
 
 public:
-    explicit ToolChainConfigWidget(ToolChain *tc);
+    explicit ToolchainConfigWidget(const ToolchainBundle &bundle);
 
-    ToolChain *toolChain() const;
+    ToolchainBundle bundle() const { return m_bundle; }
 
     void apply();
     void discard();
@@ -36,6 +41,7 @@ public:
     void makeReadOnly();
 
 signals:
+    void compilerCommandChanged(Utils::Id language);
     void dirty();
 
 protected:
@@ -49,12 +55,23 @@ protected:
 
     void addErrorLabel();
     static QStringList splitString(const QString &s);
+    Utils::FilePath compilerCommand(Utils::Id language);
+    bool hasAnyCompiler() const;
+    void setCommandVersionArguments(const QStringList &args);
+    void deriveCxxCompilerCommand();
+
     QFormLayout *m_mainLayout;
-    QLineEdit *m_nameLineEdit;
 
 private:
-    ToolChain *m_toolChain;
+    using ToolchainChooser = std::pair<const Toolchain *, Utils::PathChooser *>;
+    ToolchainChooser compilerPathChooser(Utils::Id language);
+    void setupCompilerPathChoosers();
+
+    ToolchainBundle m_bundle;
+    QLineEdit *m_nameLineEdit = nullptr;
     QLabel *m_errorLabel = nullptr;
+    QCheckBox *m_manualCxxCompilerCheckBox = nullptr;
+    QList<ToolchainChooser> m_commands;
 };
 
 } // namespace ProjectExplorer

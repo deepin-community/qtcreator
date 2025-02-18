@@ -5,25 +5,24 @@
 
 #include "utils_global.h"
 
-#include "environmentfwd.h"
-
 #include <QPersistentModelIndex>
 #include <QTimer>
 #include <QValidator>
 
 QT_BEGIN_NAMESPACE
 class QModelIndex;
+class QTreeView;
 QT_END_NAMESPACE
 
 namespace Utils {
 
-class NameValueModel;
+class EnvironmentModel;
 
 class QTCREATOR_UTILS_EXPORT NameValueValidator : public QValidator
 {
 public:
     NameValueValidator(QWidget *parent,
-                       NameValueModel *model,
+                       EnvironmentModel *model,
                        QTreeView *view,
                        const QModelIndex &index,
                        const QString &toolTipText);
@@ -34,7 +33,7 @@ public:
 
 private:
     const QString m_toolTipText;
-    NameValueModel *m_model;
+    EnvironmentModel *m_model;
     QTreeView *m_view;
     QPersistentModelIndex m_index;
     mutable QTimer m_hideTipTimer;

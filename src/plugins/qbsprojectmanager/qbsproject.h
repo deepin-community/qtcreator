@@ -20,7 +20,7 @@
 
 #include <functional>
 
-namespace CppEditor { class CppProjectUpdater; }
+namespace ProjectExplorer { class ProjectUpdater; }
 
 namespace QbsProjectManager {
 namespace Internal {
@@ -67,8 +67,10 @@ public:
     ProjectExplorer::RemovedFilesFromProject removeFiles(ProjectExplorer::Node *context,
                                                          const Utils::FilePaths &filePaths,
                                                          Utils::FilePaths *notRemoved = nullptr) final;
-    bool renameFile(ProjectExplorer::Node *context,
-                    const Utils::FilePath &oldFilePath, const Utils::FilePath &newFilePath) final;
+    bool renameFiles(
+        ProjectExplorer::Node *context,
+        const Utils::FilePairs &filesToRename,
+        Utils::FilePaths *notRenamed) final;
     Utils::FilePaths filesGeneratedFrom(const Utils::FilePath &sourceFile) const final;
     QVariant additionalData(Utils::Id id) const final;
     QString name() const final { return QLatin1String("qbs"); }
@@ -85,6 +87,11 @@ public:
     bool renameFileInProduct(const QString &oldPath,
             const QString &newPath, const QJsonObject &product,
             const QJsonObject &group);
+    bool renameFilesInProduct(
+        const Utils::FilePairs &files,
+        const QJsonObject &product,
+        const QJsonObject &group,
+        Utils::FilePaths *notRenamed);
 
     static ProjectExplorer::FileType fileTypeFor(const QSet<QString> &tags);
 
@@ -130,13 +137,12 @@ private:
     QJsonObject m_projectData; // TODO: Perhaps store this in the root project node instead?
 
     QbsProjectParser *m_qbsProjectParser = nullptr;
-    QFutureInterface<bool> *m_qbsUpdateFutureInterface = nullptr;
     using TreeCreationWatcher = QFutureWatcher<QbsProjectNode *>;
     TreeCreationWatcher *m_treeCreationWatcher = nullptr;
     Utils::Environment m_lastParseEnv;
     std::unique_ptr<QbsRequest> m_parseRequest;
 
-    CppEditor::CppProjectUpdater *m_cppCodeModelUpdater = nullptr;
+    ProjectExplorer::ProjectUpdater *m_cppCodeModelUpdater = nullptr;
 
     QHash<ProjectExplorer::ExtraCompilerFactory *, QStringList> m_sourcesForGeneratedFiles;
     QList<ProjectExplorer::ExtraCompiler *> m_extraCompilers;

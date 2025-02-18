@@ -26,12 +26,10 @@
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
-#include <coreplugin/actionmanager/command.h>
 #include <coreplugin/icore.h>
 
-#include <QAction>
 #include <QDialog>
-#include <QPushButton>
+#include <QLayout>
 
 using namespace Utils;
 using namespace Core;
@@ -59,7 +57,7 @@ public:
         Column {
             m_recordWidget,
             Row { m_cropAndTrimStatusWidget, m_exportWidget },
-            noMargin(), spacing(0),
+            noMargin, spacing(0),
         }.attachTo(this);
 
         auto setLowerRowEndabled = [this] (bool enabled) {
@@ -89,6 +87,7 @@ public:
         });
 
         m_spinner = new SpinnerSolution::Spinner(SpinnerSolution::SpinnerSize::Medium, this);
+        m_spinner->setColor(creatorColor(Theme::IconsBaseColor));
         m_spinner->hide();
 
         layout()->setSizeConstraint(QLayout::SetFixedSize);
@@ -123,14 +122,12 @@ class ScreenRecorderPlugin final : public ExtensionSystem::IPlugin
 public:
     void initialize() final
     {
-        const QIcon menuIcon = Icon({{":/utils/images/filledcircle.png", Theme::IconsStopColor}},
-                                    Icon::MenuTintedStyle).icon();
-        auto action = new QAction(menuIcon, Tr::tr("Record Screen..."), this);
-        Command *cmd = ActionManager::registerAction(action, Constants::ACTION_ID,
-                                                     Context(Core::Constants::C_GLOBAL));
-        connect(action, &QAction::triggered, this, &ScreenRecorderPlugin::showDialogOrSettings);
-        ActionContainer *mtools = ActionManager::actionContainer(Core::Constants::M_TOOLS);
-        mtools->addAction(cmd);
+        ActionBuilder(this, Constants::ACTION_ID)
+            .setText(Tr::tr("Record Screen..."))
+            .setIcon(Icon({{":/utils/images/filledcircle.png", Theme::IconsStopColor}},
+                          Icon::MenuTintedStyle).icon())
+            .addToContainer(Core::Constants::M_TOOLS)
+            .addOnTriggered(this, &ScreenRecorderPlugin::showDialogOrSettings);
 
 #ifdef WITH_TESTS
         addTest<FFmpegOutputParserTest>();
@@ -140,9 +137,11 @@ public:
 private:
     void showDialogOrSettings()
     {
-        if (!Internal::settings().toolsRegistered() &&
-            !Core::ICore::showOptionsDialog(Constants::TOOLSSETTINGSPAGE_ID)) {
-            return;
+        if (!Internal::settings().toolsRegistered()) {
+            // Show options if ffmpeg/ffprobe are neither autodetected nor manually set
+            Core::ICore::showOptionsDialog(Constants::TOOLSSETTINGSPAGE_ID);
+            if (!Internal::settings().toolsRegistered())
+                return; // User did not set ffmpeg/ffprobe
         }
 
         ScreenRecorderDialog::showDialog();

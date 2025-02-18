@@ -199,18 +199,18 @@ QString ResolveCommand::representation() const
 
 static QList<CommandLineOption::Type> resolveOptions()
 {
-    return {CommandLineOption::FileOptionType,
-            CommandLineOption::BuildDirectoryOptionType,
-            CommandLineOption::LogLevelOptionType,
-            CommandLineOption::VerboseOptionType,
-            CommandLineOption::QuietOptionType,
-            CommandLineOption::ShowProgressOptionType,
-            CommandLineOption::DryRunOptionType,
-            CommandLineOption::ForceProbesOptionType,
-            CommandLineOption::LogTimeOptionType,
-            CommandLineOption::DeprecationWarningsOptionType,
-            CommandLineOption::JobsOptionType,
-            CommandLineOption::DisableFallbackProviderType};
+    return {
+        CommandLineOption::FileOptionType,
+        CommandLineOption::BuildDirectoryOptionType,
+        CommandLineOption::LogLevelOptionType,
+        CommandLineOption::VerboseOptionType,
+        CommandLineOption::QuietOptionType,
+        CommandLineOption::ShowProgressOptionType,
+        CommandLineOption::DryRunOptionType,
+        CommandLineOption::ForceProbesOptionType,
+        CommandLineOption::LogTimeOptionType,
+        CommandLineOption::DeprecationWarningsOptionType,
+        CommandLineOption::JobsOptionType};
 }
 
 QList<CommandLineOption::Type> ResolveCommand::supportedOptions() const

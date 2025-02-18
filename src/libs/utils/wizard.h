@@ -50,6 +50,10 @@ public:
 
     void showVariables();
 
+    // allows to skip pages
+    void setSkipForSubprojects(bool skip);
+    int nextId() const override;
+
 protected:
     virtual QString stringify(const QVariant &v) const;
     virtual QString evaluate(const QVariant &v) const;
@@ -85,7 +89,7 @@ public:
 
     WizardProgressItem *currentItem() const;
 
-    QList<WizardProgressItem *> items() const;
+    QSet<WizardProgressItem *> items() const;
 
     WizardProgressItem *startItem() const;
 

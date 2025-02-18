@@ -44,8 +44,8 @@ SquishOutputPane::SquishOutputPane()
     m_outputWidget->setLayout(outputLayout);
 
     QPalette pal;
-    pal.setColor(QPalette::Window, Utils::creatorTheme()->color(Utils::Theme::InfoBarBackground));
-    pal.setColor(QPalette::WindowText, Utils::creatorTheme()->color(Utils::Theme::InfoBarText));
+    pal.setColor(QPalette::Window, Utils::creatorColor(Utils::Theme::InfoBarBackground));
+    pal.setColor(QPalette::WindowText, Utils::creatorColor(Utils::Theme::InfoBarText));
 
     m_summaryWidget = new QFrame;
     m_summaryWidget->setPalette(pal);
@@ -383,6 +383,12 @@ void SquishOutputPane::enableAllFiltersTriggered()
         action->setChecked(true);
 
     m_filterModel->enableAllResultTypes();
+}
+
+void setupSquishOutputPane(QObject *guard)
+{
+    m_instance = new SquishOutputPane;
+    m_instance->setParent(guard);
 }
 
 } // namespace Squish::Internal

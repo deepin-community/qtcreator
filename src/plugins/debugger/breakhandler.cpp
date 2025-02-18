@@ -20,6 +20,9 @@
 #include <coreplugin/idocument.h>
 #include <coreplugin/session.h>
 
+#include <projectexplorer/projecttree.h>
+#include <projectexplorer/project.h>
+
 #include <texteditor/textmark.h>
 #include <texteditor/texteditor.h>
 
@@ -1001,6 +1004,16 @@ int BreakHandler::threadSpecFromDisplay(const QString &str)
     return ok ? result : -1;
 }
 
+static QString trimmedFileName(const FilePath &fullPath)
+{
+    const Project *project = ProjectTree::currentProject();
+    const FilePath projectDirectory = project ? project->projectDirectory() : FilePath();
+    if (projectDirectory.exists())
+        return FilePath::calcRelativePath(fullPath.path(), projectDirectory.toUserOutput());
+
+    return fullPath.toUserOutput();
+}
+
 const QString empty("-");
 
 QVariant BreakpointItem::data(int column, int role) const
@@ -1054,6 +1067,8 @@ QVariant BreakpointItem::data(int column, int role) const
             break;
         case BreakpointFileColumn:
             if (role == Qt::DisplayRole)
+                return trimmedFileName(markerFileName());
+            if (role == Qt::ToolTipRole)
                 return markerFileName().toUserOutput();
             break;
         case BreakpointLineColumn:
@@ -1241,7 +1256,7 @@ static bool isAllowedTransition(BreakpointState from, BreakpointState to)
 
 void BreakpointItem::gotoState(BreakpointState target, BreakpointState assumedCurrent)
 {
-    QTC_ASSERT(m_state == assumedCurrent, qDebug() << m_state);
+    QTC_ASSERT(m_state == assumedCurrent, qDebug() << target << m_state);
     setState(target);
 }
 
@@ -1506,8 +1521,15 @@ void BreakpointItem::deleteBreakpoint()
 {
     QTC_ASSERT(!globalBreakpoint(), return); // Use deleteBreakpoint(GlobalBreakpoint gbp) instead.
 
-    for (QPointer<DebuggerEngine> engine : EngineManager::engines())
-        engine->breakHandler()->requestBreakpointRemoval(this);
+    bool found = false;
+    for (QPointer<DebuggerEngine> engine : EngineManager::engines()) {
+        if (QTC_GUARD(engine)) {
+            QTC_CHECK(!found);
+            found = true;
+            engine->breakHandler()->requestBreakpointRemoval(this);
+        }
+    }
+    QTC_CHECK(found);
 }
 
 void BreakpointItem::deleteGlobalOrThisBreakpoint()
@@ -1637,6 +1659,8 @@ bool BreakHandler::contextMenuEvent(const ItemViewEvent &ev)
     //                     bp.setThreadSpec(threadId);
     //           });
 
+    menu->addSeparator();
+
     addAction(this, menu,
               selectedBreakpoints.size() > 1
                   ? breakpointsEnabled ? Tr::tr("Disable Selected Breakpoints") : Tr::tr("Enable Selected Breakpoints")
@@ -1650,6 +1674,33 @@ bool BreakHandler::contextMenuEvent(const ItemViewEvent &ev)
                     }
               }
     );
+
+    bool canDisableAll = false;
+    bool canEnableAll = false;
+    forItemsAtLevel<1>([&canDisableAll, &canEnableAll](Breakpoint bp) {
+        if (bp)
+           (bp->isEnabled() ? canDisableAll : canEnableAll) = true;
+    });
+
+    addAction(this, menu, Tr::tr("Disable All Breakpoints"), canDisableAll, [this] {
+        forItemsAtLevel<1>([this](Breakpoint bp) {
+            if (bp && bp->isEnabled()) {
+                if (GlobalBreakpoint gbp = bp->globalBreakpoint())
+                    gbp->setEnabled(false, false);
+                requestBreakpointEnabling(bp, false);
+            }
+        });
+    });
+
+    addAction(this, menu, Tr::tr("Enable All Breakpoints"), canEnableAll, [this] {
+        forItemsAtLevel<1>([this](Breakpoint bp) {
+            if (bp && !bp->isEnabled()) {
+                if (GlobalBreakpoint gbp = bp->globalBreakpoint())
+                    gbp->setEnabled(true, false);
+                requestBreakpointEnabling(bp, true);
+            }
+        });
+    });
 
     addAction(this, menu,
               selectedLocations.size() > 1
@@ -1940,10 +1991,13 @@ QString BreakpointItem::toolTip() const
         << "<tr><td>" << Tr::tr("Marker File:")
         << "</td><td>" << markerFileName().toUserOutput() << "</td></tr>"
         << "<tr><td>" << Tr::tr("Marker Line:")
-        << "</td><td>" << markerLineNumber() << "</td></tr>"
-        << "<tr><td>" << Tr::tr("Hit Count:")
-        << "</td><td>" << m_parameters.hitCount << "</td></tr>"
-        << "</table><br><table>"
+        << "</td><td>" << markerLineNumber() << "</td></tr>";
+    if (m_parameters.hitCount) {
+        str << "<tr><td>" << Tr::tr("Hit Count:")
+            << "</td><td>" << *m_parameters.hitCount << "</td></tr>";
+    }
+
+    str << "</table><br><table>"
         << "<tr><th>" << Tr::tr("Property")
         << "</th><th>" << Tr::tr("Requested")
         << "</th><th>" << Tr::tr("Obtained") << "</th></tr>";
@@ -2172,6 +2226,8 @@ QVariant GlobalBreakpointItem::data(int column, int role) const
             break;
         case BreakpointFileColumn:
             if (role == Qt::DisplayRole)
+                return trimmedFileName(m_params.fileName);
+            if (role == Qt::ToolTipRole)
                 return m_params.fileName.toUserOutput();
             break;
         case BreakpointLineColumn:
@@ -2657,6 +2713,31 @@ bool BreakpointManager::contextMenuEvent(const ItemViewEvent &ev)
                         gbp->setEnabled(!breakpointsEnabled);
               }
     );
+
+    QList<GlobalBreakpoint> enabledBreakpoints;
+    QList<GlobalBreakpoint> disabledBreakpoints;
+    forItemsAtLevel<1>([&enabledBreakpoints, &disabledBreakpoints](GlobalBreakpoint gbp) {
+        if (gbp) {
+            if (gbp->isEnabled())
+                enabledBreakpoints.append(gbp);
+            else
+                disabledBreakpoints.append(gbp);
+         }
+    });
+
+    addAction(this, menu, Tr::tr("Disable All Breakpoints"),
+              !enabledBreakpoints.isEmpty(),
+              [enabledBreakpoints] {
+        for (GlobalBreakpoint gbp : enabledBreakpoints)
+            gbp->setEnabled(false);
+    });
+
+    addAction(this, menu, Tr::tr("Enable All Breakpoints"),
+              !disabledBreakpoints.isEmpty(),
+              [disabledBreakpoints] {
+        for (GlobalBreakpoint gbp : disabledBreakpoints)
+            gbp->setEnabled(true);
+    });
 
     menu->addSeparator();
 

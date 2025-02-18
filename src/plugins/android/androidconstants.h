@@ -30,7 +30,6 @@ const char ANDROID_BUILD_DIRECTORY[] = "android-build";
 const char ANDROID_APP_PROCESS_DIRECTORY[] = "android-app-process";
 const char JAVA_EDITOR_ID[] = "java.editor";
 const char JLS_SETTINGS_ID[] = "Java::JLSSettingsID";
-const char JAVA_MIMETYPE[] = "text/x-java";
 const char ANDROID_ARCHITECTURE[] = "Android.Architecture";
 const char ANDROID_PACKAGE_SOURCE_DIR[] = "ANDROID_PACKAGE_SOURCE_DIR";
 const char ANDROID_EXTRA_LIBS[] = "ANDROID_EXTRA_LIBS";
@@ -56,6 +55,10 @@ const char AndroidMkSpecAbis[] = "AndroidMkSpecAbis"; // QStringList
 const char AndroidSoLibPath[] = "AndroidSoLibPath"; // QStringList
 const char AndroidTargets[] = "AndroidTargets"; // QStringList
 const char AndroidApplicationArgs[] = "AndroidApplicationArgs"; // QString
+const char AndroidClassPaths[] = "AndroidClassPath"; // QStringList
+
+const char AndroidBuildTargetDirSupport[] = "AndroidBuildTargetDirSupport"; // bool
+const char UseAndroidBuildTargetDir[] = "UseAndroidBuildTargetDir"; // bool
 
 // For qbs support
 const char AndroidApk[] = "Android.APK"; // QStringList
@@ -75,12 +78,8 @@ const Utils::Id AndroidAvdPath = "AndroidAvdPath";
 // SDK Tools
 const char cmdlineToolsName[] = "cmdline-tools";
 const char ndkPackageName[] = "ndk";
-
-// For AndroidQtVersion
-const char ArmToolsDisplayName[] = "arm";
-const char ArmV7ToolsDisplayName[] = "armv7";
-const char X86ToolsDisplayName[] = "i686";
-const char AArch64ToolsDisplayName[] = "aarch64";
-const char X86_64ToolsDisplayName[] = "x86_64";
+const char platformsPackageName[] = "platforms";
+const char buildToolsPackageName[] = "build-tools";
+const char systemImagesPackageName[] = "system-images";
 
 } // Android::Constants

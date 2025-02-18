@@ -5,14 +5,16 @@
 
 #include "haskellconstants.h"
 
-#include <coreplugin/iversioncontrol.h>
-#include <coreplugin/vcsmanager.h>
-
+#include <projectexplorer/buildsystem.h>
 #include <projectexplorer/buildtargetinfo.h>
+#include <projectexplorer/project.h>
+#include <projectexplorer/projectmanager.h>
+#include <projectexplorer/projectnodes.h>
 #include <projectexplorer/target.h>
+#include <projectexplorer/treescanner.h>
 
 #include <utils/algorithm.h>
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 #include <utils/qtcassert.h>
 
 #include <QFile>
@@ -21,8 +23,7 @@
 using namespace ProjectExplorer;
 using namespace Utils;
 
-namespace Haskell {
-namespace Internal {
+namespace Haskell::Internal {
 
 static QVector<QString> parseExecutableNames(const FilePath &projectFilePath)
 {
@@ -42,18 +43,22 @@ static QVector<QString> parseExecutableNames(const FilePath &projectFilePath)
     return result;
 }
 
-HaskellProject::HaskellProject(const Utils::FilePath &fileName)
-    : Project(Constants::C_HASKELL_PROJECT_MIMETYPE, fileName)
+class HaskellBuildSystem final : public BuildSystem
 {
-    setId(Constants::C_HASKELL_PROJECT_ID);
-    setDisplayName(fileName.toFileInfo().completeBaseName());
-    setBuildSystemCreator([](Target *t) { return new HaskellBuildSystem(t); });
-}
+public:
+    HaskellBuildSystem(Target *t);
 
-bool HaskellProject::isHaskellProject(Project *project)
-{
-    return project && project->id() == Constants::C_HASKELL_PROJECT_ID;
-}
+    void triggerParsing() final;
+
+    QString name() const final { return QLatin1String("haskell"); }
+
+private:
+    void updateApplicationTargets();
+
+private:
+    ParseGuard m_parseGuard;
+    TreeScanner m_scanner;
+};
 
 HaskellBuildSystem::HaskellBuildSystem(Target *t)
     : BuildSystem(t)
@@ -62,7 +67,7 @@ HaskellBuildSystem::HaskellBuildSystem(Target *t)
         auto root = std::make_unique<ProjectNode>(projectDirectory());
         root->setDisplayName(target()->project()->displayName());
         std::vector<std::unique_ptr<FileNode>> nodePtrs
-            = Utils::transform<std::vector>(m_scanner.release().allFiles, [](FileNode *fn) {
+            = Utils::transform<std::vector>(m_scanner.release().takeAllFiles(), [](FileNode *fn) {
                   return std::unique_ptr<FileNode>(fn);
               });
         root->addNestedNodes(std::move(nodePtrs));
@@ -108,5 +113,22 @@ void HaskellBuildSystem::updateApplicationTargets()
     target()->updateDefaultRunConfigurations();
 }
 
-} // namespace Internal
-} // namespace Haskell
+class HaskellProject final : public Project
+{
+public:
+    explicit HaskellProject(const FilePath &fileName)
+        : Project(Constants::C_HASKELL_PROJECT_MIMETYPE, fileName)
+    {
+        setId(Constants::C_HASKELL_PROJECT_ID);
+        setDisplayName(fileName.toFileInfo().completeBaseName());
+        setBuildSystemCreator<HaskellBuildSystem>();
+    }
+};
+
+void setupHaskellProject()
+{
+    ProjectManager::registerProjectType<HaskellProject>(
+        Constants::C_HASKELL_PROJECT_MIMETYPE);
+}
+
+} // Haskell::Internal

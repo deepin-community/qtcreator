@@ -3,8 +3,8 @@
 
 import QtQuick
 import QtQuick.Templates as T
-import StudioTheme 1.0 as StudioTheme
-import QtQuickDesignerTheme 1.0
+import StudioTheme as StudioTheme
+import StudioWindowManager
 
 T.ComboBox {
     id: control
@@ -110,9 +110,9 @@ T.ComboBox {
         width: control.listView.width
         height: control.listView.height + 2 * control.style.borderWidth
         visible: false
-        flags: Qt.FramelessWindowHint | Qt.Dialog | Qt.NoDropShadowWindowHint
+        flags: Qt.FramelessWindowHint | Qt.Tool | Qt.NoDropShadowWindowHint | Qt.WindowStaysOnTopHint
         modality: Qt.NonModal
-        transientParent: null
+        transientParent: control.Window.window
         color: "transparent"
 
         onActiveFocusItemChanged: {
@@ -156,7 +156,14 @@ T.ComboBox {
         delegate: ItemDelegate {
             id: itemDelegate
 
+            required property var model
+            required property int index
+
             onClicked: {
+                // Necessary to keep the transient parent open otherwise it will change the focus
+                // to the main window "Utils::AppMainWindowClassWindow" and closes the transient
+                // parent.
+                window.transientParent.requestActivate()
                 comboBoxPopup.close()
                 control.currentIndex = index
                 control.activated(index)
@@ -165,15 +172,12 @@ T.ComboBox {
             width: control.width
             height: control.style.controlSize.height
             padding: 0
-            enabled: model.enabled === undefined ? true : model.enabled
+            enabled: itemDelegate.model["enabled"] === undefined ? true : itemDelegate.model["enabled"]
 
             contentItem: Text {
                 leftPadding: 8
                 rightPadding: verticalScrollBar.style.scrollBarThicknessHover
-                text: control.textRole ? (Array.isArray(control.model)
-                                          ? modelData[control.textRole]
-                                          : model[control.textRole])
-                                       : modelData
+                text: itemDelegate.model[control.textRole]
                 color: {
                     if (!itemDelegate.enabled)
                         return control.style.text.disabled

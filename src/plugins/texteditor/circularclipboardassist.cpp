@@ -6,7 +6,6 @@
 #include "codeassist/iassistprocessor.h"
 #include "codeassist/iassistproposal.h"
 #include "codeassist/assistproposalitem.h"
-#include "codeassist/genericproposalmodel.h"
 #include "codeassist/genericproposal.h"
 #include "texteditor.h"
 #include "circularclipboard.h"
@@ -20,15 +19,14 @@
 
 using namespace Utils;
 
-namespace TextEditor {
-namespace Internal {
+namespace TextEditor::Internal {
 
-class ClipboardProposalItem: public AssistProposalItem
+class ClipboardProposalItem final : public AssistProposalItem
 {
 public:
     enum { maxLen = 80 };
 
-    ClipboardProposalItem(QSharedPointer<const QMimeData> mimeData)
+    ClipboardProposalItem(std::shared_ptr<const QMimeData> mimeData)
         : m_mimeData(mimeData)
     {
         QString text = mimeData->text().simplified();
@@ -39,10 +37,9 @@ public:
         setText(text);
     }
 
-    ~ClipboardProposalItem() noexcept override = default;
-
-    void apply(TextDocumentManipulatorInterface &manipulator, int /*basePosition*/) const override
+    void apply(TextEditorWidget *editorWidget, int /*basePosition*/) const final
     {
+        QTC_ASSERT(editorWidget, return);
 
         //Move to last in circular clipboard
         if (CircularClipboard * clipboard = CircularClipboard::instance()) {
@@ -52,27 +49,27 @@ public:
 
         //Copy the selected item
         QApplication::clipboard()->setMimeData(
-                    TextEditorWidget::duplicateMimeData(m_mimeData.data()));
+                    TextEditorWidget::duplicateMimeData(m_mimeData.get()));
 
         //Paste
-        manipulator.paste();
+        editorWidget->paste();
     }
 
 private:
-    QSharedPointer<const QMimeData> m_mimeData;
+    std::shared_ptr<const QMimeData> m_mimeData;
 };
 
-class ClipboardAssistProcessor: public IAssistProcessor
+class ClipboardAssistProcessor final : public IAssistProcessor
 {
 public:
-    IAssistProposal *perform() override
+    IAssistProposal *perform() final
     {
         QIcon icon = Icon::fromTheme("edit-paste");
         CircularClipboard * clipboard = CircularClipboard::instance();
         QList<AssistProposalItemInterface *> items;
         items.reserve(clipboard->size());
         for (int i = 0; i < clipboard->size(); ++i) {
-            QSharedPointer<const QMimeData> data = clipboard->next();
+            std::shared_ptr<const QMimeData> data = clipboard->next();
 
             AssistProposalItem *item = new ClipboardProposalItem(data);
             item->setIcon(icon);
@@ -84,10 +81,19 @@ public:
     }
 };
 
-IAssistProcessor *ClipboardAssistProvider::createProcessor(const AssistInterface *) const
+class ClipboardAssistProvider final : public IAssistProvider
 {
-    return new ClipboardAssistProcessor;
+public:
+    IAssistProcessor *createProcessor(const AssistInterface *) const final
+    {
+        return new ClipboardAssistProcessor;
+    }
+};
+
+IAssistProvider &clipboardAssistProvider()
+{
+    static ClipboardAssistProvider theClipboardAssistProvider;
+    return theClipboardAssistProvider;
 }
 
-} // namespace Internal
-} // namespace TextEditor
+} // TextEditor::Internal

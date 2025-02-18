@@ -30,14 +30,17 @@ public:
     QString id() const override;
     QString displayName() const override;
     QWidget *createConfigWidget() override;
-    void writeSettings(Utils::QtcSettings *settings) override;
-    void readSettings(Utils::QtcSettings *settings) override;
+    Utils::Store save() const override;
+    void restore(const Utils::Store &s) override;
     bool isValid() const override;
 
     void setDirectory(const Utils::FilePath &directory);
     void setBaseDirectory(const Utils::FilePath &directory);
     static void findOnFileSystem(const QString &path);
     static FindInFiles *instance();
+
+    // deprecated
+    QByteArray settingsKey() const override;
 
 protected:
     QString label() const override;
@@ -48,12 +51,16 @@ private:
     FileContainerProvider fileContainerProvider() const override;
     void setValid(bool valid);
     void searchEnginesSelectionChanged(int index);
+    void currentEditorChanged(Core::IEditor *editor);
 
     QPointer<QWidget> m_configWidget;
     QPointer<Utils::PathChooser> m_directory;
+    QAbstractButton *m_currentDirectory;
     QStackedWidget *m_searchEngineWidget = nullptr;
     QComboBox *m_searchEngineCombo = nullptr;
     bool m_isValid = false;
 };
+
+namespace Internal { void setupFindInFiles(QObject *guard); }
 
 } // namespace TextEditor

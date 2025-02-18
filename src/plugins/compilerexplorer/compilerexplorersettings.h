@@ -7,10 +7,9 @@
 #include "compilerexploreraspects.h"
 
 #include <utils/aspects.h>
+#include <utils/networkaccessmanager.h>
 
 #include <texteditor/textdocument.h>
-
-#include <QNetworkAccessManager>
 
 namespace CompilerExplorer {
 class SourceSettings;
@@ -40,13 +39,9 @@ public:
 
     Api::Config apiConfig() const
     {
-        return Api::Config(m_networkAccessManager, compilerExplorerUrl());
+        return Api::Config(Utils::NetworkAccessManager::instance(),
+                           compilerExplorerUrl.volatileValue());
     }
-
-    QNetworkAccessManager *networkAccessManager() const { return m_networkAccessManager; }
-
-private:
-    QNetworkAccessManager *m_networkAccessManager{nullptr};
 };
 
 class SourceSettings : public Utils::AspectContainer,

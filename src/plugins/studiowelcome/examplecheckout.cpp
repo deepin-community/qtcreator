@@ -24,7 +24,7 @@
 #include <projectexplorer/projectexplorer.h>
 
 #include <qmldesigner/qmldesignerplugin.h>
-#include <qmldesigner/utils/fileextractor.h>
+#include <qmldesignerutils/fileextractor.h>
 
 #include <QDialog>
 #include <QFileDialog>
@@ -35,8 +35,7 @@
 #include <QQuickItem>
 #include <QQuickWidget>
 
-#include <algorithm>
-
+using namespace Tasking;
 using namespace Utils;
 
 void ExampleCheckout::registerTypes()
@@ -114,7 +113,7 @@ DataModelDownloader::DataModelDownloader(QObject * /* parent */)
                          &DataModelDownloader::targetPathMustChange);
     }
 
-    connect(&m_fileDownloader, &QmlDesigner::FileDownloader::finishedChanged, this, [this]() {
+    connect(&m_fileDownloader, &QmlDesigner::FileDownloader::finishedChanged, this, [this] {
         m_started = false;
 
         if (m_fileDownloader.finished()) {
@@ -124,8 +123,9 @@ DataModelDownloader::DataModelDownloader(QObject * /* parent */)
             auto unarchiver = new Unarchiver;
             unarchiver->setSourceAndCommand(*sourceAndCommand);
             unarchiver->setDestDir(tempFilePath());
-            QObject::connect(unarchiver, &Unarchiver::done, this, [this, unarchiver](bool success) {
-                QTC_CHECK(success);
+            QObject::connect(unarchiver, &Unarchiver::done, this,
+                             [this, unarchiver](DoneResult result) {
+                QTC_CHECK(result == DoneResult::Success);
                 unarchiver->deleteLater();
                 emit finished();
             });

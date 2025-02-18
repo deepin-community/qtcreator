@@ -3,7 +3,7 @@
 
 import QtQuick
 import QtQuick.Templates as T
-import StudioTheme 1.0 as StudioTheme
+import StudioTheme as StudioTheme
 
 T.AbstractButton {
     id: control
@@ -12,11 +12,14 @@ T.AbstractButton {
 
     property bool globalHover: false
     property bool hover: control.hovered
+    property bool press: control.pressed
 
     property alias buttonIcon: buttonIcon.text
     property alias iconColor: buttonIcon.color
-    property alias iconFont: buttonIcon.font.family
-    property alias iconSize: buttonIcon.font.pixelSize
+
+    property string iconFontFamily: StudioTheme.Constants.iconFont.family
+    property int iconSize: control.style.baseIconFontSize
+
     property alias iconItalic: buttonIcon.font.italic
     property alias iconBold: buttonIcon.font.bold
     property alias iconRotation: buttonIcon.rotation
@@ -57,8 +60,10 @@ T.AbstractButton {
         T.Label {
             id: buttonIcon
             color: control.style.icon.idle
-            font.family: StudioTheme.Constants.iconFont.family
-            font.pixelSize: control.style.baseIconFontSize
+            font {
+                family: control.iconFontFamily
+                pixelSize: control.iconSize
+            }
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignHCenter
             anchors.fill: parent
@@ -67,7 +72,7 @@ T.AbstractButton {
             states: [
                 State {
                     name: "default"
-                    when: control.enabled && !control.pressed && !control.checked && !control.hover
+                    when: control.enabled && !control.press && !control.checked && !control.hover
                     PropertyChanges {
                         target: buttonIcon
                         color: control.style.icon.idle
@@ -75,7 +80,7 @@ T.AbstractButton {
                 },
                 State {
                     name: "hover"
-                    when: control.enabled && !control.pressed && !control.checked && control.hover
+                    when: control.enabled && !control.press && !control.checked && control.hover
                     PropertyChanges {
                         target: buttonIcon
                         color: control.style.icon.hover
@@ -83,7 +88,7 @@ T.AbstractButton {
                 },
                 State {
                     name: "press"
-                    when: control.enabled && control.pressed
+                    when: control.enabled && control.press
                     PropertyChanges {
                         target: buttonIcon
                         color: control.style.icon.interaction
@@ -91,7 +96,7 @@ T.AbstractButton {
                 },
                 State {
                     name: "check"
-                    when: control.enabled && !control.pressed && control.checked
+                    when: control.enabled && !control.press && control.checked
                     PropertyChanges {
                         target: buttonIcon
                         color: control.checkedInverted ? control.style.text.selectedText // TODO rather something in icon
@@ -110,11 +115,39 @@ T.AbstractButton {
         }
     }
 
+    function highlight() {
+        // Only run the highlight animation if not running already and if default state is active
+        if (highlightAnimation.running || control.state !== "default")
+            return
+
+        highlightAnimation.start()
+    }
+
+    component MyColorAnimation: ColorAnimation {
+        target: buttonBackground
+        property: "color"
+        duration: 750
+    }
+
+    SequentialAnimation {
+        id: highlightAnimation
+        running: false
+
+        MyColorAnimation { to: StudioTheme.Values.themeConnectionEditorButtonBorder_hover }
+        MyColorAnimation { to: control.style.background.idle }
+        MyColorAnimation { to: StudioTheme.Values.themeConnectionEditorButtonBorder_hover }
+        MyColorAnimation { to: control.style.background.idle }
+        MyColorAnimation { to: StudioTheme.Values.themeConnectionEditorButtonBorder_hover }
+        MyColorAnimation { to: control.style.background.idle }
+    }
+
+    onStateChanged: highlightAnimation.stop()
+
     states: [
         State {
             name: "default"
             when: control.enabled && !control.globalHover && !control.hover
-                  && !control.pressed && !control.checked
+                  && !control.press && !control.checked
             PropertyChanges {
                 target: buttonBackground
                 color: control.style.background.idle
@@ -127,7 +160,7 @@ T.AbstractButton {
         },
         State {
             name: "globalHover"
-            when: control.globalHover && !control.hover && !control.pressed && control.enabled
+            when: control.globalHover && !control.hover && !control.press && control.enabled
             PropertyChanges {
                 target: buttonBackground
                 color: control.style.background.idle
@@ -136,7 +169,7 @@ T.AbstractButton {
         },
         State {
             name: "hover"
-            when: !control.checked && control.hover && !control.pressed && control.enabled
+            when: !control.checked && control.hover && !control.press && control.enabled
             PropertyChanges {
                 target: buttonBackground
                 color: control.style.background.hover
@@ -149,7 +182,7 @@ T.AbstractButton {
         },
         State {
             name: "hoverCheck"
-            when: control.checked && control.hover && !control.pressed && control.enabled
+            when: control.checked && control.hover && !control.press && control.enabled
             PropertyChanges {
                 target: buttonBackground
                 color: control.checkedInverted ? control.style.interactionHover
@@ -164,7 +197,7 @@ T.AbstractButton {
         },
         State {
             name: "press"
-            when: control.hover && control.pressed && control.enabled
+            when: control.hover && control.press && control.enabled
             PropertyChanges {
                 target: buttonBackground
                 color: control.style.interaction
@@ -177,7 +210,7 @@ T.AbstractButton {
         },
         State {
             name: "check"
-            when: control.enabled && !control.pressed && control.checked
+            when: control.enabled && !control.press && control.checked
             PropertyChanges {
                 target: buttonBackground
                 color: control.checkedInverted ? control.style.interaction

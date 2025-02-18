@@ -17,8 +17,6 @@ QT_FORWARD_DECLARE_CLASS(QModelIndex)
 
 namespace ProjectExplorer {
 
-class EnvironmentWidgetPrivate;
-
 class PROJECTEXPLORER_EXPORT EnvironmentWidget : public QWidget
 {
     Q_OBJECT
@@ -40,6 +38,8 @@ public:
 
     void expand();
 
+    void forceUpdateCheck() const;
+
 signals:
     void userChangesChanged();
     void detailsVisibleChanged(bool visible);
@@ -51,7 +51,6 @@ private:
     void unsetEnvironmentButtonClicked();
     void appendPathButtonClicked();
     void prependPathButtonClicked();
-    void batchEditEnvironmentButtonClicked();
     void environmentCurrentIndexChanged(const QModelIndex &current);
     void invalidateCurrentIndex();
     void updateSummaryText();
@@ -60,9 +59,10 @@ private:
     void linkActivated(const QString &link);
 
     using PathListModifier = std::function<QString(const QString &oldList, const QString &newDir)>;
-    void amendPathList(Utils::NameValueItem::Operation op);
+    void amendPathList(Utils::EnvironmentItem::Operation op);
 
-    const std::unique_ptr<EnvironmentWidgetPrivate> d;
+    class Private;
+    const std::unique_ptr<Private> d;
 };
 
 } // namespace ProjectExplorer

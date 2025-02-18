@@ -22,11 +22,8 @@
 #include <coreplugin/icore.h>
 #include <coreplugin/iversioncontrol.h>
 #include <coreplugin/messagemanager.h>
-#include <coreplugin/progressmanager/progressmanager.h>
 #include <coreplugin/vcsmanager.h>
-#include <cppeditor/cppeditorconstants.h>
-#include <cppeditor/cppmodelmanager.h>
-#include <cppeditor/cppprojectupdater.h>
+#include <cppeditor/cppprojectfile.h>
 #include <cppeditor/generatedcodemodelsupport.h>
 #include <projectexplorer/buildinfo.h>
 #include <projectexplorer/buildmanager.h>
@@ -36,18 +33,26 @@
 #include <projectexplorer/headerpath.h>
 #include <projectexplorer/kit.h>
 #include <projectexplorer/kitaspects.h>
+#include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectupdater.h>
 #include <projectexplorer/target.h>
 #include <projectexplorer/taskhub.h>
 #include <projectexplorer/toolchain.h>
+
 #include <utils/algorithm.h>
 #include <utils/async.h>
 #include <utils/environment.h>
+#include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
+#include <utils/mimeconstants.h>
+#include <utils/mimeutils.h>
 #include <utils/qtcassert.h>
+
 #include <qmljs/qmljsmodelmanagerinterface.h>
 #include <qmljstools/qmljsmodelmanager.h>
+
 #include <qtsupport/qtcppkitinfo.h>
 #include <qtsupport/qtkitaspect.h>
 
@@ -58,9 +63,6 @@
 #include <QMessageBox>
 #include <QSet>
 #include <QVariantMap>
-
-#include <algorithm>
-#include <type_traits>
 
 using namespace Core;
 using namespace ProjectExplorer;
@@ -98,7 +100,7 @@ private:
 // --------------------------------------------------------------------
 
 QbsProject::QbsProject(const FilePath &fileName)
-    : Project(Constants::MIME_TYPE, fileName)
+    : Project(Utils::Constants::QBS_MIMETYPE, fileName)
 {
     setId(Constants::PROJECT_ID);
     setProjectLanguages(Context(ProjectExplorer::Constants::CXX_LANGUAGE_ID));
@@ -151,7 +153,8 @@ static bool supportsNodeAction(ProjectAction action, const Node *node)
 QbsBuildSystem::QbsBuildSystem(QbsBuildConfiguration *bc)
     : BuildSystem(bc->target()),
       m_session(new QbsSession(this)),
-      m_cppCodeModelUpdater(new CppEditor::CppProjectUpdater),
+      m_cppCodeModelUpdater(
+        ProjectUpdaterFactory::createProjectUpdater(ProjectExplorer::Constants::CXX_LANGUAGE_ID)),
       m_buildConfiguration(bc)
 {
     connect(m_session, &QbsSession::newGeneratedFilesForSources, this,
@@ -202,12 +205,6 @@ QbsBuildSystem::~QbsBuildSystem()
     m_parseRequest.reset();
     delete m_cppCodeModelUpdater;
     delete m_qbsProjectParser;
-    if (m_qbsUpdateFutureInterface) {
-        m_qbsUpdateFutureInterface->reportCanceled();
-        m_qbsUpdateFutureInterface->reportFinished();
-        delete m_qbsUpdateFutureInterface;
-        m_qbsUpdateFutureInterface = nullptr;
-    }
     qDeleteAll(m_extraCompilers);
 }
 
@@ -271,27 +268,52 @@ RemovedFilesFromProject QbsBuildSystem::removeFiles(Node *context, const FilePat
     return BuildSystem::removeFiles(context, filePaths, notRemoved);
 }
 
-bool QbsBuildSystem::renameFile(Node *context,
-                                const FilePath &oldFilePath,
-                                const FilePath &newFilePath)
+bool QbsBuildSystem::renameFiles(Node *context, const FilePairs &filesToRename, FilePaths *notRenamed)
 {
     if (auto *n = dynamic_cast<QbsGroupNode *>(context)) {
         const QbsProductNode * const prdNode = parentQbsProductNode(n);
         QTC_ASSERT(prdNode, return false);
-        return renameFileInProduct(oldFilePath.toString(),
-                                   newFilePath.toString(),
-                                   prdNode->productData(),
-                                   n->groupData());
+
+        if (session()->apiLevel() >= 6) {
+            return renameFilesInProduct(
+                filesToRename, prdNode->productData(), n->groupData(), notRenamed);
+        }
+
+        bool success = true;
+        for (const auto &[oldFilePath, newFilePath] : filesToRename) {
+            if (!renameFileInProduct(
+                    oldFilePath.toString(),
+                    newFilePath.toString(),
+                    prdNode->productData(),
+                    n->groupData())) {
+                success = false;
+                if (notRenamed)
+                    *notRenamed << oldFilePath;
+            }
+        }
+        return success;
     }
 
     if (auto *n = dynamic_cast<QbsProductNode *>(context)) {
-        return renameFileInProduct(oldFilePath.toString(),
-                                   newFilePath.toString(),
-                                   n->productData(),
-                                   n->mainGroup());
+        if (session()->apiLevel() >= 6)
+            return renameFilesInProduct(filesToRename, n->productData(), n->mainGroup(), notRenamed);
+
+        bool success = true;
+        for (const auto &[oldFilePath, newFilePath] : filesToRename) {
+            if (!renameFileInProduct(
+                    oldFilePath.toString(),
+                    newFilePath.toString(),
+                    n->productData(),
+                    n->mainGroup())) {
+                success = false;
+                if (notRenamed)
+                    *notRenamed << oldFilePath;
+            }
+        }
+        return success;
     }
 
-    return BuildSystem::renameFile(context, oldFilePath, newFilePath);
+    return BuildSystem::renameFiles(context, filesToRename, notRenamed);
 }
 
 QVariant QbsBuildSystem::additionalData(Id id) const
@@ -413,11 +435,46 @@ bool QbsBuildSystem::renameFileInProduct(
     if (newPath.isEmpty())
         return false;
     FilePaths dummy;
+    // FIXME: The qbs API need a (bulk) renaming feature
     if (removeFilesFromProduct({FilePath::fromString(oldPath)}, product, group, &dummy)
             != RemovedFilesFromProject::Ok) {
         return false;
     }
     return addFilesToProduct({FilePath::fromString(newPath)}, product, group, &dummy);
+}
+
+bool QbsBuildSystem::renameFilesInProduct(
+    const Utils::FilePairs &files,
+    const QJsonObject &product,
+    const QJsonObject &group,
+    Utils::FilePaths *notRenamed)
+{
+    const auto allWildcardsInGroup = transform<QStringList>(
+        group.value("source-artifacts-from-wildcards").toArray(),
+        [](const QJsonValue &v) { return v.toObject().value("file-path").toString(); });
+    using FileStringPair = std::pair<QString, QString>;
+    using FileStringPairs = QList<FileStringPair>;
+    const FileStringPairs filesAsStrings = Utils::transform(files, [](const FilePair &fp) {
+        return std::make_pair(fp.first.path(), fp.second.path());
+    });
+    FileStringPairs nonWildcardFiles;
+    for (const FileStringPair &file : filesAsStrings) {
+        if (!allWildcardsInGroup.contains(file.first))
+            nonWildcardFiles << file;
+    }
+
+    const QString groupFilePath = group.value("location")
+                                      .toObject().value("file-path").toString();
+    ensureWriteableQbsFile(groupFilePath);
+    const FileChangeResult result = session()->renameFiles(
+        nonWildcardFiles,
+        product.value("name").toString(),
+        group.value("name").toString());
+
+    *notRenamed = FileUtils::toFilePathList(result.failedFiles());
+    if (result.error().hasError())
+        MessageManager::writeDisrupting(result.error().toString());
+    return notRenamed->isEmpty();
 }
 
 QString QbsBuildSystem::profile() const
@@ -476,7 +533,7 @@ FilePath QbsBuildSystem::installRoot()
     if (dc) {
         const QList<BuildStep *> steps = dc->stepList()->steps();
         for (const BuildStep * const step : steps) {
-            if (!step->enabled())
+            if (!step->stepEnabled())
                 continue;
             if (const auto qbsInstallStep = qobject_cast<const QbsInstallStep *>(step))
                 return qbsInstallStep->installRoot();
@@ -489,7 +546,6 @@ FilePath QbsBuildSystem::installRoot()
 void QbsBuildSystem::handleQbsParsingDone(bool success)
 {
     QTC_ASSERT(m_qbsProjectParser, return);
-    QTC_ASSERT(m_qbsUpdateFutureInterface, return);
 
     qCDebug(qbsPmLog) << "Parsing done, success:" << success;
 
@@ -514,15 +570,10 @@ void QbsBuildSystem::handleQbsParsingDone(bool success)
             // point of view.
             dataChanged = true;
         }
-    } else {
-        m_qbsUpdateFutureInterface->reportCanceled();
     }
 
-    m_qbsProjectParser->deleteLaterSafely();
+    delete m_qbsProjectParser;
     m_qbsProjectParser = nullptr;
-    m_qbsUpdateFutureInterface->reportFinished();
-    delete m_qbsUpdateFutureInterface;
-    m_qbsUpdateFutureInterface = nullptr;
 
     if (dataChanged) {
         updateAfterParse();
@@ -576,7 +627,7 @@ void QbsBuildSystem::startParsing()
 {
     QTC_ASSERT(!m_qbsProjectParser, return);
 
-    QVariantMap config = m_buildConfiguration->qbsConfiguration();
+    Store config = m_buildConfiguration->qbsConfiguration();
     if (!config.contains(Constants::QBS_INSTALL_ROOT_KEY)) {
         config.insert(Constants::QBS_INSTALL_ROOT_KEY, m_buildConfiguration->macroExpander()
                       ->expand(QbsSettings::defaultInstallDirTemplate()));
@@ -591,7 +642,7 @@ void QbsBuildSystem::startParsing()
     cancelDelayedParseRequest();
 
     QTC_ASSERT(!m_qbsProjectParser, return);
-    m_qbsProjectParser = new QbsProjectParser(this, m_qbsUpdateFutureInterface);
+    m_qbsProjectParser = new QbsProjectParser(this);
     m_treeCreationWatcher = nullptr;
     connect(m_qbsProjectParser, &QbsProjectParser::done,
             this, &QbsBuildSystem::handleQbsParsingDone);
@@ -637,18 +688,8 @@ void QbsBuildSystem::generateErrors(const ErrorInfo &e)
 void QbsBuildSystem::prepareForParsing()
 {
     TaskHub::clearTasks(ProjectExplorer::Constants::TASK_CATEGORY_BUILDSYSTEM);
-    if (m_qbsUpdateFutureInterface) {
-        m_qbsUpdateFutureInterface->reportCanceled();
-        m_qbsUpdateFutureInterface->reportFinished();
-    }
-    delete m_qbsUpdateFutureInterface;
-    m_qbsUpdateFutureInterface = nullptr;
-
-    m_qbsUpdateFutureInterface = new QFutureInterface<bool>();
-    m_qbsUpdateFutureInterface->setProgressRange(0, 0);
-    ProgressManager::addTask(m_qbsUpdateFutureInterface->future(),
-        Tr::tr("Reading Project \"%1\"").arg(project()->displayName()), "Qbs.QbsEvaluate");
-    m_qbsUpdateFutureInterface->reportStarted();
+    if (m_qbsProjectParser)
+        m_qbsProjectParser->cancel();
 }
 
 void QbsBuildSystem::updateDocuments()
@@ -671,20 +712,22 @@ void QbsBuildSystem::updateDocuments()
 
 static QString getMimeType(const QJsonObject &sourceArtifact)
 {
+    using namespace Utils::Constants;
     const auto tags = sourceArtifact.value("file-tags").toArray();
     if (tags.contains("hpp")) {
-        if (CppEditor::ProjectFile::isAmbiguousHeader(sourceArtifact.value("file-path").toString()))
-            return QString(CppEditor::Constants::AMBIGUOUS_HEADER_MIMETYPE);
-        return QString(CppEditor::Constants::CPP_HEADER_MIMETYPE);
+        const QString filePath = sourceArtifact.value("file-path").toString();
+        if (CppEditor::ProjectFile::isAmbiguousHeader(filePath))
+            return Utils::mimeTypeForFile(filePath).name();
+        return QString(CPP_HEADER_MIMETYPE);
     }
     if (tags.contains("cpp"))
-        return QString(CppEditor::Constants::CPP_SOURCE_MIMETYPE);
+        return QString(CPP_SOURCE_MIMETYPE);
     if (tags.contains("c"))
-        return QString(CppEditor::Constants::C_SOURCE_MIMETYPE);
+        return QString(C_SOURCE_MIMETYPE);
     if (tags.contains("objc"))
-        return QString(CppEditor::Constants::OBJECTIVE_C_SOURCE_MIMETYPE);
+        return QString(OBJECTIVE_C_SOURCE_MIMETYPE);
     if (tags.contains("objcpp"))
-        return QString(CppEditor::Constants::OBJECTIVE_CPP_SOURCE_MIMETYPE);
+        return QString(OBJECTIVE_CPP_SOURCE_MIMETYPE);
     return {};
 }
 
@@ -819,14 +862,16 @@ static void getExpandedCompilerFlags(QStringList &cFlags, QStringList &cxxFlags,
             cxxFlags << "/std:c++20";
         else if (cxxLanguageVersion.contains("c++17"))
             cxxFlags << "/std:c++17";
+    } else {
+        cFlags = cxxFlags = commonFlags;
     }
 }
 
 static RawProjectPart generateProjectPart(
         const QJsonObject &product,
         const QJsonObject &group,
-        const std::shared_ptr<const ToolChain> &cToolChain,
-        const std::shared_ptr<const ToolChain> &cxxToolChain,
+        const std::shared_ptr<const Toolchain> &cToolchain,
+        const std::shared_ptr<const Toolchain> &cxxToolchain,
         QtMajorVersion qtVersion,
         QString cPch,
         QString cxxPch,
@@ -848,8 +893,8 @@ static RawProjectPart generateProjectPart(
     QStringList cFlags;
     QStringList cxxFlags;
     getExpandedCompilerFlags(cFlags, cxxFlags, props);
-    rpp.setFlagsForC({cToolChain.get(), cFlags, {}});
-    rpp.setFlagsForCxx({cxxToolChain.get(), cxxFlags, {}});
+    rpp.setFlagsForC({cToolchain.get(), cFlags, {}});
+    rpp.setFlagsForCxx({cxxToolchain.get(), cxxFlags, {}});
 
     const QStringList defines = arrayToStringList(props.value("cpp.defines"))
             + arrayToStringList(props.value("cpp.platformDefines"));
@@ -874,9 +919,10 @@ static RawProjectPart generateProjectPart(
     rpp.setHeaderPaths(headerPaths);
     rpp.setDisplayName(groupName);
     const QJsonObject location = groupOrProduct.value("location").toObject();
-    rpp.setProjectFileLocation(location.value("file-path").toString(),
-                               location.value("line").toInt(),
-                               location.value("column").toInt());
+    rpp.setProjectFileLocation(
+        FilePath::fromUserInput(location.value("file-path").toString()),
+        location.value("line").toInt(),
+        location.value("column").toInt());
     rpp.setBuildSystemTarget(QbsProductNode::getBuildKey(product));
     if (product.value("is-runnable").toBool()) {
         rpp.setBuildTargetType(BuildTargetType::Executable);
@@ -950,8 +996,8 @@ static RawProjectPart generateProjectPart(
 
 static RawProjectParts generateProjectParts(
         const QJsonObject &projectData,
-        const std::shared_ptr<const ToolChain> &cToolChain,
-        const std::shared_ptr<const ToolChain> &cxxToolChain,
+        const std::shared_ptr<const Toolchain> &cToolchain,
+        const std::shared_ptr<const Toolchain> &cxxToolchain,
         QtMajorVersion qtVersion
         )
 {
@@ -984,11 +1030,11 @@ static RawProjectParts generateProjectParts(
         };
         for (const QJsonValue &g : groups) {
             appendIfNotEmpty(generateProjectPart(
-                                 prd, g.toObject(), cToolChain, cxxToolChain, qtVersionForPart,
+                                 prd, g.toObject(), cToolchain, cxxToolchain, qtVersionForPart,
                                  cPch, cxxPch, objcPch, objcxxPch));
         }
         appendIfNotEmpty(generateProjectPart(
-                             prd, {}, cToolChain, cxxToolChain, qtVersionForPart,
+                             prd, {}, cToolchain, cxxToolchain, qtVersionForPart,
                              cPch, cxxPch, objcPch, objcxxPch));
     });
     return rpps;
@@ -1003,10 +1049,10 @@ void QbsBuildSystem::updateCppCodeModel()
 
     const QtSupport::CppKitInfo kitInfo(kit());
     QTC_ASSERT(kitInfo.isValid(), return);
-    const auto cToolchain = std::shared_ptr<ToolChain>(kitInfo.cToolChain
-            ? kitInfo.cToolChain->clone() : nullptr);
-    const auto cxxToolchain = std::shared_ptr<ToolChain>(kitInfo.cxxToolChain
-            ? kitInfo.cxxToolChain->clone() : nullptr);
+    const auto cToolchain = std::shared_ptr<Toolchain>(kitInfo.cToolchain
+            ? kitInfo.cToolchain->clone() : nullptr);
+    const auto cxxToolchain = std::shared_ptr<Toolchain>(kitInfo.cxxToolchain
+            ? kitInfo.cxxToolchain->clone() : nullptr);
 
     m_cppCodeModelUpdater->update({project(), kitInfo, activeParseEnvironment(), {},
             [projectData, kitInfo, cToolchain, cxxToolchain] {

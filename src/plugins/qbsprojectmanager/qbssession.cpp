@@ -3,7 +3,9 @@
 
 #include "qbssession.h"
 
+#include "qbslanguageclient.h"
 #include "qbspmlogging.h"
+#include "qbsproject.h"
 #include "qbsprojectmanagerconstants.h"
 #include "qbsprojectmanagertr.h"
 #include "qbssettings.h"
@@ -13,7 +15,7 @@
 #include <projectexplorer/taskhub.h>
 #include <utils/algorithm.h>
 #include <utils/environment.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/qtcassert.h>
 
 #include <QDir>
@@ -130,17 +132,21 @@ class QbsSession::Private
 {
 public:
     Process *qbsProcess = nullptr;
+    QbsLanguageClient *languageClient = nullptr;
     PacketReader *packetReader = nullptr;
     QJsonObject currentRequest;
+    QList<QJsonObject> queuedFileUpdateRequests;
     QJsonObject projectData;
     QEventLoop eventLoop;
     QJsonObject reply;
     QHash<QString, QStringList> generatedFilesForSources;
     std::optional<Error> lastError;
     State state = State::Inactive;
+    int apiLevel = 0;
+    bool fileUpdatePossible = true;
 };
 
-QbsSession::QbsSession(QObject *parent) : QObject(parent), d(new Private)
+QbsSession::QbsSession(QbsBuildSystem *buildSystem) : QObject(buildSystem), d(new Private)
 {
     initialize();
 }
@@ -195,6 +201,7 @@ void QbsSession::initialize()
         QTimer::singleShot(0, this, [this] { setError(Error::InvalidQbsExecutable); });
         return;
     }
+    d->qbsProcess->setEnvironment(QbsSettings::qbsProcessEnvironment());
     d->qbsProcess->setCommand({qbsExe, {"session"}});
     d->qbsProcess->start();
 }
@@ -212,7 +219,8 @@ QbsSession::~QbsSession()
         d->qbsProcess->disconnect(this);
         if (d->qbsProcess->state() == QProcess::Running) {
             sendQuitPacket();
-            d->qbsProcess->waitForFinished(10000);
+            using namespace std::chrono_literals;
+            d->qbsProcess->waitForFinished(10s);
         }
         delete d->qbsProcess;
     }
@@ -251,6 +259,11 @@ QString QbsSession::errorString(QbsSession::Error error)
 QJsonObject QbsSession::projectData() const
 {
     return d->projectData;
+}
+
+int QbsSession::apiLevel() const
+{
+    return d->apiLevel;
 }
 
 void QbsSession::sendRequest(const QJsonObject &request)
@@ -309,6 +322,12 @@ FileChangeResult QbsSession::removeFiles(const QStringList &files, const QString
                                          const QString &group)
 {
     return updateFileList("remove-files", files, product, group);
+}
+
+FileChangeResult QbsSession::renameFiles(
+    const QList<std::pair<QString, QString>> &files, const QString &product, const QString &group)
+{
+    return updateFileList("rename-files", files, product, group);
 }
 
 RunEnvironmentResult QbsSession::getRunEnvironment(
@@ -372,6 +391,7 @@ void QbsSession::insertRequestedModuleProperties(QJsonObject &request)
         "cpp.useObjcPrecompiledHeader",
         "cpp.useObjcxxPrecompiledHeader",
         "cpp.warningLevel",
+        "java.additionalClassPaths",
         "qbs.architecture",
         "qbs.architectures",
         "qbs.sysroot",
@@ -408,6 +428,7 @@ QbsSession::BuildGraphInfo QbsSession::getBuildGraphInfo(const FilePath &bgFileP
     QTimer::singleShot(10000, &session, [&session] { session.d->eventLoop.exit(1); });
     connect(&session, &QbsSession::errorOccurred, [&] {
         bgInfo.error = ErrorInfo(Tr::tr("Failed to load qbs build graph."));
+        session.d->eventLoop.quit();
     });
     connect(&session, &QbsSession::projectResolved, [&](const ErrorInfo &error) {
         bgInfo.error = error;
@@ -448,11 +469,20 @@ void QbsSession::handlePacket(const QJsonObject &packet)
             setError(Error::VersionMismatch);
             return;
         }
+        d->apiLevel = packet.value("api-level").toInt();
+        if (parent() && d->apiLevel > 4) {
+            const QString lspSocket = packet.value("lsp-socket").toString();
+            if (!lspSocket.isEmpty())
+                d->languageClient = new QbsLanguageClient(lspSocket,
+                                                          static_cast<QbsBuildSystem *>(parent()));
+        }
         d->state = State::Active;
         sendQueuedRequest();
     } else if (type == "project-resolved") {
         setProjectDataFromReply(packet, true);
         emit projectResolved(getErrorInfo(packet));
+        d->fileUpdatePossible = true;
+        sendNextPendingFileUpdateRequest();
     } else if (type == "project-built") {
         setProjectDataFromReply(packet, false);
         emit projectBuilt(getErrorInfo(packet));
@@ -566,24 +596,53 @@ void QbsSession::setInactive()
     if (d->qbsProcess->state() == QProcess::Running)
         sendQuitPacket();
     d->qbsProcess = nullptr;
+    d->languageClient = nullptr; // Owned by LanguageClientManager
 }
 
-FileChangeResult QbsSession::updateFileList(const char *action, const QStringList &files,
-                                            const QString &product, const QString &group)
+FileChangeResult QbsSession::updateFileList(
+    const char *action,
+    const std::variant<QStringList, QList<std::pair<QString, QString>>> &files,
+    const QString &product,
+    const QString &group)
 {
-    if (d->state != State::Active)
-        return FileChangeResult(files, Tr::tr("The qbs session is not in a valid state."));
-    sendRequestNow(QJsonObject{
+    const bool filesAreStrings = std::holds_alternative<QStringList>(files);
+    if (d->state != State::Active) {
+        QStringList failedFiles;
+        if (filesAreStrings) {
+            failedFiles = std::get<QStringList>(files);
+        } else {
+            failedFiles = Utils::transform(
+                std::get<QList<std::pair<QString, QString>>>(files),
+                [](const std::pair<QString, QString> &p) { return p.first; });
+        }
+        return FileChangeResult(failedFiles, Tr::tr("The qbs session is not in a valid state."));
+    }
+    QJsonArray filesAsJson;
+    if (filesAreStrings) {
+        filesAsJson = QJsonArray::fromStringList(std::get<QStringList>(files));
+    } else {
+        for (const auto &[source, target] : std::get<QList<std::pair<QString, QString>>>(files)) {
+            const QJsonObject file(
+                {std::make_pair(QLatin1String("source-path"), source),
+                 std::make_pair(QLatin1String("target-path"), target)});
+            filesAsJson << file;
+        }
+    }
+    const QJsonObject fileUpdateRequest{
         {"type", QLatin1String(action)},
-        {"files", QJsonArray::fromStringList(files)},
+        {"files", filesAsJson},
         {"product", product},
-        {"group", group}
-    });
+        {"group", group}};
+    if (d->fileUpdatePossible)
+        sendFileUpdateRequest(fileUpdateRequest);
+    else
+        d->queuedFileUpdateRequests << fileUpdateRequest;
     return FileChangeResult(QStringList());
 }
 
 void QbsSession::handleFileListUpdated(const QJsonObject &reply)
 {
+    QTC_CHECK(!d->fileUpdatePossible);
     setProjectDataFromReply(reply, false);
     const QStringList failedFiles = arrayToStringList(reply.value("failed-files"));
     if (!failedFiles.isEmpty()) {
@@ -591,8 +650,22 @@ void QbsSession::handleFileListUpdated(const QJsonObject &reply)
             Tr::tr("Failed to update files in Qbs project: %1.\n"
                "The affected files are: \n\t%2")
                 .arg(getErrorInfo(reply).toString(), failedFiles.join("\n\t")));
+        d->fileUpdatePossible = true;
+        sendNextPendingFileUpdateRequest();
     }
     emit fileListUpdated();
+}
+
+void QbsSession::sendNextPendingFileUpdateRequest()
+{
+    if (!d->queuedFileUpdateRequests.isEmpty())
+        sendFileUpdateRequest(d->queuedFileUpdateRequests.takeFirst());
+}
+
+void QbsSession::sendFileUpdateRequest(const QJsonObject &request)
+{
+    d->fileUpdatePossible = false;
+    sendRequestNow(request);
 }
 
 ErrorInfoItem::ErrorInfoItem(const QJsonObject &data)

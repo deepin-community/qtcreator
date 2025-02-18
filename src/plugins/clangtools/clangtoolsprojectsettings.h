@@ -7,10 +7,8 @@
 
 #include <projectexplorer/project.h>
 
-#include <utils/fileutils.h>
+namespace ClangTools::Internal {
 
-namespace ClangTools {
-namespace Internal {
 class Diagnostic;
 
 class SuppressedDiagnostic
@@ -65,7 +63,7 @@ public:
     void removeSuppressedDiagnostic(const SuppressedDiagnostic &diag);
     void removeAllSuppressedDiagnostics();
 
-    using ClangToolsProjectSettingsPtr = QSharedPointer<ClangToolsProjectSettings>;
+    using ClangToolsProjectSettingsPtr = std::shared_ptr<ClangToolsProjectSettings>;
     static ClangToolsProjectSettingsPtr getSettings(ProjectExplorer::Project *project);
 
 signals:
@@ -88,7 +86,6 @@ private:
     SuppressedDiagnosticsList m_suppressedDiagnostics;
 };
 
-} // namespace Internal
-} // namespace ClangTools
+} // ClangTools::Internal
 
-Q_DECLARE_METATYPE(QSharedPointer<ClangTools::Internal::ClangToolsProjectSettings>)
+Q_DECLARE_METATYPE(std::shared_ptr<ClangTools::Internal::ClangToolsProjectSettings>)

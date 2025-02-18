@@ -9,7 +9,7 @@
 
 #include <coreplugin/icontext.h>
 
-#include <utils/fileutils.h>
+#include <utils/filepath.h>
 
 #include <QWidgetAction>
 
@@ -62,7 +62,6 @@ public:
     }
 
     QList<WidgetInfo> widgetInfos() const;
-    QWidget *widget(const QString & uniqueId) const;
 
     void disableWidgets();
     void enableWidgets();
@@ -72,6 +71,8 @@ public:
     void nextFileIsCalledInternally();
 
     const AbstractView *view() const;
+    void emitCustomNotification(const QString &identifier, const QList<ModelNode> &nodeList,
+                                const QList<QVariant> &data);
 
     void exportAsImage();
     QImage takeFormEditorScreenshot();
@@ -89,7 +90,11 @@ public:
 
     void disableStandardViews();
     void enableStandardViews();
+    void jumpToCodeInTextEditor(const ModelNode &modelNode);
     QList<AbstractView *> views() const;
+
+    void hideView(AbstractView &view);
+    void showView(AbstractView &view);
 
 private: // functions
     Q_DISABLE_COPY(ViewManager)
@@ -110,6 +115,11 @@ private: // functions
     QList<AbstractView *> standardViews() const;
 
     void registerNanotraceActions();
+
+    void registerViewActions();
+    void registerViewAction(AbstractView &view);
+    void enableView(AbstractView &view);
+    void disableView(AbstractView &view);
 
 private: // variables
     std::unique_ptr<ViewManagerData> d;

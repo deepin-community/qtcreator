@@ -8,7 +8,7 @@
 #include <utils/hostosinfo.h>
 #include <utils/launcherinterface.h>
 #include <utils/macroexpander.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/processinterface.h>
 #include <utils/temporarydirectory.h>
 
@@ -34,7 +34,7 @@ private:
         p.setCommand(cmd);
         p.setEnvironment(testEnv);
         p.runBlocking();
-        return QString::fromUtf8(p.readAllRawStandardOutput());
+        return QString::fromUtf8(p.rawStdOut());
     }
 
 private slots:
@@ -47,7 +47,7 @@ private slots:
                                   + QLatin1String(TEST_RELATIVE_LIBEXEC_PATH));
         LauncherInterface::setPathToLauncher(libExecPath);
 
-        testEnv.appendOrSet("TEST_ECHO", "1");
+        testEnv.set("TEST_ECHO", "1");
 
         if (HostOsInfo::isWindowsHost())
             newLine = "\r\n";
@@ -123,6 +123,31 @@ private slots:
         QString expected = args.join(newLine) + newLine;
         QString actual = run(shell);
         QCOMPARE(actual, expected);
+    }
+
+    void testConstructor_data()
+    {
+        QTest::addColumn<CommandLine>("command");
+        QTest::addColumn<FilePath>("executable");
+        QTest::addColumn<QStringList>("arguments");
+
+        const FilePath filePath("some_path");
+        const QString arg("-arg");
+        const QStringList args{"-a", "-b", "-c"};
+
+        QTest::newRow("mixed-strings") << CommandLine{filePath, {"-A", arg, args}}
+                                       << filePath << (QStringList{"-A"} << arg << args);
+    }
+
+    void testConstructor()
+    {
+        QFETCH(CommandLine, command);
+        QFETCH(FilePath, executable);
+        QFETCH(QStringList, arguments);
+
+        QCOMPARE(command.executable(), executable);
+        QCOMPARE(command.arguments(), arguments.join(' '));
+        QCOMPARE(command.splitArguments(), arguments);
     }
 
     void testFromUserInput_data()

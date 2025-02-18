@@ -8,25 +8,37 @@
 #include "../clangmodelmanagersupport.h"
 
 #include <coreplugin/editormanager/editormanager.h>
+
 #include <cplusplus/FindUsages.h>
+
 #include <cppeditor/cppcodemodelsettings.h>
 #include <cppeditor/cppeditorwidget.h>
 #include <cppeditor/cpptoolsreuse.h>
 #include <cppeditor/cpptoolstestcase.h>
 #include <cppeditor/semantichighlighter.h>
+
 #include <languageclient/languageclientmanager.h>
+
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/target.h>
+
+#include <qtsupport/qtkitaspect.h>
+
+#include <texteditor/blockrange.h>
 #include <texteditor/codeassist/assistproposaliteminterface.h>
-#include <texteditor/codeassist/textdocumentmanipulatorinterface.h>
+#include <texteditor/codeassist/genericproposal.h>
+#include <texteditor/codeassist/ifunctionhintproposalmodel.h>
+#include <texteditor/semantichighlighter.h>
 #include <texteditor/textmark.h>
+
 #include <utils/algorithm.h>
 #include <utils/environment.h>
 #include <utils/filepath.h>
+#include <utils/fileutils.h>
+#include <utils/searchresultitem.h>
 #include <utils/textutils.h>
-#include <qtsupport/qtkitaspect.h>
 
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -47,22 +59,16 @@ using namespace ProjectExplorer;
 using namespace TextEditor;
 using namespace Utils;
 
-namespace ClangCodeModel {
-namespace Internal {
-namespace Tests {
+namespace ClangCodeModel::Internal {
 
 using Range = std::tuple<int, int, int>;
 
-} // namespace Tests
-} // namespace Internal
-} // namespace ClangCodeModel
+} // namespace ClangCodeModel::Internal
 
-Q_DECLARE_METATYPE(ClangCodeModel::Internal::Tests::Range)
+Q_DECLARE_METATYPE(ClangCodeModel::Internal::Range)
 Q_DECLARE_METATYPE(IAssistProposal *)
 
-namespace ClangCodeModel {
-namespace Internal {
-namespace Tests {
+namespace ClangCodeModel::Internal {
 
 const Usage::Tags Initialization{Usage::Tag::Declaration, Usage::Tag::Write};
 
@@ -91,6 +97,42 @@ int timeOutInMs()
     static int timeOut = timeOutFromEnvironmentVariable();
     return timeOut;
 }
+
+class ClangdTest : public QObject
+{
+    Q_OBJECT
+
+public:
+    ~ClangdTest();
+
+protected:
+    // Convention: base bame == name of parent dir
+    void setProjectFileName(const QString &fileName) { m_projectFileName = fileName; }
+
+    void setSourceFileNames(const QStringList &fileNames) { m_sourceFileNames = fileNames; }
+    void setMinimumVersion(int version) { m_minVersion = version; }
+
+    ClangdClient *client() const { return m_client; }
+    Utils::FilePath filePath(const QString &fileName) const;
+    TextEditor::TextDocument *document(const QString &fileName) const {
+        return m_sourceDocuments.value(fileName);
+    }
+    ProjectExplorer::Project *project() const { return m_project; }
+    void waitForNewClient(bool withIndex = true);
+
+protected slots:
+    virtual void initTestCase();
+
+private:
+    CppEditor::Tests::TemporaryCopiedDir *m_projectDir = nullptr;
+    QString m_projectFileName;
+    QStringList m_sourceFileNames;
+    QHash<QString, TextEditor::TextDocument *> m_sourceDocuments;
+    ProjectExplorer::Kit *m_kit = nullptr;
+    ProjectExplorer::Project *m_project = nullptr;
+    ClangdClient *m_client = nullptr;
+    int m_minVersion = -1;
+};
 
 ClangdTest::~ClangdTest()
 {
@@ -182,16 +224,31 @@ void ClangdTest::initTestCase()
     }
 }
 
-ClangdTestFindReferences::ClangdTestFindReferences()
+class ClangdTestFindReferences final : public ClangdTest
 {
-    setProjectFileName("find-usages.pro");
-    setSourceFileNames({"defs.h", "main.cpp"});
-}
+    Q_OBJECT
+
+public:
+    ClangdTestFindReferences()
+    {
+        setProjectFileName("find-usages.pro");
+        setSourceFileNames({"defs.h", "main.cpp"});
+    }
+
+private slots:
+    void initTestCase() override;
+    void init() { m_actualResults.clear(); }
+    void test_data();
+    void test();
+
+private:
+    Utils::SearchResultItems m_actualResults;
+};
 
 void ClangdTestFindReferences::initTestCase()
 {
     ClangdTest::initTestCase();
-    CppEditor::codeModelSettings()->setCategorizeFindReferences(true);
+    CppEditor::CppCodeModelSettings::setCategorizeFindReferences(true);
     connect(client(), &ClangdClient::foundReferences, this,
             [this](const SearchResultItems &results) {
         if (results.isEmpty())
@@ -333,11 +390,22 @@ void ClangdTestFindReferences::test()
 }
 
 
-ClangdTestFollowSymbol::ClangdTestFollowSymbol()
+class ClangdTestFollowSymbol final : public ClangdTest
 {
-    setProjectFileName("follow-symbol.pro");
-    setSourceFileNames({"main.cpp", "header.h"});
-}
+    Q_OBJECT
+
+public:
+    ClangdTestFollowSymbol()
+    {
+        setProjectFileName("follow-symbol.pro");
+        setSourceFileNames({"main.cpp", "header.h"});
+    }
+
+private slots:
+    void test_data();
+    void test();
+    void testFollowSymbolInHandler();
+};
 
 void ClangdTestFollowSymbol::test_data()
 {
@@ -462,11 +530,21 @@ void ClangdTestFollowSymbol::testFollowSymbolInHandler()
     timer.stop();
 }
 
-ClangdTestLocalReferences::ClangdTestLocalReferences()
+class ClangdTestLocalReferences final : public ClangdTest
 {
-    setProjectFileName("local-references.pro");
-    setSourceFileNames({"references.cpp"});
-}
+    Q_OBJECT
+
+public:
+    ClangdTestLocalReferences()
+    {
+        setProjectFileName("local-references.pro");
+        setSourceFileNames({"references.cpp"});
+    }
+
+private slots:
+    void test_data();
+    void test();
+};
 
 // We currently only support local variables, but if and when clangd implements
 // the linkedEditingRange request, we can change the expected values for
@@ -537,8 +615,10 @@ void ClangdTestLocalReferences::test_data()
     QTest::newRow("overloaded operators arguments from outside") << 171 << 7
             << QList<Range>{{171, 6, 1}, {172, 6, 1}, {172, 11, 1},
                      {173, 6, 1}, {173, 9, 1}};
-    QTest::newRow("documented function parameter") << 181 << 32
+    QTest::newRow("documented function parameter (impl)") << 181 << 32
             << QList<Range>{{177, 10, 6}, {179, 9, 6}, {181, 31, 6}, {183, 6, 6}, {184, 17, 6}};
+    QTest::newRow("documented function parameter (decl)") << 192 << 33
+            << QList<Range>{{188, 10, 6}, {190, 9, 6}, {192, 32, 6}};
 }
 
 void ClangdTestLocalReferences::test()
@@ -581,10 +661,62 @@ void ClangdTestLocalReferences::test()
 
 // This tests our help item construction, not the actual tooltip contents. Those come
 // pre-formatted from clangd.
-ClangdTestTooltips::ClangdTestTooltips()
+
+class ClangdTestTooltips final : public ClangdTest
 {
-    setProjectFileName("tooltips.pro");
-    setSourceFileNames({"tooltips.cpp"});
+    Q_OBJECT
+
+public:
+    ClangdTestTooltips()
+    {
+        setProjectFileName("tooltips.pro");
+        setSourceFileNames({"main.cpp", "tooltips.cpp"});
+    }
+
+private slots:
+    void testTooltipFromIndex();
+
+    void test_data();
+    void test();
+};
+
+void ClangdTestTooltips::testTooltipFromIndex()
+{
+    TextEditor::TextDocument * const doc = document("main.cpp");
+    QVERIFY(doc);
+    const auto editor = qobject_cast<BaseTextEditor *>(EditorManager::openEditor(doc->filePath()));
+    QVERIFY(editor);
+    QCOMPARE(editor->document(), doc);
+    QVERIFY(editor->editorWidget());
+
+    QTimer timer;
+    timer.setSingleShot(true);
+    QEventLoop loop;
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    HelpItem helpItem;
+    QString tooltip;
+    const auto handler = [&helpItem, &tooltip, &loop](const HelpItem &h, const QString &t) {
+        helpItem = h;
+        tooltip = t;
+        loop.quit();
+    };
+    connect(client(), &ClangdClient::helpItemGathered, &loop, handler);
+
+    QTextCursor cursor(doc->document());
+    const int pos = Text::positionInText(doc->document(), 5, 5);
+    cursor.setPosition(pos);
+    editor->editorWidget()->processTooltipRequest(cursor);
+
+    timer.start(10000);
+    loop.exec();
+    QVERIFY(timer.isActive());
+    timer.stop();
+
+    QCOMPARE(int(helpItem.category()), HelpItem::Function);
+    QCOMPARE(helpItem.helpIds(), {"funcWithDocInside"});
+    if (client()->versionNumber().majorVersion() < 20)
+        QEXPECT_FAIL(nullptr, "Requires clangd >= 20", Continue);
+    QVERIFY2(tooltip.contains("Documentation in source file"), qPrintable(tooltip));
 }
 
 void ClangdTestTooltips::test_data()
@@ -681,7 +813,7 @@ void ClangdTestTooltips::test()
 
     TextEditor::TextDocument * const doc = document("tooltips.cpp");
     QVERIFY(doc);
-    const auto editor = qobject_cast<TextEditor::BaseTextEditor *>(EditorManager::currentEditor());
+    const auto editor = qobject_cast<BaseTextEditor *>(EditorManager::openEditor(doc->filePath()));
     QVERIFY(editor);
     QCOMPARE(editor->document(), doc);
     QVERIFY(editor->editorWidget());
@@ -716,17 +848,36 @@ void ClangdTestTooltips::test()
     QCOMPARE(helpItem.docMark(), expectedMark);
 }
 
-ClangdTestHighlighting::ClangdTestHighlighting()
+
+class ClangdTestHighlighting final : public ClangdTest
 {
-    setProjectFileName("highlighting.pro");
-    setSourceFileNames({"highlighting.cpp"});
-}
+    Q_OBJECT
+
+public:
+    ClangdTestHighlighting()
+    {
+        setProjectFileName("highlighting.pro");
+        setSourceFileNames({"highlighting.cpp"});
+    }
+
+private slots:
+    void initTestCase() override;
+    void test_data();
+    void test();
+    void testIfdefedOutBlocks();
+
+private:
+    TextEditor::HighlightingResults m_results;
+    QList<TextEditor::BlockRange> m_ifdefedOutBlocks;
+};
 
 void ClangdTestHighlighting::initTestCase()
 {
     ClangdTest::initTestCase();
 
-    connect(document("highlighting.cpp"), &TextDocument::ifdefedOutBlocksChanged, this,
+    using CppEditor::CppEditorWidget;
+    connect(CppEditorWidget::fromTextDocument(document("highlighting.cpp")),
+            &CppEditorWidget::ifdefedOutBlocksChanged, this,
             [this](const QList<BlockRange> &ranges) { m_ifdefedOutBlocks = ranges; });
     QTimer timer;
     timer.setSingleShot(true);
@@ -998,8 +1149,7 @@ void ClangdTestHighlighting::test_data()
     QTest::newRow("call to function pointer alias") << 344 << 5 << 344 << 13
         << QList<int>{C_TYPE} << 0;
     QTest::newRow("friend class declaration") << 350 << 18 << 350 << 27
-        << (client()->versionNumber().majorVersion() >= 16
-            ? QList<int>{C_TYPE, C_DECLARATION}: QList<int>{C_TYPE}) << 0;
+        << QList<int>{C_TYPE, C_DECLARATION} << 0;
     QTest::newRow("friend class reference") << 351 << 34 << 351 << 43
         << QList<int>{C_TYPE} << 0;
     QTest::newRow("function parameter of friend class type") << 351 << 45 << 351 << 50
@@ -1265,10 +1415,6 @@ void ClangdTestHighlighting::test_data()
         << QList<int>{C_PUNCTUATION} << int(CppEditor::SemanticHighlighter::AngleBracketClose);
     QTest::newRow("macro in struct") << 795 << 9 << 795 << 14
         << QList<int>{C_MACRO, C_DECLARATION} << 0;
-    if (client()->versionNumber() < QVersionNumber(17)) {
-        QTest::newRow("#ifdef'ed out code") << 800 << 1 << 800 << 17
-                                            << QList<int>{C_DISABLED_CODE} << 0;
-    }
     QTest::newRow("static function call (object)") << 819 << 5 << 819 << 6
         << QList<int>{C_LOCAL} << 0;
     QTest::newRow("static function call (argument)") << 819 << 18 << 819 << 19
@@ -1366,7 +1512,7 @@ void ClangdTestHighlighting::test()
     const auto lessThan = [=](const TextEditor::HighlightingResult &r, int) {
         return Text::positionInText(doc->document(), r.line, r.column) < startPos;
     };
-    const auto findResults = [=] {
+    const auto findResults = [this, endPos, lessThan, doc] {
         TextEditor::HighlightingResults results;
         auto it = std::lower_bound(m_results.cbegin(), m_results.cend(), 0, lessThan);
         if (it == m_results.cend())
@@ -1426,73 +1572,53 @@ void ClangdTestHighlighting::testIfdefedOutBlocks()
 }
 
 
-class Manipulator : public TextDocumentManipulatorInterface
+class ClangdTestCompletion final : public ClangdTest
 {
+    Q_OBJECT
+
 public:
-    Manipulator()
-    {
-        const auto textEditor = static_cast<BaseTextEditor *>(EditorManager::currentEditor());
-        QVERIFY(textEditor);
-        m_doc = textEditor->textDocument()->document();
-        m_cursor = textEditor->editorWidget()->textCursor();
-    }
+    ClangdTestCompletion();
 
-    int currentPosition() const override { return m_cursor.position(); }
-    int positionAt(TextPositionOperation) const override { return 0; }
-    QChar characterAt(int position) const override { return m_doc->characterAt(position); }
+private slots:
+    void initTestCase() override;
 
-    QString textAt(int position, int length) const override
-    {
-        return m_doc->toPlainText().mid(position, length);
-    }
+    void testCompletePreprocessorKeywords();
+    void testCompleteIncludeDirective();
 
-    QTextCursor textCursorAt(int position) const override
-    {
-        QTextCursor cursor(m_doc);
-        cursor.setPosition(position);
-        return cursor;
-    }
+    void testCompleteGlobals();
+    void testCompleteMembers();
+    void testCompleteMembersFromInside();
+    void testCompleteMembersFromOutside();
+    void testCompleteMembersFromFriend();
+    void testFunctionAddress();
+    void testFunctionHints();
+    void testFunctionHintsFiltered();
+    void testFunctionHintConstructor();
+    void testCompleteClassAndConstructor();
+    void testCompletePrivateFunctionDefinition();
 
-    void setCursorPosition(int position) override { m_cursor.setPosition(position); }
-    void setAutoCompleteSkipPosition(int position) override { m_skipPos = position; }
+    void testCompleteWithDotToArrowCorrection();
+    void testDontCompleteWithDotToArrowCorrectionForFloats();
 
-    bool replace(int position, int length, const QString &text) override
-    {
-        QTextCursor cursor = textCursorAt(position);
-        cursor.setPosition(position + length, QTextCursor::KeepAnchor);
-        cursor.insertText(text);
-        return true;
-    }
+    void testCompleteCodeInGeneratedUiFile();
 
-    void insertCodeSnippet(int pos, const QString &text, const SnippetParser &parser) override
-    {
-        const auto parseResult = parser(text);
-        if (const auto snippet = std::get_if<ParsedSnippet>(&parseResult)) {
-            if (!snippet->parts.isEmpty())
-                textCursorAt(pos).insertText(snippet->parts.first().text);
-        }
-    }
+    void testSignalCompletion_data();
+    void testSignalCompletion();
 
-    void paste() override {}
-    void encourageApply() override {}
-    void autoIndent(int, int) override {}
-
-    QString getLine(int line) const { return m_doc->findBlockByNumber(line - 1).text(); }
-
-    QPair<int, int> cursorPos() const
-    {
-        const int pos = currentPosition();
-        QPair<int, int> lineAndColumn;
-        Text::convertPosition(m_doc, pos, &lineAndColumn.first, &lineAndColumn.second);
-        return lineAndColumn;
-    }
-
-    int skipPos() const { return m_skipPos; }
+    void testCompleteAfterProjectChange();
 
 private:
-    QTextDocument *m_doc;
-    QTextCursor m_cursor;
-    int m_skipPos = -1;
+    void startCollectingHighlightingInfo();
+    void getProposal(const QString &fileName, TextEditor::ProposalModelPtr &proposalModel,
+                     const QString &insertString = {}, int *cursorPos = nullptr);
+    static bool hasItem(TextEditor::ProposalModelPtr model, const QString &text,
+                        const QString &detail = {});
+    static bool hasSnippet(TextEditor::ProposalModelPtr model, const QString &text);
+    static int itemsWithText(TextEditor::ProposalModelPtr model, const QString &text);
+    static TextEditor::AssistProposalItemInterface *getItem(
+            TextEditor::ProposalModelPtr model, const QString &text, const QString &detail = {});
+
+    QSet<Utils::FilePath> m_documentsWithHighlighting;
 };
 
 ClangdTestCompletion::ClangdTestCompletion()
@@ -1500,7 +1626,7 @@ ClangdTestCompletion::ClangdTestCompletion()
     setProjectFileName("completion.pro");
     setSourceFileNames({"completionWithProject.cpp", "constructorCompletion.cpp",
                         "classAndConstructorCompletion.cpp", "dotToArrowCorrection.cpp",
-                        "doxygenKeywordsCompletion.cpp", "functionAddress.cpp",
+                        "functionAddress.cpp",
                         "functionCompletion.cpp", "functionCompletionFiltered2.cpp",
                         "functionCompletionFiltered.cpp", "globalCompletion.cpp",
                         "includeDirectiveCompletion.cpp", "mainwindow.cpp",
@@ -1516,18 +1642,6 @@ void ClangdTestCompletion::initTestCase()
 {
     ClangdTest::initTestCase();
     startCollectingHighlightingInfo();
-}
-
-void ClangdTestCompletion::testCompleteDoxygenKeywords()
-{
-    ProposalModelPtr proposal;
-    getProposal("doxygenKeywordsCompletion.cpp", proposal);
-
-    QVERIFY(proposal);
-    QVERIFY(hasItem(proposal, "brief"));
-    QVERIFY(hasItem(proposal, "param"));
-    QVERIFY(hasItem(proposal, "return"));
-    QVERIFY(!hasSnippet(proposal, "class "));
 }
 
 void ClangdTestCompletion::testCompletePreprocessorKeywords()
@@ -1581,11 +1695,11 @@ void ClangdTestCompletion::testCompleteGlobals()
 
     const AssistProposalItemInterface * const item = getItem(proposal, " globalFunction()", "void");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(7), "   globalFunction() /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(7, 19));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(6), "   globalFunction() /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({7, 19}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testCompleteMembers()
@@ -1601,11 +1715,11 @@ void ClangdTestCompletion::testCompleteMembers()
 
     const AssistProposalItemInterface * const item = getItem(proposal, " member", "int");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(7), "    s.member /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(7, 12));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(6), "    s.member /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({7, 12}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testCompleteMembersFromInside()
@@ -1619,11 +1733,11 @@ void ClangdTestCompletion::testCompleteMembersFromInside()
 
     const AssistProposalItemInterface * const item = getItem(proposal, " privateFunc()", "void");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(4), "        privateFunc() /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(4, 21));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(3), "        privateFunc() /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({4, 21}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testCompleteMembersFromOutside()
@@ -1637,11 +1751,11 @@ void ClangdTestCompletion::testCompleteMembersFromOutside()
 
     const AssistProposalItemInterface * const item = getItem(proposal, " publicFunc()", "void");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(13), "    c.publicFunc() /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(13, 18));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(12), "    c.publicFunc() /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({13, 18}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testCompleteMembersFromFriend()
@@ -1655,11 +1769,11 @@ void ClangdTestCompletion::testCompleteMembersFromFriend()
 
     const AssistProposalItemInterface * const item = getItem(proposal, " privateFunc()", "void");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(14), "    C().privateFunc() /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(14, 21));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(13), "    C().privateFunc() /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({14, 21}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testFunctionAddress()
@@ -1672,11 +1786,11 @@ void ClangdTestCompletion::testFunctionAddress()
 
     const AssistProposalItemInterface * const item = getItem(proposal, " memberFunc()", "void");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(7), "    const auto p = &S::memberFunc /* COMPLETE HERE */;");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(7, 33));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(6), "    const auto p = &S::memberFunc /* COMPLETE HERE */;");
+    QCOMPARE(editor->lineColumn(), Text::Position({7, 33}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testFunctionHints()
@@ -1686,12 +1800,12 @@ void ClangdTestCompletion::testFunctionHints()
 
     QVERIFY(proposal);
     QVERIFY(hasItem(proposal, "f() -> void"));
-    QVERIFY(hasItem(proposal, "f(int a) -> void"));
-    QVERIFY(hasItem(proposal, "f(const QString &s) -> void"));
-    QVERIFY(hasItem(proposal, "f(char c, int optional = 3) -> void"));
-    QVERIFY(hasItem(proposal, "f(char c, int optional1 = 3, int optional2 = 3) -> void"));
-    QVERIFY(hasItem(proposal, "f(const TType<QString> *t) -> void"));
-    QVERIFY(hasItem(proposal, "f(bool) -> TType<QString>"));
+    QVERIFY(hasItem(proposal, "f(<b>int a</b>) -&gt; void"));
+    QVERIFY(hasItem(proposal, "f(<b>const QString &amp;s</b>) -&gt; void"));
+    QVERIFY(hasItem(proposal, "f(<b>char c</b>, int optional = 3) -&gt; void"));
+    QVERIFY(hasItem(proposal, "f(<b>char c</b>, int optional1 = 3, int optional2 = 3) -&gt; void"));
+    QVERIFY(hasItem(proposal, "f(<b>const TType&lt;QString&gt; *t</b>) -&gt; void"));
+    QVERIFY(hasItem(proposal, "f(<b>bool</b>) -&gt; TType&lt;QString&gt;"));
 }
 
 void ClangdTestCompletion::testFunctionHintsFiltered()
@@ -1709,7 +1823,6 @@ void ClangdTestCompletion::testFunctionHintsFiltered()
     QVERIFY(proposal);
     QCOMPARE(proposal->size(), 2);
     QVERIFY(hasItem(proposal, "func(const S &amp;s, <b>int j</b>) -&gt; void"));
-    QEXPECT_FAIL("", "QTCREATORBUG-26346", Abort);
     QVERIFY(hasItem(proposal, "func(const S &amp;s, <b>int j</b>, int k) -&gt; void"));
 }
 
@@ -1722,7 +1835,6 @@ void ClangdTestCompletion::testFunctionHintConstructor()
     QVERIFY(!hasItem(proposal, "globalVariable"));
     QVERIFY(!hasItem(proposal, " class"));
     QVERIFY(hasItem(proposal, "Foo(<b>int</b>)"));
-    QEXPECT_FAIL("", "QTCREATORBUG-26346", Abort);
     QVERIFY(hasItem(proposal, "Foo(<b>int</b>, double)"));
 }
 
@@ -1738,11 +1850,11 @@ void ClangdTestCompletion::testCompleteClassAndConstructor()
     const AssistProposalItemInterface * const item
             = getItem(proposal, QString::fromUtf8(" Foo(…)"), "[2 overloads]");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(7), "    Foo( /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(7, 8));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(6), "    Foo( /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({7, 8}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testCompletePrivateFunctionDefinition()
@@ -1765,11 +1877,11 @@ void ClangdTestCompletion::testCompleteWithDotToArrowCorrection()
     QVERIFY(proposal);
     const AssistProposalItemInterface * const item = getItem(proposal, " member", "int");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(4), "    bar->member /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(4, 15));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(3), "    bar->member /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({4, 15}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testDontCompleteWithDotToArrowCorrectionForFloats()
@@ -1796,11 +1908,11 @@ void ClangdTestCompletion::testCompleteCodeInGeneratedUiFile()
     const AssistProposalItemInterface * const item = getItem(
                 proposal, " setupUi(QMainWindow *MainWindow)", "void");
     QVERIFY(item);
-    Manipulator manipulator;
-    item->apply(manipulator, cursorPos);
-    QCOMPARE(manipulator.getLine(34), "    ui->setupUi( /* COMPLETE HERE */");
-    QCOMPARE(manipulator.cursorPos(), qMakePair(34, 16));
-    QCOMPARE(manipulator.skipPos(), -1);
+    auto editor = TextEditorWidget::currentTextEditorWidget();
+    item->apply(editor, cursorPos);
+    QCOMPARE(editor->textDocument()->blockText(33), "    ui->setupUi( /* COMPLETE HERE */");
+    QCOMPARE(editor->lineColumn(), Text::Position({34, 16}));
+    QVERIFY(editor->autoCompleteHighlightPositions().isEmpty());
 }
 
 void ClangdTestCompletion::testSignalCompletion_data()
@@ -1882,8 +1994,8 @@ void ClangdTestCompletion::testCompleteAfterProjectChange()
                 EditorManager::openEditor(project()->projectFilePath()));
     QVERIFY(proFileEditor);
     proFileEditor->insert("DEFINES += PROJECT_CONFIGURATION_1\n");
-    QString saveError;
-    QVERIFY2(proFileEditor->document()->save(&saveError), qPrintable(saveError));
+    const Result res = proFileEditor->document()->save();
+    QVERIFY2(res, qPrintable(res.error()));
     QVERIFY(waitForSignalOrTimeout(project(), &Project::anyParsingFinished, timeOutInMs()));
     QVERIFY(waitForSignalOrTimeout(LanguageClientManager::instance(),
                                    &LanguageClientManager::clientRemoved,
@@ -1920,7 +2032,8 @@ void ClangdTestCompletion::getProposal(const QString &fileName,
 {
     const TextDocument * const doc = document(fileName);
     QVERIFY(doc);
-    const int pos = doc->document()->toPlainText().indexOf(" /* COMPLETE HERE */");
+    const QString docContent = doc->document()->toPlainText();
+    const int pos = docContent.indexOf(" /* COMPLETE HERE */");
     QVERIFY(pos != -1);
     if (cursorPos)
         *cursorPos = pos;
@@ -1964,6 +2077,13 @@ void ClangdTestCompletion::getProposal(const QString &fileName,
     QVERIFY(timer.isActive());
     QVERIFY(proposal);
     proposalModel = proposal->model();
+    if (auto functionHintModel = proposalModel.dynamicCast<IFunctionHintProposalModel>()) {
+        const int proposalBasePos = proposal->basePosition();
+        // The language client function hint model expects that activeArgument was called before the
+        // text of individual hints is accessed. This is usually done by the proposal widget. But
+        // since we don't have a proposal widget in this test, we have to call it manually.
+        functionHintModel->activeArgument(docContent.mid(proposalBasePos, pos - proposalBasePos));
+    }
     delete proposal;
 
     // The "dot" test files are only used once.
@@ -2016,11 +2136,20 @@ AssistProposalItemInterface *ClangdTestCompletion::getItem(
 }
 
 
-ClangdTestExternalChanges::ClangdTestExternalChanges()
+class ClangdTestExternalChanges final : public ClangdTest
 {
-    setProjectFileName("completion.pro");
-    setSourceFileNames({"mainwindow.cpp", "main.cpp"});
-}
+    Q_OBJECT
+
+public:
+    ClangdTestExternalChanges()
+    {
+        setProjectFileName("completion.pro");
+        setSourceFileNames({"mainwindow.cpp", "main.cpp"});
+    }
+
+private slots:
+    void test();
+};
 
 void ClangdTestExternalChanges::test()
 {
@@ -2052,21 +2181,55 @@ void ClangdTestExternalChanges::test()
     QVERIFY(curDoc->marks().isEmpty());
 
     // Now trigger an external change in an open, but not currently visible file and
-    // verify that we get diagnostics in the current editor.
+    // verify that we get a new client and diagnostics in the current editor.
     TextDocument * const docToChange = document("mainwindow.cpp");
     docToChange->setSilentReload();
     QFile otherSource(filePath("mainwindow.cpp").toString());
     QVERIFY(otherSource.open(QIODevice::WriteOnly));
     otherSource.write("blubb");
     otherSource.close();
+    QVERIFY(waitForSignalOrTimeout(LanguageClientManager::instance(),
+                                   &LanguageClientManager::clientAdded, timeOutInMs()));
+    ClangdClient * const newClient = ClangModelManagerSupport::clientForProject(project());
+    QVERIFY(newClient);
+    QVERIFY(newClient != oldClient);
+    newClient->enableTesting();
     if (curDoc->marks().isEmpty())
-        QVERIFY(waitForSignalOrTimeout(client(), &ClangdClient::textMarkCreated, timeOutInMs()));
+        QVERIFY(waitForSignalOrTimeout(newClient, &ClangdClient::textMarkCreated, timeOutInMs()));
 }
+
+
+class ClangdTestIndirectChanges final : public ClangdTest
+{
+    Q_OBJECT
+
+public:
+    ClangdTestIndirectChanges();
+
+private slots:
+    void initTestCase() override;
+    void cleanupTestCase();
+    void test();
+};
 
 ClangdTestIndirectChanges::ClangdTestIndirectChanges()
 {
     setProjectFileName("indirect-changes.pro");
     setSourceFileNames({"main.cpp", "directheader.h", "indirectheader.h", "unrelatedheader.h"});
+}
+
+void ClangdTestIndirectChanges::initTestCase()
+{
+    CppEditor::ClangdSettings &settings = CppEditor::ClangdSettings::instance();
+    CppEditor::ClangdSettings::Data settingsData = settings.data();
+    settingsData.updateDependentSources = true;
+    settings.setData(settingsData, false);
+    ClangdTest::initTestCase();
+}
+
+void ClangdTestIndirectChanges::cleanupTestCase()
+{
+    CppEditor::ClangdSettings::instance().setData({}, false);
 }
 
 void ClangdTestIndirectChanges::test()
@@ -2104,6 +2267,46 @@ void ClangdTestIndirectChanges::test()
     QVERIFY(src->marks().isEmpty());
 }
 
-} // namespace Tests
-} // namespace Internal
-} // namespace ClangCodeModel
+QObject *createClangdTestCompletion()
+{
+    return new ClangdTestCompletion;
+}
+
+QObject *createClangdTestExternalChanges()
+{
+    return new ClangdTestExternalChanges;
+}
+
+QObject *createClangdTestFindReferences()
+{
+    return new ClangdTestFindReferences;
+}
+
+QObject *createClangdTestFollowSymbol()
+{
+    return new ClangdTestFollowSymbol;
+}
+
+QObject *createClangdTestHighlighting()
+{
+    return new ClangdTestHighlighting;
+}
+
+QObject *createClangdTestIndirectChanges()
+{
+    return new ClangdTestIndirectChanges;
+}
+
+QObject *createClangdTestLocalReferences()
+{
+    return new ClangdTestLocalReferences;
+}
+
+QObject *createClangdTestTooltips()
+{
+    return new ClangdTestTooltips;
+}
+
+} // namespace ClangCodeModel::Internal
+
+#include "clangdtests.moc"

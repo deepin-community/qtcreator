@@ -10,20 +10,25 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
+#include <solutions/tasking/tasktreerunner.h>
+
+#include <utils/algorithm.h>
+#include <utils/appinfo.h>
 #include <utils/async.h>
 #include <utils/fileutils.h>
 #include <utils/hostosinfo.h>
 #include <utils/infolabel.h>
 #include <utils/layoutbuilder.h>
 #include <utils/pathchooser.h>
-#include <utils/process.h>
 #include <utils/qtcassert.h>
+#include <utils/qtcprocess.h>
 #include <utils/temporarydirectory.h>
 #include <utils/unarchiver.h>
 #include <utils/wizard.h>
 #include <utils/wizardpage.h>
 
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QGuiApplication>
@@ -44,16 +49,9 @@ struct Data
     FilePath sourcePath;
     FilePath extractedPath;
     bool installIntoApplication = false;
+    std::unique_ptr<PluginSpec> pluginSpec = nullptr;
+    bool loadImmediately = false;
 };
-
-static QStringList libraryNameFilter()
-{
-    if (HostOsInfo::isWindowsHost())
-        return {"*.dll"};
-    if (HostOsInfo::isLinuxHost())
-        return {"*.so"};
-    return {"*.dylib"};
-}
 
 static bool hasLibSuffix(const FilePath &path)
 {
@@ -62,14 +60,7 @@ static bool hasLibSuffix(const FilePath &path)
            || (HostOsInfo::isMacHost() && path.endsWith(".dylib"));
 }
 
-static FilePath pluginInstallPath(bool installIntoApplication)
-{
-    return FilePath::fromString(installIntoApplication ? Core::ICore::pluginPath()
-                                                       : Core::ICore::userPluginPath());
-}
-
 namespace Core {
-namespace Internal {
 
 class SourcePage : public WizardPage
 {
@@ -113,8 +104,15 @@ public:
             m_info->setText(Tr::tr("File does not exist."));
             return false;
         }
-        if (hasLibSuffix(path))
+        if (hasLibSuffix(path)) {
+            if (Utils::anyOf(PluginManager::pluginPaths(), [path](const FilePath &pluginPath) {
+                    return path.isChildOf(pluginPath);
+                })) {
+                m_info->setText(Tr::tr("Plugin is already installed."));
+                return false;
+            }
             return true;
+        }
 
         const auto sourceAndCommand = Unarchiver::sourceAndCommand(path);
         if (!sourceAndCommand)
@@ -123,56 +121,60 @@ public:
         return bool(sourceAndCommand);
     }
 
-    int nextId() const final
-    {
-        if (hasLibSuffix(m_data->sourcePath))
-            return WizardPage::nextId() + 1; // jump over check archive
-        return WizardPage::nextId();
-    }
-
     InfoLabel *m_info = nullptr;
     Data *m_data = nullptr;
 };
 
-struct ArchiveIssue
+using CheckResult = expected_str<PluginSpec *>;
+
+static Result checkPlugin(PluginSpec *spec)
 {
-    QString message;
-    InfoLabel::InfoType type;
-};
+    if (Utils::anyOf(PluginManager::plugins(), [spec](PluginSpec *other) {
+            return other->id() == spec->id();
+        }))
+        return Result::Error(
+            Tr::tr("A plugin with ID \"%1\" is already installed.").arg(spec->id()));
+    if (!spec->resolveDependencies(PluginManager::plugins())) {
+        return Result::Error(
+            Tr::tr("Plugin failed to resolve dependencies:") + " " + spec->errorString());
+    }
+    return Result::Ok;
+}
+
+static expected_str<std::unique_ptr<PluginSpec>> checkPlugin(
+    expected_str<std::unique_ptr<PluginSpec>> spec)
+{
+    if (!spec)
+        return spec;
+    const Result ok = checkPlugin(spec->get());
+    if (ok)
+        return spec;
+    return Utils::make_unexpected(ok.error());
+}
 
 // Async. Result is set if any issue was found.
-void checkContents(QPromise<ArchiveIssue> &promise, const FilePath &tempDir)
+void checkContents(QPromise<CheckResult> &promise, const FilePath &tempDir)
 {
-    PluginSpec *coreplugin = PluginManager::specForPlugin(CorePlugin::instance());
-
-    // look for plugin
-    QDirIterator it(tempDir.path(), libraryNameFilter(), QDir::Files | QDir::NoSymLinks,
-                    QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        if (promise.isCanceled())
-            return;
-        it.next();
-        PluginSpec *spec = PluginSpec::read(it.filePath());
-        if (spec) {
-            // Is a Qt Creator plugin. Let's see if we find a Core dependency and check the
-            // version
-            const QVector<PluginDependency> dependencies = spec->dependencies();
-            const auto found = std::find_if(dependencies.constBegin(), dependencies.constEnd(),
-                [coreplugin](const PluginDependency &d) { return d.name == coreplugin->name(); });
-            if (found == dependencies.constEnd())
-                return;
-            if (coreplugin->provides(found->name, found->version))
-                return;
-            promise.addResult(
-                ArchiveIssue{Tr::tr("Plugin requires an incompatible version of %1 (%2).")
-                                 .arg(QGuiApplication::applicationDisplayName(), found->version),
-                             InfoLabel::Error});
-            return; // successful / no error
-        }
+    QList<PluginSpec *> plugins = pluginSpecsFromArchive(tempDir);
+    if (plugins.isEmpty()) {
+        promise.addResult(Utils::make_unexpected(Tr::tr("No plugins found.")));
+        return;
     }
-    promise.addResult(
-        ArchiveIssue{Tr::tr("Did not find %1 plugin.").arg(QGuiApplication::applicationDisplayName()),
-                     InfoLabel::Error});
+    if (plugins.size() > 1) {
+        promise.addResult(Utils::make_unexpected(Tr::tr("More than one plugin found.")));
+        qDeleteAll(plugins);
+        return;
+    }
+
+    PluginSpec *plugin = plugins.front();
+    const Result ok = checkPlugin(plugin);
+    if (!ok) {
+        promise.addResult(Utils::make_unexpected(ok.error()));
+        delete plugin;
+        return;
+    }
+
+    promise.addResult(plugin);
 }
 
 class CheckArchivePage : public WizardPage
@@ -187,9 +189,11 @@ public:
         m_label = new InfoLabel;
         m_label->setElideMode(Qt::ElideNone);
         m_label->setWordWrap(true);
+        m_label->setAlignment(Qt::AlignTop);
         m_cancelButton = new QPushButton(Tr::tr("Cancel"));
+        m_cancelButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
         connect(m_cancelButton, &QPushButton::clicked, this, [this] {
-            m_taskTree.reset();
+            m_taskTreeRunner.reset();
             m_cancelButton->setVisible(false);
             m_label->setType(InfoLabel::Information);
             m_label->setText(Tr::tr("Canceled."));
@@ -199,7 +203,7 @@ public:
 
         using namespace Layouting;
         Column {
-            Row { m_label, st, m_cancelButton },
+            Row { m_label, m_cancelButton },
             m_output,
         }.attachTo(this);
     }
@@ -208,6 +212,21 @@ public:
     {
         m_isComplete = false;
         emit completeChanged();
+        if (hasLibSuffix(m_data->sourcePath)) {
+            m_cancelButton->setVisible(false);
+            expected_str<std::unique_ptr<PluginSpec>> spec = checkPlugin(
+                readCppPluginSpec(m_data->sourcePath));
+            if (!spec) {
+                m_label->setType(InfoLabel::Error);
+                m_label->setText(spec.error());
+                return;
+            }
+            m_label->setType(InfoLabel::Ok);
+            m_label->setText(Tr::tr("Archive is OK."));
+            m_data->pluginSpec.swap(*spec);
+            m_isComplete = true;
+            return;
+        }
 
         m_tempDir = std::make_unique<TemporaryDirectory>("plugininstall");
         m_data->extractedPath = m_tempDir->path();
@@ -230,60 +249,60 @@ public:
                 m_output->append(output);
             });
         };
-        const auto onUnarchiverError = [this](const Unarchiver &) {
+        const auto onUnarchiverError = [this] {
             m_label->setType(InfoLabel::Error);
             m_label->setText(Tr::tr("There was an error while unarchiving."));
         };
 
-        const auto onCheckerSetup = [this](Async<ArchiveIssue> &async) {
+        const auto onCheckerSetup = [this](Async<CheckResult> &async) {
             if (!m_tempDir)
                 return SetupResult::StopWithError;
 
             async.setConcurrentCallData(checkContents, m_tempDir->path());
-            async.setFutureSynchronizer(PluginManager::futureSynchronizer());
             return SetupResult::Continue;
         };
-        const auto onCheckerDone = [this](const Async<ArchiveIssue> &async) {
-            m_isComplete = !async.isResultAvailable();
-            if (m_isComplete) {
+        const auto onCheckerDone = [this](const Async<CheckResult> &async) {
+            expected_str<PluginSpec *> result = async.result();
+            if (!result) {
+                m_label->setType(InfoLabel::Error);
+                m_label->setText(result.error());
+            } else {
                 m_label->setType(InfoLabel::Ok);
                 m_label->setText(Tr::tr("Archive is OK."));
-            } else {
-                const ArchiveIssue issue = async.result();
-                m_label->setType(issue.type);
-                m_label->setText(issue.message);
+                m_data->pluginSpec.reset(*result);
+                m_isComplete = true;
             }
             emit completeChanged();
         };
 
-        const Group root {
-            UnarchiverTask(onUnarchiverSetup, {}, onUnarchiverError),
-            AsyncTask<ArchiveIssue>(onCheckerSetup, onCheckerDone)
+        // clang-format off
+        const Group root{
+            UnarchiverTask(onUnarchiverSetup, onUnarchiverError, CallDoneIf::Error),
+            AsyncTask<CheckResult>(onCheckerSetup, onCheckerDone, CallDoneIf::Success)
         };
-        m_taskTree.reset(new TaskTree(root));
-
-        const auto onEnd = [this] {
-            m_cancelButton->setVisible(false);
-            m_taskTree.release()->deleteLater();
-        };
-        connect(m_taskTree.get(), &TaskTree::done, this, onEnd);
-        connect(m_taskTree.get(), &TaskTree::errorOccurred, this, onEnd);
-
+        // clang-format on
         m_cancelButton->setVisible(true);
-        m_taskTree->start();
+        m_taskTreeRunner.start(root, {}, [this](DoneWith) { m_cancelButton->setVisible(false); });
     }
 
     void cleanupPage() final
     {
         // back button pressed
-        m_taskTree.reset();
+        m_taskTreeRunner.reset();
         m_tempDir.reset();
     }
 
     bool isComplete() const final { return m_isComplete; }
 
+    int nextId() const override
+    {
+        if (!m_data->pluginSpec || !m_data->pluginSpec->termsAndConditions())
+            return WizardPage::nextId() + 1;
+        return WizardPage::nextId();
+    }
+
     std::unique_ptr<TemporaryDirectory> m_tempDir;
-    std::unique_ptr<TaskTree> m_taskTree;
+    TaskTreeRunner m_taskTreeRunner;
     InfoLabel *m_label = nullptr;
     QPushButton *m_cancelButton = nullptr;
     QTextEdit *m_output = nullptr;
@@ -348,20 +367,97 @@ public:
 
         m_summaryLabel = new QLabel(this);
         m_summaryLabel->setWordWrap(true);
-        Layouting::Column { m_summaryLabel }.attachTo(this);
+        m_summaryLabel->setTextFormat(Qt::MarkdownText);
+        m_summaryLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+        m_summaryLabel->setOpenExternalLinks(true);
+
+        m_loadImmediately = new QCheckBox(Tr::tr("Load plugin immediately"));
+        connect(m_loadImmediately, &QCheckBox::toggled, this, [this](bool checked) {
+            m_data->loadImmediately = checked;
+        });
+
+        // clang-format off
+        using namespace Layouting;
+        Column {
+            m_summaryLabel,
+            m_loadImmediately
+        }.attachTo(this);
+        // clang-format on
     }
 
     void initializePage() final
     {
+        QTC_ASSERT(m_data && m_data->pluginSpec, return);
+        const FilePath installLocation = m_data->pluginSpec->installLocation(
+            !m_data->installIntoApplication);
+        installLocation.ensureWritableDir();
+
         m_summaryLabel->setText(
-            Tr::tr("\"%1\" will be installed into \"%2\".")
-                .arg(m_data->sourcePath.toUserOutput(),
-                     pluginInstallPath(m_data->installIntoApplication).toUserOutput()));
+            Tr::tr("%1 will be installed into %2.")
+                .arg(QString("[%1](%2)")
+                         .arg(m_data->sourcePath.fileName())
+                         .arg(m_data->sourcePath.parentDir().toUrl().toString(QUrl::FullyEncoded)))
+                .arg(QString("[%1](%2)")
+                         .arg(installLocation.fileName())
+                         .arg(installLocation.toUrl().toString(QUrl::FullyEncoded))));
+
+        m_loadImmediately->setVisible(m_data->pluginSpec && m_data->pluginSpec->isSoftLoadable());
     }
 
 private:
     QLabel *m_summaryLabel;
+    QCheckBox *m_loadImmediately;
     Data *m_data = nullptr;
+};
+
+class AcceptTermsAndConditionsPage : public WizardPage
+{
+public:
+    AcceptTermsAndConditionsPage(Data *data, QWidget *parent)
+        : WizardPage(parent)
+        , m_data(data)
+    {
+        setTitle(Tr::tr("Accept Terms and Conditions"));
+
+        const QLatin1String legal = QLatin1String(
+            "I confirm that I have reviewed and accept the terms and conditions\n"
+            "of this extension. I confirm that I have the authority and ability to\n"
+            "accept the terms and conditions of this extension for the customer.\n"
+            "I acknowledge that if the customer and the Qt Company already have a\n"
+            "valid agreement in place, that agreement shall apply, but these terms\n"
+            "shall govern the use of this extension.");
+
+        using namespace Layouting;
+        // clang-format off
+        Column {
+            Label { bindTo(&m_intro) }, br,
+            TextEdit {
+                bindTo(&m_terms),
+                readOnly(true),
+            }, br,
+            m_accept = new QCheckBox(legal)
+        }.attachTo(this);
+        // clang-format on
+
+        connect(m_accept, &QCheckBox::toggled, this, [this]() { emit completeChanged(); });
+    }
+
+    void initializePage() final
+    {
+        QTC_ASSERT(m_data->pluginSpec, return);
+        m_intro->setText(Tr::tr("The plugin %1 requires you to accept the following terms and "
+                                "conditions:")
+                             .arg(m_data->pluginSpec->name()));
+        m_terms->setMarkdown(m_data->pluginSpec->termsAndConditions()->text);
+    }
+
+    bool isComplete() const final { return m_accept->isChecked(); }
+
+private:
+    Data *m_data = nullptr;
+    QLabel *m_intro = nullptr;
+    QCheckBox *m_accept = nullptr;
+    QTextEdit *m_terms = nullptr;
 };
 
 static std::function<void(FilePath)> postCopyOperation()
@@ -372,15 +468,16 @@ static std::function<void(FilePath)> postCopyOperation()
         // On macOS, downloaded files get a quarantine flag, remove it, otherwise it is a hassle
         // to get it loaded as a plugin in Qt Creator.
         Process xattr;
-        xattr.setTimeoutS(1);
         xattr.setCommand({"/usr/bin/xattr", {"-d", "com.apple.quarantine", filePath.absoluteFilePath().toString()}});
-        xattr.runBlocking();
+        using namespace std::chrono_literals;
+        xattr.runBlocking(1s);
     };
 }
 
 static bool copyPluginFile(const FilePath &src, const FilePath &dest)
 {
     const FilePath destFile = dest.pathAppended(src.fileName());
+    QTC_ASSERT(src != destFile, return true);
     if (destFile.exists()) {
         QMessageBox box(QMessageBox::Question,
                         Tr::tr("Overwrite File"),
@@ -405,18 +502,25 @@ static bool copyPluginFile(const FilePath &src, const FilePath &dest)
     return true;
 }
 
-bool PluginInstallWizard::exec()
+bool executePluginInstallWizard(const FilePath &archive)
 {
     Wizard wizard(ICore::dialogParent());
     wizard.setWindowTitle(Tr::tr("Install Plugin"));
 
     Data data;
 
-    auto filePage = new SourcePage(&data, &wizard);
-    wizard.addPage(filePage);
+    if (archive.isEmpty()) {
+        auto filePage = new SourcePage(&data, &wizard);
+        wizard.addPage(filePage);
+    } else {
+        data.sourcePath = archive;
+    }
 
     auto checkArchivePage = new CheckArchivePage(&data, &wizard);
     wizard.addPage(checkArchivePage);
+
+    auto acceptTAndCPage = new AcceptTermsAndConditionsPage(&data, &wizard);
+    wizard.addPage(acceptTAndCPage);
 
     auto installLocationPage = new InstallLocationPage(&data, &wizard);
     wizard.addPage(installLocationPage);
@@ -424,27 +528,56 @@ bool PluginInstallWizard::exec()
     auto summaryPage = new SummaryPage(&data, &wizard);
     wizard.addPage(summaryPage);
 
-    if (wizard.exec()) {
-        const FilePath installPath = pluginInstallPath(data.installIntoApplication);
-        if (hasLibSuffix(data.sourcePath)) {
-            return copyPluginFile(data.sourcePath, installPath);
-        } else {
-            QString error;
-            if (!FileUtils::copyRecursively(data.extractedPath,
-                                            installPath,
-                                            &error,
-                                            FileUtils::CopyAskingForOverwrite(ICore::dialogParent(),
-                                                                              postCopyOperation()))) {
-                QMessageBox::warning(ICore::dialogParent(),
-                                     Tr::tr("Failed to Copy Plugin Files"),
-                                     error);
-                return false;
+    auto install = [&wizard, &data]() {
+        if (wizard.exec()) {
+            const FilePath installPath = data.pluginSpec->installLocation(
+                !data.installIntoApplication);
+            if (hasLibSuffix(data.sourcePath)) {
+                if (!copyPluginFile(data.sourcePath, installPath))
+                    return false;
+
+                auto specs = pluginSpecsFromArchive(installPath.resolvePath(
+                    data.pluginSpec->filePath().relativePathFrom(data.extractedPath)));
+
+                QTC_ASSERT(specs.size() == 1, return false);
+                data.pluginSpec.reset(specs.front());
+                return true;
+            } else {
+                QString error;
+                FileUtils::CopyAskingForOverwrite copy(ICore::dialogParent(), postCopyOperation());
+                if (!FileUtils::copyRecursively(data.extractedPath, installPath, &error, copy())) {
+                    QMessageBox::warning(
+                        ICore::dialogParent(), Tr::tr("Failed to Copy Plugin Files"), error);
+                    return false;
+                }
+
+                auto specs = pluginSpecsFromArchive(installPath.resolvePath(
+                    data.pluginSpec->filePath().relativePathFrom(data.extractedPath)));
+
+                QTC_ASSERT(specs.size() == 1, return false);
+                data.pluginSpec.reset(specs.front());
+
+                return true;
             }
-            return true;
         }
+        return false;
+    };
+
+    if (!install())
+        return false;
+
+    // install() would have failed if the user did not accept the terms and conditions
+    // so we can safely set them as accepted here.
+    PluginManager::instance()->setTermsAndConditionsAccepted(data.pluginSpec.get());
+
+    auto spec = data.pluginSpec.release();
+    PluginManager::addPlugins({spec});
+
+    if (data.loadImmediately) {
+        spec->setEnabledBySettings(true);
+        PluginManager::loadPluginsAtRuntime({spec});
     }
-    return false;
+    return true;
 }
 
-} // namespace Internal
 } // namespace Core

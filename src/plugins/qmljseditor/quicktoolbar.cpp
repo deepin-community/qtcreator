@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "quicktoolbar.h"
-#include "qmljseditingsettingspage.h"
+
+#include "qmljseditorsettings.h"
 
 #include <utils/changeset.h>
 #include <qmleditorwidgets/contextpanewidget.h>
@@ -27,6 +28,7 @@
 using namespace QmlJS;
 using namespace AST;
 using namespace QmlEditorWidgets;
+using namespace QmlJSEditor::Internal;
 
 namespace QmlJSEditor {
 
@@ -94,7 +96,7 @@ QuickToolBar *QuickToolBar::instance()
 
 void QuickToolBar::apply(TextEditor::TextEditorWidget *editorWidget, Document::Ptr document, const ScopeChain *scopeChain, Node *node, bool update, bool force)
 {
-    if (!QmlJsEditingSettings::get().enableContextPane() && !force && !update) {
+    if (!settings().enableContextPane() && !force && !update) {
         contextWidget()->hide();
         return;
     }
@@ -199,10 +201,10 @@ void QuickToolBar::apply(TextEditor::TextEditorWidget *editorWidget, Document::P
             if (!update)
                 contextWidget()->setType(m_prototypes);
             if (!update)
-                contextWidget()->activate(p3 , p1, p2, QmlJsEditingSettings::get().pinContextPane());
+                contextWidget()->activate(p3 , p1, p2, settings().pinContextPane());
             else
-                contextWidget()->rePosition(p3 , p1, p2, QmlJsEditingSettings::get().pinContextPane());
-            contextWidget()->setOptions(QmlJsEditingSettings::get().enableContextPane(), QmlJsEditingSettings::get().pinContextPane());
+                contextWidget()->rePosition(p3 , p1, p2, settings().pinContextPane());
+            contextWidget()->setOptions(settings().enableContextPane(), settings().pinContextPane());
             contextWidget()->setPath(document->path().toString());
             contextWidget()->setProperties(&propertyReader);
             m_doc = document;
@@ -261,7 +263,7 @@ void QuickToolBar::setProperty(const QString &propertyName, const QVariant &valu
 {
 
     QString stringValue = value.toString();
-    if (value.typeId() == QVariant::Color)
+    if (value.typeId() == QMetaType::Type::QColor)
         stringValue = QLatin1Char('\"') + value.toString() + QLatin1Char('\"');
 
     if (cast<UiObjectDefinition*>(m_node) || cast<UiObjectBinding*>(m_node)) {
@@ -294,7 +296,7 @@ void QuickToolBar::setProperty(const QString &propertyName, const QVariant &valu
         int column;
 
         int changeSetPos = changeSet.operationList().constLast().pos1;
-        int changeSetLength = changeSet.operationList().constLast().text.length();
+        int changeSetLength = changeSet.operationList().constLast().text().length();
         QTextCursor tc = m_editorWidget->textCursor();
         tc.beginEditBlock();
         changeSet.apply(&tc);
@@ -381,32 +383,19 @@ void QuickToolBar::onPropertyRemovedAndChange(const QString &remove, const QStri
 
 void QuickToolBar::onPinnedChanged(bool b)
 {
-    QmlJsEditingSettings settings = QmlJsEditingSettings::get();
-    settings.setPinContextPane(b);
-    settings.set();
+    settings().pinContextPane.setValue(b);
 }
 
 void QuickToolBar::onEnabledChanged(bool b)
 {
-    QmlJsEditingSettings settings = QmlJsEditingSettings::get();
-    settings.setPinContextPane(b);
-    settings.setEnableContextPane(b);
-    settings.set();
+    settings().pinContextPane.setValue(b);
+    settings().enableContextPane.setValue(b);
 }
 
 void QuickToolBar::indentLines(int startLine, int endLine)
 {
-    if (startLine > 0) {
-        TextEditor::TabSettings tabSettings = m_editorWidget->textDocument()->tabSettings();
-        for (int i = startLine; i <= endLine; i++) {
-            QTextBlock start = m_editorWidget->document()->findBlockByNumber(i);
-
-            if (start.isValid()) {
-                QmlJSEditor::Internal::Indenter indenterMy(m_editorWidget->document());
-                indenterMy.indentBlock(start, QChar::Null, tabSettings);
-            }
-        }
-    }
+    QmlJSEditor::indentQmlJs(m_editorWidget->document(), startLine, endLine,
+                             m_editorWidget->textDocument()->tabSettings());
 }
 
 ContextPaneWidget *QuickToolBar::contextWidget()

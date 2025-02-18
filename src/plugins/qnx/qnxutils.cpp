@@ -5,7 +5,7 @@
 
 #include <utils/algorithm.h>
 #include <utils/hostosinfo.h>
-#include <utils/process.h>
+#include <utils/qtcprocess.h>
 #include <utils/temporaryfile.h>
 
 #include <QDebug>
@@ -107,7 +107,8 @@ EnvironmentItems QnxUtils::qnxEnvironmentFromEnvFile(const FilePath &filePath)
 
     // waiting for finish
     QApplication::setOverrideCursor(Qt::BusyCursor);
-    bool waitResult = process.waitForFinished(10000);
+    using namespace std::chrono_literals;
+    bool waitResult = process.waitForFinished(10s);
     QApplication::restoreOverrideCursor();
     if (!waitResult)
         return items;

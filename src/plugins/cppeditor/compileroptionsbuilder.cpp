@@ -234,9 +234,9 @@ QStringList createLanguageOptionGcc(Language language, ProjectFile::Kind fileKin
 
 void CompilerOptionsBuilder::addWordWidth()
 {
-    if (m_projectPart.toolChainAbi.architecture() != Abi::X86Architecture)
+    if (m_projectPart.toolchainAbi.architecture() != Abi::X86Architecture)
         return;
-    const QString argument = m_projectPart.toolChainAbi.wordWidth() == 64
+    const QString argument = m_projectPart.toolchainAbi.wordWidth() == 64
                                  ? QLatin1String("-m64")
                                  : QLatin1String("-m32");
     add(argument);
@@ -250,7 +250,7 @@ void CompilerOptionsBuilder::addTargetTriple()
     }
 
     const QString target = m_explicitTarget.isEmpty() || m_projectPart.targetTripleIsAuthoritative
-            ? m_projectPart.toolChainTargetTriple : m_explicitTarget;
+            ? m_projectPart.toolchainTargetTriple : m_explicitTarget;
 
     // Only "--target=" style is accepted in both g++ and cl driver modes.
     if (!target.isEmpty())
@@ -284,7 +284,7 @@ void CompilerOptionsBuilder::addMsvcExceptions()
 {
     if (!m_clStyle)
         return;
-    if (Utils::anyOf(m_projectPart.toolChainMacros, [](const Macro &macro) {
+    if (Utils::anyOf(m_projectPart.toolchainMacros, [](const Macro &macro) {
         return macro.key == "_CPPUNWIND";
     })) {
         enableExceptions();
@@ -421,7 +421,7 @@ void CompilerOptionsBuilder::addProjectMacros()
     if (m_projectPart.toolchainType == ProjectExplorer::Constants::CUSTOM_TOOLCHAIN_TYPEID
         || m_projectPart.toolchainType == Qnx::Constants::QNX_TOOLCHAIN_ID
         || m_projectPart.toolchainType.name().contains("BareMetal") || useMacros) {
-        addMacros(m_projectPart.toolChainMacros);
+        addMacros(m_projectPart.toolchainMacros);
     }
 
     addMacros(m_projectPart.projectMacros);
@@ -579,7 +579,7 @@ static QByteArray msCompatibilityVersionFromDefines(const Macros &macros)
 
 QByteArray CompilerOptionsBuilder::msvcVersion() const
 {
-    const QByteArray version = msCompatibilityVersionFromDefines(m_projectPart.toolChainMacros);
+    const QByteArray version = msCompatibilityVersionFromDefines(m_projectPart.toolchainMacros);
     return !version.isEmpty() ? version
                               : msCompatibilityVersionFromDefines(m_projectPart.projectMacros);
 }
@@ -692,8 +692,7 @@ void CompilerOptionsBuilder::addIncludeDirOptionForPath(const HeaderPath &path)
     if (path.type == HeaderPathType::BuiltIn) {
         systemPath = true;
     } else if (path.type == HeaderPathType::System) {
-        if (m_useSystemHeader == UseSystemHeader::Yes)
-            systemPath = true;
+        systemPath = true;
     } else {
         // ProjectExplorer::HeaderPathType::User
         if (m_useSystemHeader == UseSystemHeader::Yes && m_projectPart.hasProject()
@@ -900,8 +899,8 @@ void CompilerOptionsBuilder::evaluateCompilerFlags()
             continue;
         }
 
-        // GCC option that clang doesn't know.
-        if (option.contains("direct-extern-access"))
+        // GCC options that clang doesn't know.
+        if (option.contains("direct-extern-access") || option == "-fnothrow-opt")
             continue;
 
         // These were already parsed into ProjectPart::includedFiles.

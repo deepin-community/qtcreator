@@ -30,7 +30,6 @@ class CPPEDITOR_EXPORT ProjectPart
 public:
     using ConstPtr = QSharedPointer<const ProjectPart>;
 
-public:
     static ConstPtr create(const Utils::FilePath &topLevelProject,
                       const ProjectExplorer::RawProjectPart &rpp = {},
                       const QString &displayName = {},
@@ -38,7 +37,7 @@ public:
                       Utils::Language language = Utils::Language::Cxx,
                       Utils::LanguageExtensions languageExtensions = {},
                       const ProjectExplorer::RawProjectPartFlags &flags = {},
-                      const ProjectExplorer::ToolChainInfo &tcInfo = {})
+                      const ProjectExplorer::ToolchainInfo &tcInfo = {})
     {
         return ConstPtr(new ProjectPart(topLevelProject, rpp, displayName, files, language,
                                    languageExtensions, flags, tcInfo));
@@ -49,13 +48,13 @@ public:
     bool hasProject() const { return !topLevelProject.isEmpty(); }
     bool belongsToProject(const ProjectExplorer::Project *project) const;
     bool belongsToProject(const Utils::FilePath &project) const;
+    ProjectExplorer::Project *project() const;
 
     static QByteArray readProjectConfigFile(const QString &projectConfigFile);
 
-public:
     const Utils::FilePath topLevelProject;
     const QString displayName;
-    const QString projectFile;
+    const Utils::FilePath projectFile;
     const QString projectConfigFile; // Generic Project Manager only
 
     const int projectFileLine = -1;
@@ -76,7 +75,7 @@ public:
 
     // Macros
     const ProjectExplorer::Macros projectMacros;
-    const ProjectExplorer::Macros &toolChainMacros = m_macroReport.macros;
+    const ProjectExplorer::Macros &toolchainMacros = m_macroReport.macros;
 
     // Build system
     const QString buildSystemTarget;
@@ -84,13 +83,13 @@ public:
         = ProjectExplorer::BuildTargetType::Unknown;
     const bool selectedForBuilding = true;
 
-    // ToolChain
+    // Toolchain
     const Utils::Id toolchainType;
     const bool isMsvc2015Toolchain = false;
-    const QString toolChainTargetTriple;
+    const QString toolchainTargetTriple;
     const bool targetTripleIsAuthoritative;
-    const ProjectExplorer::Abi toolChainAbi = ProjectExplorer::Abi::hostAbi();
-    const Utils::FilePath toolChainInstallDir;
+    const ProjectExplorer::Abi toolchainAbi = ProjectExplorer::Abi::hostAbi();
+    const Utils::FilePath toolchainInstallDir;
     const Utils::FilePath compilerFilePath;
     const Utils::WarningFlags warningFlags = Utils::WarningFlags::Default;
 
@@ -106,15 +105,42 @@ private:
                 Utils::Language language,
                 Utils::LanguageExtensions languageExtensions,
                 const ProjectExplorer::RawProjectPartFlags &flags,
-                const ProjectExplorer::ToolChainInfo &tcInfo);
+                const ProjectExplorer::ToolchainInfo &tcInfo);
 
     CPlusPlus::LanguageFeatures deriveLanguageFeatures() const;
 
-    const ProjectExplorer::ToolChain::MacroInspectionReport m_macroReport;
+    const ProjectExplorer::Toolchain::MacroInspectionReport m_macroReport;
 
 public:
     // Must come last due to initialization order.
     const CPlusPlus::LanguageFeatures languageFeatures;
+};
+
+class ProjectPartInfo {
+public:
+    enum Hint {
+        NoHint = 0,
+        IsFallbackMatch  = 1 << 0,
+        IsAmbiguousMatch = 1 << 1,
+        IsPreferredMatch = 1 << 2,
+        IsFromProjectMatch = 1 << 3,
+        IsFromDependenciesMatch = 1 << 4,
+    };
+    Q_DECLARE_FLAGS(Hints, Hint)
+
+    ProjectPartInfo() = default;
+    ProjectPartInfo(const ProjectPart::ConstPtr &projectPart,
+                    const QList<ProjectPart::ConstPtr> &projectParts,
+                    Hints hints)
+        : projectPart(projectPart)
+        , projectParts(projectParts)
+        , hints(hints)
+    {
+    }
+
+    ProjectPart::ConstPtr projectPart;
+    QList<ProjectPart::ConstPtr> projectParts; // The one above as first plus alternatives.
+    Hints hints = NoHint;
 };
 
 } // namespace CppEditor
