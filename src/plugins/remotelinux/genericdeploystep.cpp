@@ -10,10 +10,10 @@
 #include <projectexplorer/buildstep.h>
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/deploymentdata.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/devicemanager.h>
 #include <projectexplorer/devicesupport/filetransfer.h>
 #include <projectexplorer/devicesupport/idevice.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/projectexplorerconstants.h>
 #include <projectexplorer/runconfigurationaspects.h>
 #include <projectexplorer/target.h>
@@ -55,12 +55,6 @@ public:
         method.addOption(Tr::tr("Use default transfer. This might be slow."));
 
         setInternalInitializer([this]() -> expected_str<void> {
-            if (BuildDeviceKitAspect::device(kit()) == DeviceKitAspect::device(kit())) {
-                // rsync transfer on the same device currently not implemented
-                // and typically not wanted.
-                return make_unexpected(
-                    Tr::tr("rsync is only supported for transfers between different devices."));
-            }
             return isDeploymentPossible();
         });
     }
@@ -121,6 +115,8 @@ static FileTransferMethod effectiveTransferMethodFor(const FileToTransfer &fileT
     auto targetDevice = ProjectExplorer::DeviceManager::deviceForPath(fileToTransfer.m_target);
     if (!sourceDevice || !targetDevice)
         return FileTransferMethod::GenericCopy;
+    if (sourceDevice == targetDevice)
+        return FileTransferMethod::GenericCopy;
 
     const auto devicesSupportMethod = [&](Id method) {
         return sourceDevice->extraData(method).toBool() && targetDevice->extraData(method).toBool();
@@ -160,10 +156,7 @@ GroupItem GenericDeployStep::transferTask(const Storage<FilesToTransfer> &storag
                       .arg(FileTransfer::transferMethodName(preferredTransferMethod),
                            FileTransfer::transferMethodName(transferMethod),
                            deviceConfiguration()->displayName());
-            if (transferMethod == FileTransferMethod::GenericCopy)
-                addWarningMessage(message);
-            else
-                addProgressMessage(message);
+            addProgressMessage(message);
             m_emittedDowngradeWarning = true;
         }
         transfer.setTransferMethod(transferMethod);

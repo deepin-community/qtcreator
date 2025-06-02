@@ -42,7 +42,7 @@ namespace Copilot::Internal {
 static LanguageClient::BaseClientInterface *clientInterface(const FilePath &nodePath,
                                                             const FilePath &distPath)
 {
-    CommandLine cmd{nodePath, {distPath.toFSPathString()}};
+    CommandLine cmd{nodePath, {distPath.toFSPathString(), "--stdio"}};
 
     const auto interface = new LanguageClient::StdIOClientInterface;
     interface->setCommandLine(cmd);
@@ -73,6 +73,7 @@ CopilotClient::CopilotClient(const FilePath &nodePath, const FilePath &distPath)
                                       &CopilotClient::proxyAuthenticationFailed,
                                       Qt::QueuedConnection);
         }
+        return true;
     });
 
     start();

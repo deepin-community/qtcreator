@@ -50,7 +50,7 @@ static QString sourceData(TextEditorWidget *editor, int startPos, int endPos)
 {
     return (startPos < 0)
             ? editor->toPlainText()
-            : Utils::Text::textAt(editor->textCursor(), startPos, (endPos - startPos));
+            : Utils::Text::textAt(editor->document(), startPos, (endPos - startPos));
 }
 
 static FormatOutput format(const FormatInput &input)
@@ -74,9 +74,10 @@ static FormatOutput format(const FormatInput &input)
 
         // Format temporary file
         QStringList options = input.command.options();
-        options.replaceInStrings(QLatin1String("%file"), sourceFile.filePath().toString());
+        options.replaceInStrings(QLatin1String("%file"), sourceFile.filePath().toUrlishString());
         Process process;
         process.setCommand({executable, options});
+        process.setUtf8StdOutCodec();
         process.runBlocking(5s);
         if (process.result() != ProcessResult::FinishedWithSuccess) {
             return Utils::make_unexpected(Tr::tr("Failed to format: %1.")
@@ -88,20 +89,21 @@ static FormatOutput format(const FormatInput &input)
 
         // Read text back
         Utils::FileReader reader;
-        if (!reader.fetch(sourceFile.filePath(), QIODevice::Text)) {
+        if (!reader.fetch(sourceFile.filePath())) {
             return Utils::make_unexpected(Tr::tr("Cannot read file \"%1\": %2.")
                          .arg(sourceFile.filePath().toUserOutput(), reader.errorString()));
         }
-        return QString::fromUtf8(reader.data());
+        return QString::fromUtf8(reader.text());
     }
 
     case Command::PipeProcessing: {
         Process process;
         QStringList options = input.command.options();
         options.replaceInStrings("%filename", input.filePath.fileName());
-        options.replaceInStrings("%file", input.filePath.toString());
+        options.replaceInStrings("%file", input.filePath.toUrlishString());
         process.setCommand({executable, options});
         process.setWriteData(input.sourceData.toUtf8());
+        process.setUtf8StdOutCodec();
         process.start();
         if (!process.waitForFinished(5s)) {
             return Utils::make_unexpected(Tr::tr("Cannot call %1 or some other error occurred. "

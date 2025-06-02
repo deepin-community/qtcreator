@@ -18,7 +18,7 @@
             add the path to the CMake executable on the \1.
 
         \li Go to \uicontrol {Preferences} > \uicontrol Kits >
-            \uicontrol {Qt Versions}, and then press \key Shift and click the
+            \uicontrol {Qt Versions}, and then select and hold \key Shift and select the
             \uicontrol Add button to add the Qt version on the \1.
 
         \li Go to \uicontrol {Preferences} > \uicontrol Kits >
@@ -35,8 +35,9 @@
         \li Select the device, CMake tool, Qt version, and compiler that you
             added above.
 
-        \li In \uicontrol {Run device type} and \uicontrol {Build device}, select
-            \uicontrol {\1}.
+        \li In \uicontrol {Type} in \uicontrol {Run device} and
+            \uicontrol {Build device}, select \uicontrol {\1}. Select
+            the actual device to run and build on in \uicontrol {Device}.
 
         \li To specify build settings:
 

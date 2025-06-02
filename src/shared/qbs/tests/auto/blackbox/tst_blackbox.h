@@ -77,8 +77,8 @@ private slots:
     void changeTrackingAndMultiplexing();
     void checkProjectFilePath();
     void checkTimestamps();
-    void chooseModuleInstanceByPriority();
-    void chooseModuleInstanceByPriority_data();
+    void chooseModuleInstanceByPriorityAndVersion();
+    void chooseModuleInstanceByPriorityAndVersion_data();
     void clean();
     void cli();
     void combinedSources();
@@ -241,6 +241,7 @@ private slots:
     void outputArtifactAutoTagging();
     void outputRedirection();
     void overrideProjectProperties();
+    void partiallyBuiltDependency();
     void pathProbe_data();
     void pathProbe();
     void pathListInProbe();

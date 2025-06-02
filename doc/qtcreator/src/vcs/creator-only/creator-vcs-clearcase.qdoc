@@ -21,6 +21,8 @@
     development support, and build automation solution developed by IBM. Use the
     ClearCase client plugin on Linux and Windows to access a ClearCase server.
 
+    \note Enable the ClearCase plugin to use it.
+
     \section1 Using GNU Diffutils with ClearCase
 
     You can use the GNU Diffutils tool With ClearCase to compare files and
@@ -54,7 +56,7 @@
     Unified Change Management (UCM) view, they are added to the change set of
     a UCM activity. By default, the activities are automatically assigned names.
     To disable this functionality, select \preferences >
-    \uicontrol {Version Control} > \uicontrol ClearCase, and then deselect the
+    \uicontrol {Version Control} > \uicontrol ClearCase, and then clear the
     \uicontrol {Auto assign activity names} check box.
 
     To automatically check out files when you edit them, select the
@@ -95,6 +97,6 @@
 
     Set a timeout for version control operations in \uicontrol Timeout.
 
-    \sa {Set up version control systems}, {Use common VCS functions},
-    {Version Control Systems}
+    \sa {Enable and disable plugins}, {Set up version control systems},
+    {Use common VCS functions}, {Version Control Systems}
 */

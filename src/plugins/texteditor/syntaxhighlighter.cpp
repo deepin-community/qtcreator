@@ -15,6 +15,8 @@
 
 #include <cmath>
 
+Q_LOGGING_CATEGORY(Log, "qtc.editor.syntaxhighlighter", QtWarningMsg)
+
 namespace TextEditor {
 
 enum HighlighterTypeProperty
@@ -62,6 +64,7 @@ public:
     QTextCharFormat whitespaceFormat;
     QString mimeType;
     bool syntaxInfoUpToDate = false;
+    bool continueRehighlightScheduled = false;
     int highlightStartBlock = 0;
     int highlightEndBlock = 0;
     QSet<int> forceRehighlightBlocks;
@@ -208,7 +211,10 @@ void SyntaxHighlighterPrivate::reformatBlocks(int from, int charsRemoved, int ch
     else if (block.blockNumber() > highlightEndBlock)
         highlightEndBlock = block.blockNumber();
 
-    reformatBlocks();
+    qCDebug(Log) << "reformat blocks from:" << from << "to:" << from + charsAdded - charsRemoved;
+
+    if (!continueRehighlightScheduled)
+        reformatBlocks();
 }
 
 void SyntaxHighlighterPrivate::reformatBlocks()
@@ -216,12 +222,15 @@ void SyntaxHighlighterPrivate::reformatBlocks()
     QElapsedTimer et;
     et.start();
 
+    continueRehighlightScheduled = false;
     syntaxInfoUpToDate = false;
     rehighlightPending = false;
 
     foldValidator.reset();
 
     bool forceHighlightOfNextBlock = false;
+    qCDebug(Log) << "continue reformat blocks start block:" << highlightStartBlock
+                 << "end block:" << highlightEndBlock << "blockCount:" << doc->blockCount();
     QTextBlock block = doc->findBlockByNumber(highlightStartBlock);
     QTC_ASSERT(block.isValid(), block = doc->firstBlock());
     QTextBlock endBlock = doc->findBlockByNumber(highlightEndBlock);
@@ -233,12 +242,15 @@ void SyntaxHighlighterPrivate::reformatBlocks()
             break;
 
         const int stateBeforeHighlight = block.userState();
+        const int braceDepthBeforeHighlight = TextDocumentLayout::braceDepth(block);
 
         if (forceHighlightOfNextBlock || forceRehighlightBlocks.contains(block.blockNumber())
                 || block.blockNumber() <= highlightEndBlock) {
             reformatBlock(block);
             forceRehighlightBlocks.remove(block.blockNumber());
-            forceHighlightOfNextBlock = (block.userState() != stateBeforeHighlight);
+            forceHighlightOfNextBlock = (block.userState() != stateBeforeHighlight)
+                                        || (braceDepthBeforeHighlight
+                                            != TextDocumentLayout::braceDepth(block));
         }
 
         if (block == endBlock && !forceHighlightOfNextBlock)
@@ -250,12 +262,14 @@ void SyntaxHighlighterPrivate::reformatBlocks()
     foldValidator.finalize();
 
     if (endBlock.isValid() && block.isValid() && block.blockNumber() < endBlock.blockNumber()) {
+        continueRehighlightScheduled = true;
         QMetaObject::invokeMethod(q, &SyntaxHighlighter::continueRehighlight, Qt::QueuedConnection);
         if (forceHighlightOfNextBlock)
             forceRehighlightBlocks << block.blockNumber();
     } else {
         highlightEndBlock = 0;
         highlightStartBlock = INT_MAX;
+        qCDebug(Log) << "reformat blocks done";
         syntaxInfoUpToDate = true;
         emit q->finished();
     }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "codepasterservice.h"
+#include "cpasterconstants.h"
 #include "cpastertr.h"
 #include "dpastedotcomprotocol.h"
 #include "fileshareprotocol.h"
@@ -16,10 +17,12 @@
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/editormanager/editormanager.h>
+#include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/messagemanager.h>
 
 #include <extensionsystem/iplugin.h>
+#include <extensionsystem/pluginmanager.h>
 
 #include <utils/algorithm.h>
 #include <utils/fileutils.h>
@@ -72,6 +75,7 @@ class CodePasterPluginPrivate : public QObject
 {
 public:
     CodePasterPluginPrivate();
+    ~CodePasterPluginPrivate();
 
     void post(PasteSource pasteSources);
     void post(QString data, const QString &mimeType);
@@ -171,6 +175,13 @@ CodePasterPluginPrivate::CodePasterPluginPrivate()
         .setText(Tr::tr("Fetch from URL..."))
         .addToContainer(menu)
         .addOnTriggered(this, &CodePasterPluginPrivate::fetchUrl);
+
+    ExtensionSystem::PluginManager::addObject(&m_service);
+}
+
+CodePasterPluginPrivate::~CodePasterPluginPrivate()
+{
+    ExtensionSystem::PluginManager::removeObject(&m_service);
 }
 
 static inline void textFromCurrentEditor(QString *text, QString *mimeType)
@@ -371,7 +382,7 @@ void CodePasterPluginPrivate::finishFetch(const QString &titleDescription,
         return;
     }
     const Utils::FilePath filePath = saver.filePath();
-    m_fetchedSnippets.push_back(filePath.toString());
+    m_fetchedSnippets.push_back(filePath.toUrlishString());
     // Open editor with title.
     IEditor *editor = EditorManager::openEditor(filePath);
     QTC_ASSERT(editor, return);
@@ -394,6 +405,11 @@ public:
 private:
     void initialize() final
     {
+        IOptionsPage::registerCategory(
+            CodePaster::Constants::CPASTER_SETTINGS_CATEGORY,
+            Tr::tr("Code Pasting"),
+            ":/cpaster/images/settingscategory_cpaster.png");
+
         d = new CodePasterPluginPrivate;
     }
 

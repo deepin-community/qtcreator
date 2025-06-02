@@ -3,7 +3,7 @@ if(QT_CREATOR_API_DEFINED)
 endif()
 set(QT_CREATOR_API_DEFINED TRUE)
 
-set(IDE_QT_VERSION_MIN "6.4.3")
+set(IDE_QT_VERSION_MIN "6.5.3")
 
 include(${CMAKE_CURRENT_LIST_DIR}/QtCreatorAPIInternal.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/QtcSeparateDebugInfo.cmake)
@@ -325,7 +325,6 @@ function(add_qtc_library name)
   endif()
 
   get_target_property(have_automoc_prop ${name} AUTOMOC)
-  # check for Qt 6 is needed because sdktool & qml2puppet still build with Qt 5
   if(Qt6_VERSION AND "${have_automoc_prop}")
     qt_extract_metatypes(${name})
   endif()

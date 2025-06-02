@@ -211,8 +211,6 @@ add_qtc_plugin(Core
     messagebox.h
     messagemanager.cpp
     messagemanager.h
-    messageoutputwindow.cpp
-    messageoutputwindow.h
     mimetypemagicdialog.cpp
     mimetypemagicdialog.h
     mimetypesettings.cpp
@@ -324,8 +322,13 @@ extend_qtc_plugin(Core
 )
 
 extend_qtc_plugin(Core
-  CONDITION BUILD_WITH_CRASHPAD
-  DEFINES ENABLE_CRASHPAD
+  CONDITION BUILD_WITH_CRASHPAD OR BUILD_WITH_SENTRY
+  DEFINES ENABLE_CRASHREPORTING
+)
+
+extend_qtc_plugin(Core
+  CONDITION BUILD_WITH_CRASHPAD OR (BUILD_WITH_SENTRY AND SENTRY_CRASHPAD_PATH)
+  DEFINES CRASHREPORTING_USES_CRASHPAD
 )
 
 set(FONTS_BASE "${QtCreator_SOURCE_DIR}/src/share/3rdparty/studiofonts/")

@@ -510,6 +510,45 @@ TEST_F(NodeMetaInfo, inflate_value_and_readonly_properties_handles_invalid)
     ASSERT_THAT(properties, ElementsAre(CompoundProperty(IsFalse(), IsFalse(), IsEmpty())));
 }
 
+TEST_F(NodeMetaInfo, add_inflated_value_and_readonly_properties)
+{
+    using QmlDesigner::Storage::PropertyDeclarationTraits;
+    auto metaInfo = model.qtQuickItemMetaInfo();
+    auto fontTypeId = projectStorageMock.typeId(qtQuickModuleId, "font");
+    auto inputDeviceId = projectStorageMock.typeId(qtQuickModuleId, "InputDevice");
+    auto xPropertyId = projectStorageMock.createProperty(metaInfo.id(), "x", intTypeId);
+    auto fontPropertyId = projectStorageMock.createProperty(metaInfo.id(), "font", fontTypeId);
+    auto familyPropertyId = projectStorageMock.propertyDeclarationId(fontTypeId, "family");
+    auto pixelSizePropertyId = projectStorageMock.propertyDeclarationId(fontTypeId, "pixelSize");
+    auto devicePropertyId = projectStorageMock.createProperty(metaInfo.id(),
+                                                              "device",
+                                                              PropertyDeclarationTraits::IsReadOnly,
+                                                              inputDeviceId);
+    auto seatNamePropertyId = projectStorageMock.propertyDeclarationId(inputDeviceId, "seatName");
+
+    auto properties = QmlDesigner::MetaInfoUtils::addInflatedValueAndReadOnlyProperties(
+        metaInfo.properties());
+
+    ASSERT_THAT(
+        properties,
+        AllOf(Contains(CompoundPropertyIds(xPropertyId, IsFalse(), "x")),
+              Contains(CompoundPropertyIds(fontPropertyId, IsFalse(), "font")),
+              Contains(CompoundPropertyIds(familyPropertyId, fontPropertyId, "font.family")),
+              Contains(CompoundPropertyIds(pixelSizePropertyId, fontPropertyId, "font.pixelSize")),
+              Not(Contains(CompoundPropertyIds(devicePropertyId, IsFalse(), _))),
+              Contains(CompoundPropertyIds(seatNamePropertyId, devicePropertyId, "device.seatName"))));
+}
+
+TEST_F(NodeMetaInfo, add_inflated_value_and_readonly_properties_handles_invalid)
+{
+    QmlDesigner::PropertyMetaInfos propertiesWithInvalid = {QmlDesigner::PropertyMetaInfo{}};
+
+    auto properties = QmlDesigner::MetaInfoUtils::addInflatedValueAndReadOnlyProperties(
+        propertiesWithInvalid);
+
+    ASSERT_THAT(properties, ElementsAre(CompoundProperty(IsFalse(), IsFalse(), IsEmpty())));
+}
+
 TEST_F(NodeMetaInfo, get_local_properties)
 {
     auto metaInfo = model.qtQuickItemMetaInfo();
@@ -3061,6 +3100,43 @@ TEST_F(NodeMetaInfo, invalid_is_not_visible_in_library)
     ASSERT_THAT(visibleInLibrary, FlagIs::False);
 }
 
+TEST_F(NodeMetaInfo, object_is_not_hide_in_navigator)
+{
+    auto hideInNavigator = objectMetaInfo.hideInNavigator();
+
+    ASSERT_THAT(hideInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, default_is_not_hide_in_navigator)
+{
+    auto hideInNavigator = QmlDesigner::NodeMetaInfo{}.hideInNavigator();
+
+    ASSERT_THAT(hideInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, invalid_is_not_hide_in_navigator)
+{
+    auto node = model.createModelNode("Foo");
+    auto metaInfo = node.metaInfo();
+
+    auto hideInNavigator = metaInfo.hideInNavigator();
+
+    ASSERT_THAT(hideInNavigator, FlagIs::False);
+}
+
+TEST_F(NodeMetaInfo, component_is_hide_in_navigator)
+{
+    auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
+    TypeTraits traits{TypeTraitsKind::Reference};
+    traits.hideInNavigator = FlagIs::True;
+    auto typeId = projectStorageMock.createType(moduleId, "Foo", traits);
+    QmlDesigner::NodeMetaInfo metaInfo{typeId, &projectStorageMock};
+
+    auto hideInNavigator = metaInfo.hideInNavigator();
+
+    ASSERT_THAT(hideInNavigator, FlagIs::True);
+}
+
 TEST_F(NodeMetaInfo, component_is_visible_in_library)
 {
     auto moduleId = projectStorageMock.createModule("/path/to/project", ModuleKind::PathLibrary);
@@ -3131,6 +3207,7 @@ TEST_F(NodeMetaInfo, item_library_entries)
                                                "/icon/path",
                                                "Basic",
                                                "QtQuick",
+                                               ModuleKind::QmlLibrary,
                                                "An object",
                                                "",
                                                ElementsAre(IsItemLibraryProperty("x", "double", 1)),

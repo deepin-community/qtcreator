@@ -646,7 +646,7 @@ void LineEditField::setupCompletion(FancyLineEdit *lineEdit)
                     classes << (entry.extraInfo + "::" + entry.displayName);
                 if (completion == Completion::Namespaces) {
                     if (!project
-                            || entry.filePath.startsWith(project->projectDirectory().toString())) {
+                            || entry.filePath.startsWith(project->projectDirectory().toUrlishString())) {
                         namespaces << entry.extraInfo;
                     }
                 }
@@ -929,6 +929,14 @@ void CheckBoxField::setChecked(bool value)
 
     w->setChecked(value);
     emit w->clicked(value);
+}
+
+bool CheckBoxField::isChecked() const
+{
+    auto w = qobject_cast<QCheckBox *>(widget());
+    QTC_ASSERT(w, return false);
+
+    return w->isChecked();
 }
 
 bool CheckBoxField::validate(MacroExpander *expander, QString *message)

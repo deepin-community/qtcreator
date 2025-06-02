@@ -6,6 +6,7 @@
 #include "effectcomposercontextobject.h"
 #include "effectcomposermodel.h"
 #include "effectcomposernodesmodel.h"
+#include "effectcomposertr.h"
 #include "effectcomposerview.h"
 #include "effectutils.h"
 #include "propertyhandler.h"
@@ -50,7 +51,7 @@ static QString propertyEditorResourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 static QList<QmlDesigner::ModelNode> modelNodesFromMimeData(const QByteArray &mimeData,
@@ -76,8 +77,8 @@ EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
     , m_effectComposerView(view)
     , m_quickWidget{new StudioQuickWidget(this)}
 {
-    setWindowTitle(tr("Effect Composer", "Title of effect composer widget"));
-    setMinimumWidth(250);
+    setWindowTitle(Tr::tr("Effect Composer", "Title of effect composer widget"));
+    setMinimumWidth(400);
 
     // create the inner widget
     m_quickWidget->quickWidget()->setObjectName(QmlDesigner::Constants::OBJECT_NAME_EFFECT_COMPOSER);
@@ -108,10 +109,6 @@ EffectComposerWidget::EffectComposerWidget(EffectComposerView *view)
     map->setProperties({{"effectComposerNodesModel", QVariant::fromValue(m_effectComposerNodesModel.data())},
                         {"effectComposerModel", QVariant::fromValue(m_effectComposerModel.data())},
                         {"rootView", QVariant::fromValue(this)}});
-
-    connect(m_effectComposerModel.data(), &EffectComposerModel::nodesChanged, this, [this]() {
-        m_effectComposerNodesModel->updateCanBeAdded(m_effectComposerModel->uniformNames());
-    });
 
     connect(m_effectComposerModel.data(), &EffectComposerModel::resourcesSaved,
             this, [this](const QmlDesigner::TypeName &type, const Utils::FilePath &path) {
@@ -215,7 +212,7 @@ QString EffectComposerWidget::uniformDefaultImage(const QString &nodeName, const
 
 QString EffectComposerWidget::imagesPath() const
 {
-    return Core::ICore::resourcePath("qmldesigner/effectComposerNodes/images").toString();
+    return Core::ICore::resourcePath("qmldesigner/effectComposerNodes/images").toUrlishString();
 }
 
 bool EffectComposerWidget::isEffectAsset(const QUrl &url) const
@@ -246,6 +243,12 @@ void EffectComposerWidget::dropNode(const QByteArray &mimeData)
     }
 }
 
+void EffectComposerWidget::updateCanBeAdded()
+{
+    m_effectComposerNodesModel->updateCanBeAdded(m_effectComposerModel->uniformNames(),
+                                                 m_effectComposerModel->nodeNames());
+}
+
 QSize EffectComposerWidget::sizeHint() const
 {
     return {420, 420};
@@ -257,7 +260,7 @@ QString EffectComposerWidget::qmlSourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/effectComposerQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/effectComposerQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/effectComposerQmlSources").toUrlishString();
 }
 
 void EffectComposerWidget::initView()
@@ -332,7 +335,7 @@ void EffectComposerWidget::handleImportScanTimer()
         }
     } else if (m_importScan.counter == 102) {
         if (m_effectComposerView->model()) {
-            // If type is in use, we have to reset puppet to update 2D view
+            // If type is in use, we have to reset QML Puppet to update 2D view
             if (!m_effectComposerView->allModelNodesOfType(
                                          m_effectComposerView->model()->metaInfo(m_importScan.type)).isEmpty()) {
                 m_effectComposerView->resetPuppet();

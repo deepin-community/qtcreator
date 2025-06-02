@@ -26,6 +26,8 @@
 #include <utils/store.h>
 #include <utils/stringutils.h>
 #include <utils/stylehelper.h>
+#include <utils/shutdownguard.h>
+#include <utils/threadutils.h>
 
 #include <nanotrace/nanotrace.h>
 
@@ -102,18 +104,23 @@ public:
     QMap<Utils::Key, QVariant> m_values;
     QMap<Utils::Key, QVariant> m_sessionValues;
     QFutureInterface<void> m_future;
-    PersistentSettingsWriter *m_writer = nullptr;
+    std::unique_ptr<PersistentSettingsWriter> m_writer;
 
     QMenu *m_sessionMenu;
     QAction *m_sessionManagerAction;
 };
 
-static SessionManager *m_instance = nullptr;
 static SessionManagerPrivate *d = nullptr;
+
+SessionManager *sessionManager()
+{
+    static GuardedObject<SessionManager> theSessionManager;
+    return theSessionManager.get();
+}
 
 SessionManager::SessionManager()
 {
-    m_instance = this;
+    QTC_ASSERT(isMainThread(), return);
     d = new SessionManagerPrivate;
 
     connect(PluginManager::instance(), &PluginManager::initializationDone, this, [] {
@@ -158,7 +165,7 @@ SessionManager::SessionManager()
     cmd->setDefaultKeySequence(QKeySequence());
     connect(d->m_sessionManagerAction,
             &QAction::triggered,
-            SessionManager::instance(),
+            this,
             &SessionManager::showSessionManager);
 
     MacroExpander *expander = Utils::globalMacroExpander();
@@ -177,15 +184,13 @@ SessionManager::SessionManager()
 
 SessionManager::~SessionManager()
 {
-    emit m_instance->aboutToUnloadSession(d->m_sessionName);
-    delete d->m_writer;
     delete d;
     d = nullptr;
 }
 
 SessionManager *SessionManager::instance()
 {
-   return m_instance;
+   return sessionManager();
 }
 
 bool SessionManager::isDefaultVirgin()
@@ -310,7 +315,7 @@ bool SessionManager::renameSession(const QString &original, const QString &newNa
 void SessionManager::showSessionManager()
 {
     saveSession();
-    Internal::SessionDialog sessionDialog(ICore::dialogParent());
+    Internal::SessionDialog sessionDialog;
     sessionDialog.setAutoLoadSession(d->isAutoRestoreLastSession());
     sessionDialog.exec();
     d->setAutoRestoreLastSession(sessionDialog.autoLoadSession());
@@ -404,6 +409,12 @@ static QString determineSessionToRestoreAtStartup()
     return {};
 }
 
+bool SessionManager::loadsSessionOrFileAtStartup()
+{
+    // "left-over arguments" usually mean a session or files
+    return !PluginManager::arguments().isEmpty() || !determineSessionToRestoreAtStartup().isEmpty();
+}
+
 void SessionManagerPrivate::restoreStartupSession()
 {
     NANOTRACE_SCOPE("Core", "SessionManagerPrivate::restoreStartupSession");
@@ -455,7 +466,7 @@ void SessionManagerPrivate::restoreStartupSession()
     ICore::openFiles(Utils::transform(arguments, &FilePath::fromUserInput),
                      ICore::OpenFilesFlags(ICore::CanContainLineAndColumnNumbers
                                            | ICore::SwitchMode));
-    emit m_instance->startupSessionRestored();
+    emit sessionManager()->startupSessionRestored();
 }
 
 void SessionManagerPrivate::saveSettings()
@@ -689,8 +700,7 @@ bool SessionManager::loadSession(const QString &session, bool initial)
     d->m_sessionValues.clear();
 
     d->m_sessionName = session;
-    delete d->m_writer;
-    d->m_writer = nullptr;
+    d->m_writer.reset();
     EditorManager::updateWindowTitles();
 
     d->m_virginSession = false;
@@ -774,10 +784,9 @@ bool SessionManager::saveSession()
     }
     data.insert("valueKeys", stringsFromKeys(keys));
 
-    if (!d->m_writer || d->m_writer->fileName() != filePath) {
-        delete d->m_writer;
-        d->m_writer = new PersistentSettingsWriter(filePath, "QtCreatorSession");
-    }
+    if (!d->m_writer || d->m_writer->fileName() != filePath)
+        d->m_writer.reset(new PersistentSettingsWriter(filePath, "QtCreatorSession"));
+
     const bool result = d->m_writer->save(data, ICore::dialogParent());
     if (result) {
         if (!SessionManager::isDefaultVirgin())

@@ -347,8 +347,11 @@ void QmlEngine::beginConnection()
 
     QTC_ASSERT(state() == EngineRunRequested, return);
 
+    QmlDebugConnection *connection = d->connection();
+    if (!connection || connection->isConnected())
+        return;
 
-    QString host = runParameters().qmlServer.host();
+    QString host = runParameters().qmlServer().host();
     // Use localhost as default
     if (host.isEmpty())
         host = QHostAddress(QHostAddress::LocalHost).toString();
@@ -365,12 +368,7 @@ void QmlEngine::beginConnection()
      * the connection will be closed again (instead of returning the "connection refused"
      * error that we expect).
      */
-    int port = runParameters().qmlServer.port();
-
-    QmlDebugConnection *connection = d->connection();
-    if (!connection || connection->isConnected())
-        return;
-
+    const int port = runParameters().qmlServer().port();
     connection->connectToHost(host, port);
 
     //A timeout to check the connection state
@@ -449,8 +447,8 @@ void QmlEngine::errorMessageBoxFinished(int result)
 
 void QmlEngine::gotoLocation(const Location &location)
 {
-    if (QUrl(location.fileName().toString()).isLocalFile()) { // create QUrl to ensure validity
-        const QString fileName = location.fileName().toString();
+    if (QUrl(location.fileName().toUrlishString()).isLocalFile()) { // create QUrl to ensure validity
+        const QString fileName = location.fileName().toUrlishString();
         // internal file from source files -> show generated .js
         QTC_ASSERT(d->sourceDocuments.contains(fileName), return);
 
@@ -490,9 +488,9 @@ void QmlEngine::startProcess()
     if (d->process.isRunning())
         return;
 
-    d->process.setCommand(runParameters().inferior.command);
-    d->process.setWorkingDirectory(runParameters().inferior.workingDirectory);
-    d->process.setEnvironment(runParameters().inferior.environment);
+    d->process.setCommand(runParameters().inferior().command);
+    d->process.setWorkingDirectory(runParameters().inferior().workingDirectory);
+    d->process.setEnvironment(runParameters().inferior().environment);
     showMessage(Tr::tr("Starting %1").arg(d->process.commandLine().toUserOutput()),
         NormalMessageFormat);
     d->process.start();
@@ -546,7 +544,7 @@ void QmlEngine::setupEngine()
 
     if (isPrimaryEngine()) {
         // QML only.
-        const DebuggerStartMode startMode = runParameters().startMode;
+        const DebuggerStartMode startMode = runParameters().startMode();
         if (startMode == AttachToQmlServer || startMode == AttachToRemoteServer)
             tryToConnect();
         else if (startMode == AttachToRemoteProcess)
@@ -611,9 +609,9 @@ void QmlEngine::executeRunToLine(const ContextData &data)
     QTC_ASSERT(state() == InferiorStopOk, qDebug() << state());
     showStatusMessage(Tr::tr("Run to line %1 (%2) requested...")
                           .arg(data.textPosition.line)
-                          .arg(data.fileName.toString()),
+                          .arg(data.fileName.toUserOutput()),
                       5000);
-    d->setBreakpoint(SCRIPTREGEXP, data.fileName.toString(), true, data.textPosition.line);
+    d->setBreakpoint(SCRIPTREGEXP, data.fileName.toUrlishString(), true, data.textPosition.line);
     clearExceptionSelection();
     d->continueDebugging(Continue);
 
@@ -664,7 +662,7 @@ void QmlEngine::insertBreakpoint(const Breakpoint &bp)
         d->setExceptionBreak(AllExceptions, requested.enabled);
 
     } else if (requested.type == BreakpointByFileAndLine) {
-        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toString(),
+        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toUrlishString(),
                          requested.enabled, requested.textPosition.line, 0,
                          requested.condition, requested.ignoreCount);
 
@@ -720,9 +718,10 @@ void QmlEngine::updateBreakpoint(const Breakpoint &bp)
         bp->setEnabled(requested.enabled);
     } else if (d->canChangeBreakpoint()) {
         d->changeBreakpoint(bp, requested.enabled);
+        d->breakpointsSync.insert(d->sequence, bp);
     } else {
         d->clearBreakpoint(bp);
-        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toString(),
+        d->setBreakpoint(SCRIPTREGEXP, requested.fileName.toUrlishString(),
                          requested.enabled, requested.textPosition.line, 0,
                          requested.condition, requested.ignoreCount);
         d->breakpointsSync.insert(d->sequence, bp);
@@ -1230,6 +1229,7 @@ void QmlEnginePrivate::handleEvaluateExpression(const QVariantMap &response,
     QVariant bodyVal = response.value(BODY).toMap();
     QmlV8ObjectData body = extractData(bodyVal);
     WatchHandler *watchHandler = engine->watchHandler();
+    watchHandler->resetValueCache();
 
     auto item = new WatchItem;
     item->iname = iname;
@@ -1740,6 +1740,16 @@ void QmlEnginePrivate::messageReceived(const QByteArray &data)
                         breakpointsTemp.append(index);
                     }
 
+                } else if (debugCommand == CHANGEBREAKPOINT) {
+                    // v8message {"body":{"breakpoint":2,"type":"scriptRegExp"},"command":"changebreakpoint","request_seq":8,"running":true,"seq":9,"success":true,"type":"response"}
+                    const int seq = resp.value("request_seq").toInt();
+                    if (breakpointsSync.contains(seq)) {
+                        Breakpoint bp = breakpointsSync.take(seq);
+                        QTC_ASSERT(bp, return);
+                        if (resp.value("success").toBool())
+                            bp->setEnabled(!bp->isEnabled());
+                        bp->update();
+                    }
 
                 } else if (debugCommand == CLEARBREAKPOINT) {
                     // DO NOTHING
@@ -1865,7 +1875,7 @@ void QmlEnginePrivate::messageReceived(const QByteArray &data)
 
                             clearBreakpoint(bp);
                             setBreakpoint(SCRIPTREGEXP,
-                                          params.fileName.toString(),
+                                          params.fileName.toUrlishString(),
                                           params.enabled,
                                           params.textPosition.line,
                                           newColumn,
@@ -2451,10 +2461,10 @@ FilePath QmlEngine::toFileInProject(const QUrl &fileUrl)
 {
     // make sure file finder is properly initialized
     const DebuggerRunParameters &rp = runParameters();
-    d->fileFinder.setProjectDirectory(rp.projectSourceDirectory);
-    d->fileFinder.setProjectFiles(rp.projectSourceFiles);
-    d->fileFinder.setAdditionalSearchDirectories(rp.additionalSearchDirectories);
-    d->fileFinder.setSysroot(rp.sysRoot);
+    d->fileFinder.setProjectDirectory(rp.projectSourceDirectory());
+    d->fileFinder.setProjectFiles(rp.projectSourceFiles());
+    d->fileFinder.setAdditionalSearchDirectories(rp.additionalSearchDirectories());
+    d->fileFinder.setSysroot(rp.sysRoot());
 
     return d->fileFinder.findFile(fileUrl).constFirst();
 }

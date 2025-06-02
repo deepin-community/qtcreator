@@ -15,6 +15,7 @@
 #include <utils/stylehelper.h>
 
 #include <QGuiApplication>
+#include <QSslSocket>
 
 namespace ExtensionManager::Internal {
 
@@ -33,6 +34,13 @@ ExtensionManagerSettings::ExtensionManagerSettings()
     useExternalRepo.setDefaultValue(false);
     useExternalRepo.setLabelText(Tr::tr("Use external repository"));
 
+    const bool sslSupported = QSslSocket::supportsSsl();
+
+    useExternalRepo.setEnabled(sslSupported);
+    if (!sslSupported) {
+        useExternalRepo.setToolTip(Tr::tr("SSL support is not available."));
+    }
+
     externalRepoUrl.setSettingsKey("ExternalRepoUrl");
     externalRepoUrl.setDefaultValue("https://qc-extensions.qt.io");
     externalRepoUrl.setDisplayStyle(Utils::StringAspect::LineEditDisplay);
@@ -40,17 +48,14 @@ ExtensionManagerSettings::ExtensionManagerSettings()
 
     setLayouter([this] {
         using namespace Layouting;
+        using namespace Core;
         return Column {
             Group {
                 title(Tr::tr("Note")),
                 Column {
                     Label {
                         wordWrap(true),
-                        text(Tr::tr("%1 does not check extensions from external vendors for security "
-                                    "flaws or malicious intent, so be careful when installing them, "
-                                    "as it might leave your computer vulnerable to attacks such as "
-                                    "hacking, malware, and phishing.")
-                             .arg(QGuiApplication::applicationDisplayName()))
+                        text(externalRepoWarningNote()),
                     }
                 }
             },
@@ -64,11 +69,12 @@ ExtensionManagerSettings::ExtensionManagerSettings()
             Row {
                 PushButton {
                     text(Tr::tr("Install Extension...")),
-                    onClicked([] {
-                        if (Core::executePluginInstallWizard())
-                            Core::ICore::askForRestart(
-                                    Tr::tr("Plugin changes will take effect after restart."));
-                    }, this),
+                    onClicked(this, [] {
+                        if (executePluginInstallWizard() == InstallResult::NeedsRestart) {
+                            ICore::askForRestart(
+                                Tr::tr("Plugin changes will take effect after restart."));
+                        }
+                    }),
                 },
                 st,
             },
@@ -88,12 +94,20 @@ public:
         setId(Constants::EXTENSIONMANAGER_SETTINGSPAGE_ID);
         setDisplayName(Tr::tr("Browser"));
         setCategory(Constants::EXTENSIONMANAGER_SETTINGSPAGE_CATEGORY);
-        setDisplayCategory(Tr::tr("Extensions"));
-        setCategoryIconPath(":/extensionmanager/images/settingscategory_extensionmanager.png");
         setSettingsProvider([] { return &settings(); });
     }
 };
 
 const ExtensionManagerSettingsPage settingsPage;
+
+QString externalRepoWarningNote()
+{
+    return
+    Tr::tr("%1 does not check extensions from external vendors for security "
+           "flaws or malicious intent, so be careful when installing them, "
+           "as it might leave your computer vulnerable to attacks such as "
+           "hacking, malware, and phishing.")
+        .arg(QGuiApplication::applicationDisplayName());
+}
 
 } // ExtensionManager::Internal

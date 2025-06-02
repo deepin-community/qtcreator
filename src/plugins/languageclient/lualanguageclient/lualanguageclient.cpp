@@ -29,6 +29,7 @@ using namespace Utils;
 using namespace Core;
 using namespace TextEditor;
 using namespace ProjectExplorer;
+using namespace std::string_view_literals;
 
 namespace {
 
@@ -189,7 +190,7 @@ public:
 
     bool applyFromSettingsWidget(QWidget *widget) override;
 
-    Utils::Store toMap() const override;
+    void toMap(Utils::Store &map) const override;
     void fromMap(const Utils::Store &map) override;
 
     QWidget *createSettingsWidget(QWidget *parent = nullptr) const override;
@@ -264,21 +265,22 @@ public:
                 return make_unexpected(QString("init callback did not return a table or string"));
             });
 
-        if (auto initOptionsTable = options.get<sol::optional<sol::table>>("initializationOptions"))
+        if (auto initOptionsTable = options.get<sol::optional<sol::table>>(
+                "initializationOptions"sv))
             m_initializationOptions = ::Lua::toJsonString(*initOptionsTable);
-        else if (auto initOptionsString = options.get<sol::optional<QString>>("initializationOptions"))
+        else if (auto initOptionsString = options.get<sol::optional<QString>>("initializationOptions"sv))
             m_initializationOptions = *initOptionsString;
 
-        m_name = options.get<QString>("name");
+        m_name = options.get<QString>("name"sv);
         m_settingsTypeId = Utils::Id::fromString(QString("Lua_%1").arg(m_name));
-        m_serverName = options.get_or<QString>("serverName", "");
+        m_serverName = options.get_or<QString>("serverName"sv, "");
 
         m_startBehavior = startBehaviorFromString(
-            options.get_or<QString>("startBehavior", "AlwaysOn"));
+            options.get_or<QString>("startBehavior"sv, "AlwaysOn"));
 
-        m_startFailedCallback = options.get<sol::protected_function>("onStartFailed");
+        m_startFailedCallback = options.get<sol::protected_function>("onStartFailed"sv);
 
-        QString transportType = options.get_or<QString>("transport", "stdio");
+        QString transportType = options.get_or<QString>("transport"sv, "stdio");
         if (transportType == "stdio")
             m_transportType = TransportType::StdIO;
         else if (transportType == "localsocket")
@@ -286,7 +288,7 @@ public:
         else
             qWarning() << "Unknown transport type:" << transportType;
 
-        auto languageFilter = options.get<std::optional<sol::table>>("languageFilter");
+        auto languageFilter = options.get<std::optional<sol::table>>("languageFilter"sv);
         if (languageFilter) {
             auto patterns = languageFilter->get<std::optional<sol::table>>("patterns");
             auto mimeTypes = languageFilter->get<std::optional<sol::table>>("mimeTypes");
@@ -300,10 +302,10 @@ public:
                     m_languageFilter.mimeTypes.push_back(v.as<QString>());
         }
 
-        m_showInSettings = options.get<std::optional<bool>>("showInSettings").value_or(true);
+        m_showInSettings = options.get<std::optional<bool>>("showInSettings"sv).value_or(true);
 
         // get<sol::optional<>> because on MSVC, get_or(..., nullptr) fails to compile
-        m_aspects = options.get<sol::optional<AspectContainer *>>("settings").value_or(nullptr);
+        m_aspects = options.get<sol::optional<AspectContainer *>>("settings"sv).value_or(nullptr);
 
         if (m_aspects) {
             connect(m_aspects, &AspectContainer::applied, this, [this] {
@@ -391,6 +393,9 @@ public:
 
     void registerMessageCallback(const QString &msg, const sol::main_function &callback)
     {
+        if (m_messageCallbacks.contains(msg))
+            qWarning() << "Overwriting existing callback for message:" << msg;
+
         m_messageCallbacks.insert(msg, callback);
         updateMessageCallbacks();
     }
@@ -406,7 +411,7 @@ public:
                     [self = QPointer<LuaClientWrapper>(this),
                      name = msg](const LanguageServerProtocol::JsonRpcMessage &m) {
                         if (!self)
-                            return;
+                            return false;
 
                         auto func = self->m_messageCallbacks.value(name);
                         auto table = ::Lua::toTable(func.lua_state(), m.toJsonObject());
@@ -414,7 +419,14 @@ public:
                         if (!result.valid()) {
                             qWarning() << "Error calling message callback for:" << name << ":"
                                        << (result.get<sol::error>().what());
+                            return false;
                         }
+                        if (result.get_type() != sol::type::boolean) {
+                            qWarning() << "Callback for:" << name << " did not return a boolean";
+                            return false;
+                        }
+
+                        return result.get<bool>();
                     });
             }
         }
@@ -466,7 +478,7 @@ public:
         }
     }
 
-    void sendMessageWithIdForDocument_cb(
+    QString sendMessageWithIdForDocument_cb(
         TextEditor::TextDocument *document, const sol::table &message, const sol::main_function callback)
     {
         const QJsonValue messageValue = ::Lua::toJson(message);
@@ -474,7 +486,8 @@ public:
             throw sol::error("Message is not an object");
 
         QJsonObject obj = messageValue.toObject();
-        obj["id"] = QUuid::createUuid().toString();
+        const auto id = QUuid::createUuid().toString();
+        obj["id"] = id;
 
         const RequestWithResponse request{obj, callback};
 
@@ -485,6 +498,15 @@ public:
         QTC_ASSERT(clients.front(), throw sol::error("Client is null"));
 
         clients.front()->sendMessage(request);
+        return id;
+    }
+
+    void cancelRequest(const QString &id)
+    {
+        for (Client *c : LanguageClientManager::clientsForSettingId(m_clientSettingsId)) {
+            if (c)
+                c->cancelRequest(LanguageServerProtocol::MessageId(id));
+        }
     }
 
     void updateAsyncOptions()
@@ -642,15 +664,14 @@ bool LuaClientSettings::applyFromSettingsWidget(QWidget *widget)
     return true;
 }
 
-Utils::Store LuaClientSettings::toMap() const
+void LuaClientSettings::toMap(Store &store) const
 {
-    auto store = BaseSettings::toMap();
+    BaseSettings::toMap(store);
     if (auto w = m_wrapper.lock())
         w->toMap(store);
-    return store;
 }
 
-void LuaClientSettings::fromMap(const Utils::Store &map)
+void LuaClientSettings::fromMap(const Store &map)
 {
     BaseSettings::fromMap(map);
     if (auto w = m_wrapper.lock()) {
@@ -702,7 +723,7 @@ static void registerLuaApi()
                 [](const LuaClientWrapper *c) -> sol::function {
                     if (!c->m_onInstanceStart)
                         return sol::lua_nil;
-                    return c->m_onInstanceStart.value();
+                    return *c->m_onInstanceStart;
                 },
                 [](LuaClientWrapper *c, const sol::main_function &f) { c->m_onInstanceStart = f; }),
             "registerMessage",
@@ -713,6 +734,8 @@ static void registerLuaApi()
             &LuaClientWrapper::sendMessageForDocument,
             "sendMessageWithIdForDocument_cb",
             &LuaClientWrapper::sendMessageWithIdForDocument_cb,
+            "cancelRequest",
+            &LuaClientWrapper::cancelRequest,
             "create",
             [](const sol::main_table &options) -> std::shared_ptr<LuaClientWrapper> {
                 auto luaClientWrapper = std::make_shared<LuaClientWrapper>(options);

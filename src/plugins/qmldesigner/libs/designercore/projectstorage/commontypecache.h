@@ -58,6 +58,7 @@ inline constexpr char Item[] = "Item";
 inline constexpr char JsonListModel[] = "JsonListModel";
 inline constexpr char KeyframeGroup[] = "KeyframeGroup";
 inline constexpr char Keyframe[] = "Keyframe";
+inline constexpr char Label[] = "Label";
 inline constexpr char Layout[] = "Layout";
 inline constexpr char Light[] = "Light";
 inline constexpr char ListElement[] = "ListElement";
@@ -89,6 +90,7 @@ inline constexpr char QQuickStateOperation[] = "QQuickStateOperation";
 inline constexpr char QtMultimedia[] = "QtMultimedia";
 inline constexpr char QtObject[] = "QtObject";
 inline constexpr char QtQml[] = "QtQml";
+inline constexpr char QtQml_Base[] = "QtQml.Base";
 inline constexpr char QtQml_Models[] = "QtQml.Models";
 inline constexpr char QtQml_XmlListModel[] = "QtQml.XmlListModel";
 inline constexpr char QtQuick3D[] = "QtQuick3D";
@@ -172,11 +174,11 @@ class CommonTypeCache
         CacheType<QML, ModuleKind::QmlLibrary, var>,
         CacheType<QML, ModuleKind::CppLibrary, FloatType>,
         CacheType<QML, ModuleKind::CppLibrary, UIntType>,
-        CacheType<QtQml, ModuleKind::QmlLibrary, Connections>,
         CacheType<QtMultimedia, ModuleKind::QmlLibrary, SoundEffect>,
         CacheType<QtQml_Models, ModuleKind::QmlLibrary, ListElement>,
         CacheType<QtQml_Models, ModuleKind::QmlLibrary, ListModel>,
         CacheType<QtQml_XmlListModel, ModuleKind::QmlLibrary, XmlListModelRole>,
+        CacheType<QtQml_Base, ModuleKind::QmlLibrary, Connections>,
         CacheType<QtQuick, ModuleKind::QmlLibrary, BorderImage>,
         CacheType<QtQuick, ModuleKind::QmlLibrary, GridView>,
         CacheType<QtQuick, ModuleKind::QmlLibrary, Image>,
@@ -236,6 +238,7 @@ class CommonTypeCache
         CacheType<QtQuick3D_Particles3D, ModuleKind::QmlLibrary, SpriteParticle3D>,
         CacheType<QtQuick3D_Particles3D, ModuleKind::CppLibrary, QQuick3DParticleAbstractShape>,
         CacheType<QtQuick_Controls, ModuleKind::QmlLibrary, Control>,
+        CacheType<QtQuick_Controls, ModuleKind::QmlLibrary, Label>,
         CacheType<QtQuick_Controls, ModuleKind::QmlLibrary, Popup>,
         CacheType<QtQuick_Controls, ModuleKind::QmlLibrary, SplitView>,
         CacheType<QtQuick_Controls, ModuleKind::QmlLibrary, SwipeView>,

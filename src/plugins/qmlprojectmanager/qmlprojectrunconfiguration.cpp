@@ -15,9 +15,9 @@
 
 #include <projectexplorer/buildsystem.h>
 #include <projectexplorer/deployconfiguration.h>
+#include <projectexplorer/devicesupport/devicekitaspects.h>
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/environmentaspect.h>
-#include <projectexplorer/kitaspects.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -78,6 +78,7 @@ private:
 QmlProjectRunConfiguration::QmlProjectRunConfiguration(Target *target, Id id)
     : RunConfiguration(target, id)
 {
+    setUsesEmptyBuildKeys();
     qmlViewer.setSettingsKey(Constants::QML_VIEWER_KEY);
     qmlViewer.setLabelText(Tr::tr("Override device QML viewer:"));
     qmlViewer.setPlaceHolderText(qmlRuntimeFilePath().toUserOutput());
@@ -156,7 +157,7 @@ QmlProjectRunConfiguration::QmlProjectRunConfiguration(Target *target, Id id)
         return env;
     };
 
-    const Id deviceTypeId = DeviceTypeKitAspect::deviceTypeId(target->kit());
+    const Id deviceTypeId = RunDeviceTypeKitAspect::deviceTypeId(target->kit());
     if (deviceTypeId == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE) {
         environment.addPreferredBaseEnvironment(Tr::tr("System Environment"), [envModifier] {
             return envModifier(Environment::systemEnvironment());
@@ -183,7 +184,7 @@ QString QmlProjectRunConfiguration::disabledReason(Utils::Id runMode) const
         return Tr::tr("No script file to execute.");
 
     const FilePath viewer = qmlRuntimeFilePath();
-    if (DeviceTypeKitAspect::deviceTypeId(kit())
+    if (RunDeviceTypeKitAspect::deviceTypeId(kit())
             == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE
             && !viewer.exists()) {
         return Tr::tr("No QML utility found.");
@@ -204,7 +205,7 @@ FilePath QmlProjectRunConfiguration::qmlRuntimeFilePath() const
 
     // We might not have a full Qt version for building, but the device
     // might know what is good for running.
-    IDevice::ConstPtr dev = DeviceKitAspect::device(kit);
+    IDevice::ConstPtr dev = RunDeviceKitAspect::device(kit);
     if (dev) {
         const FilePath qmlRuntime = dev->qmlRunCommand();
         if (!qmlRuntime.isEmpty())
@@ -218,7 +219,7 @@ FilePath QmlProjectRunConfiguration::qmlRuntimeFilePath() const
     // The Qt version might know, but we need to make sure
     // that the device can reach it.
     if (QtVersion *version = QtKitAspect::qtVersion(kit)) {
-        // look for puppet as qmlruntime only in QtStudio Qt versions
+        // look for QML Puppet as qmlruntime only in QtStudio Qt versions
         if (version->features().contains("QtStudio") &&
             version->qtVersion().majorVersion() > 5 && !hasDeployStep()) {
 
@@ -278,7 +279,7 @@ void QmlProjectRunConfiguration::setupQtVersionAspect()
                 const QList<Kit *> kits = Utils::filtered(KitManager::kits(), [&](const Kit *k) {
                     QtSupport::QtVersion *version = QtSupport::QtKitAspect::qtVersion(k);
                     return (version && version->qtVersion().majorVersion() == preferedQtVersion)
-                           && DeviceTypeKitAspect::deviceTypeId(k)
+                           && RunDeviceTypeKitAspect::deviceTypeId(k)
                                   == ProjectExplorer::Constants::DESKTOP_DEVICE_TYPE;
                 });
 

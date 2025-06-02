@@ -112,6 +112,7 @@ private slots:
     void multiplexing();
     void newOutputArtifactInDependency();
     void newPatternMatch();
+    void noAssertsInRelaxedMode();
     void nonexistingProjectPropertyFromCommandLine();
     void nonexistingProjectPropertyFromProduct();
     void objC();
@@ -138,6 +139,7 @@ private slots:
     void resolveProjectDryRun();
     void resolveProjectDryRun_data();
     void restoredWarnings();
+    void restoreAndResolve();
     void ruleConflict();
     void runEnvForDisabledProduct();
     void softDependency();

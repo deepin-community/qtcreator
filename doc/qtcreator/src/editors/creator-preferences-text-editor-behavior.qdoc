@@ -21,7 +21,7 @@
     QML code (such as Python code files), select \preferences >
     \uicontrol {Text Editor} > \uicontrol Behavior.
 
-    \image qtcreator-preferences-texteditor-behavior.webp {Text Editor Behavior preferences}
+    \image qtcreator-preferences-texteditor-behavior-indentation.webp {Text Editor Behavior preferences}
 
     You can specify how to interpret the \key Tab and \key Backspace key
     presses and how to align continuation lines.
@@ -68,7 +68,7 @@
     select \preferences > \uicontrol {Text Editor} >
     \uicontrol Behavior > \uicontrol Typing.
 
-    To disable automatic indentation, deselect the
+    To disable automatic indentation, clear the
     \uicontrol {Enable automatic indentation} check box.
 
     You can specify how the indentation is decreased when you press
@@ -80,7 +80,7 @@
     \uicontrol Unindents.
 
     You can specify whether the \key Tab key automatically indents text when you
-    press it. To automatically indent text, select \uicontrol Always in the
+    select it. To automatically indent text, select \uicontrol Always in the
     \uicontrol {Tab key performs auto-indent} field. To only indent text when
     the cursor is located within leading white space, select \uicontrol {In
     Leading White Space}.

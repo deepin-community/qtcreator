@@ -147,6 +147,7 @@ struct TypeTraits
         , takesOverRenderingOfChildren{FlagIs::False}
         , visibleInNavigator{FlagIs::False}
         , visibleInLibrary{FlagIs::False}
+        , hideInNavigator{FlagIs::False}
         , dummy2{0U}
     {}
 
@@ -193,7 +194,8 @@ struct TypeTraits
             keyValue("is stacked container", typeTraits.isStackedContainer),
             keyValue("takes over rendering of children", typeTraits.takesOverRenderingOfChildren),
             keyValue("visible in navigator", typeTraits.visibleInNavigator),
-            keyValue("visible in library", typeTraits.visibleInLibrary));
+            keyValue("visible in library", typeTraits.visibleInLibrary),
+            keyValue("hide in navigator", typeTraits.hideInNavigator));
 
         convertToString(string, dict);
     }
@@ -228,7 +230,8 @@ struct TypeTraits
             FlagIs takesOverRenderingOfChildren : 2;
             FlagIs visibleInNavigator : 2;
             FlagIs visibleInLibrary : 2;
-            unsigned int dummy2 : 6;
+            FlagIs hideInNavigator : 2;
+            unsigned int dummy2 : 4;
         };
 
         unsigned int annotation;
@@ -410,6 +413,18 @@ struct ItemLibraryEntry
         , properties{std::move(properties)}
     {}
 
+    ItemLibraryEntry(TypeId typeId,
+                     Utils::SmallStringView typeName,
+                     Utils::SmallStringView name,
+                     Utils::SmallStringView category,
+                     Utils::SmallStringView import)
+        : typeId{typeId}
+        , typeName{typeName}
+        , name{name}
+        , category{category}
+        , import{import}
+    {}
+
     template<typename String>
     friend void convertToString(String &string, const ItemLibraryEntry &entry)
     {
@@ -435,10 +450,12 @@ struct ItemLibraryEntry
     Utils::PathString iconPath;
     Utils::SmallString category;
     Utils::SmallString import;
+    ModuleKind moduleKind = ModuleKind::QmlLibrary;
     ToolTipString toolTip;
     Utils::PathString templatePath;
     ItemLibraryProperties properties;
     std::vector<Utils::PathString> extraFilePaths;
+    SourceId componentSourceId;
 };
 
 using ItemLibraryEntries = QVarLengthArray<ItemLibraryEntry, 1>;

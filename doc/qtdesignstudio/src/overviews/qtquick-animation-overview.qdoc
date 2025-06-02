@@ -1,4 +1,4 @@
-// Copyright (C) 2021 The Qt Company Ltd.
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
@@ -6,7 +6,7 @@
     \previouspage qtquick-motion-design.html
     \nextpage studio-timeline.html
 
-    \title Introduction to Animation Techniques
+    \title Introduction to animation techniques
 
     \image timeline-rotation-animation.gif "Timeline animation of rotation and opacity"
 
@@ -15,11 +15,11 @@
 
     \list
         \li Common motion design techniques for 2D and 3D
-        \li Screen-to-screen or state-to-state animations
+        \li State-to-state animations
         \li Data-driven UI logic animations
     \endlist
 
-    \section1 Common Motion Design Techniques
+    \section1 Common motion design techniques
 
     The following table summarizes common motion design techniques for 2D and
     3D and their typical use cases.
@@ -27,13 +27,13 @@
     \table
     \header
         \li Technique
-        \li Use Case
+        \li Use case
     \row
         \li \l{Timeline}{Timeline animation}
         \li Linear interpolation through intermediate values at specified
             keyframes instead of immediately changing to the target value.
     \row
-        \li \l{Editing Easing Curves}{Easing curves} attached to keyframes
+        \li \l{Editing easing curves}{Easing curves} attached to keyframes
         \li Nonlinear interpolation between keyframes to make components
             appear to pick up speed, slow down, or bounce back at the end
             of the animation.
@@ -44,7 +44,7 @@
             simultaneously.
     \endtable
 
-    \section2 Timeline and Keyframe Based Animation
+    \section2 Timeline and keyframe based animation
 
     Timeline animation is based on \e keyframes. In \QDS, keyframes determine the
     value of the property of a \l{glossary_component}{component} at a certain
@@ -57,7 +57,7 @@
     In the middle of the animation, the y property has the value of 50 since
     keyframes are interpolated linearly by default.
 
-    \section2 Easing Curves
+    \section2 Easing curves
 
     Sometimes you don't want linear movement but would rather like the rectangle
     to move faster at the beginning and slower at the end of the animation. To
@@ -67,10 +67,10 @@
     easing curves can make components appear to pick up speed, slow down, or
     bounce back at the end of the animation.
 
-    \section2 Animation Curves
+    \section2 Animation curves
 
     While easing curves work well for most simple UI animations, more complex
-    3D animations require several keyframes so it becomes necessary to visualize
+    3D animations require several keyframes, so it becomes necessary to visualize
     the value and the interpolation of a keyframe simultaneously. The
     \l {Curves} view visualizes the whole animation of a property at once and
     shows the effective values of a keyframe together with the interpolation
@@ -78,38 +78,13 @@
     simultaneously so that you can see the animation for the x position
     and the animation for the y position side-by-side.
 
-    \section1 Screen-to-Screen or State-to-State Animations
+    \section1 State-to-state animations
 
-    The following table summarizes techniques used for navigating between
-    screens and UI states.
+    To navigate between UI states, use transitions between different states of the UI
+    using a transition timeline that is based on keyframes. You can apply easing
+    curves to the keyframes.
 
-    \table
-    \header
-        \li Technique
-        \li Use Case
-    \row
-        \li \l{Designing Application Flows}{Application flows}
-        \li An interactive prototype that can be clicked through to simulate
-            the user experience of the application.
-    \row
-        \li \l{Transitions}{Transitions between states}
-        \li Transitions between different states of the UI using a transition
-            timeline that is based on keyframes. You can apply easing curves
-            to the keyframes.
-    \endtable
-
-    \section2 Application Flows
-
-    You can design an application in the form of a \e {schematic diagram}
-    that shows all the significant components of the application UI and their
-    interconnections by means of symbols. This results in an interactive
-    prototype that can be clicked through to simulate the user experience of
-    the application. Code is created in the background and can be used
-    as the base of the production version of the application.
-
-    For more information, see \l{Designing Application Flows}.
-
-    \section2 Transitions Between States
+    \section2 Transitions between states
 
     UIs are designed to present different UI configurations in different
     scenarios, or to modify their appearances in response to user
@@ -143,10 +118,10 @@
 
     In \l {Transitions}, you can set the start frame, end frame,
     and duration for the transition of each property. You can also set
-    an \l{Editing Easing Curves}{easing curve} for each animation and
+    an \l{Editing easing curves}{easing curve} for each animation and
     the maximum duration of the whole transition.
 
-    \section1 Data-Driven UI Logic Animations
+    \section1 Data-driven UI logic animations
 
     The following table summarizes techniques used for animating the UI logic
     by using real or mock data from a backend.
@@ -154,7 +129,7 @@
     \table
     \header
         \li Technique
-        \li Use Case
+        \li Use case
     \row
         \li Data-driven timeline animation
         \li Using real or mock data from a backend to control motion.
@@ -164,7 +139,7 @@
             transitions.
     \endtable
 
-    \section2 Data-Driven Timeline Animation
+    \section2 Data-driven timeline animation
 
     You can connect property values to data backends to drive timeline
     animation. You can fetch data from various sources, such as data models,
@@ -181,7 +156,7 @@
 
     For more information, see \l{Simulating Complex Experiences}.
 
-    \section2 Programmatic Animation
+    \section2 Programmatic animation
 
     You can control property animation programmatically. Property animations
     are created by binding \uicontrol Animation components to property
@@ -205,7 +180,7 @@
     \table
     \header
         \li Component
-        \li Use Case
+        \li Use case
     \row
         \li \uicontrol {Property Animation}
         \li Applying animation when the value of a property changes. Color

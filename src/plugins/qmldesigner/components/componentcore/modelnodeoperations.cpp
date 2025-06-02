@@ -6,6 +6,7 @@
 #include "addimagesdialog.h"
 #include "addsignalhandlerdialog.h"
 #include "componentcore_constants.h"
+#include "createtexture.h"
 #include "findimplementation.h"
 #include "layoutingridlayout.h"
 #include "modelnodecontextmenu_helper.h"
@@ -32,8 +33,9 @@
 #include <stylesheetmerger.h>
 #include <variantproperty.h>
 
-#include <qmldesignerplugin.h>
 #include <qmldesignerconstants.h>
+#include <qmldesignerplugin.h>
+#include <qmldesignertr.h>
 
 #include <annotationeditor/annotationeditor.h>
 
@@ -87,11 +89,14 @@ Utils::SmallString auxPropertyString(Utils::SmallStringView name)
 {
     return auxDataString + name;
 }
-} // namespace
 
-inline static void reparentTo(const ModelNode &node, const QmlItemNode &parent)
+QString relativePathToQmlFile(const QString &absolutePath)
 {
+    return DocumentManager::currentFilePath().toFileInfo().dir().relativeFilePath(absolutePath);
+}
 
+inline void reparentTo(const ModelNode &node, const QmlItemNode &parent)
+{
     if (parent.isValid() && node.isValid()) {
         NodeAbstractProperty parentProperty;
 
@@ -104,7 +109,7 @@ inline static void reparentTo(const ModelNode &node, const QmlItemNode &parent)
     }
 }
 
-inline static QPointF getUpperLeftPosition(const QList<ModelNode> &modelNodeList)
+inline QPointF getUpperLeftPosition(const QList<ModelNode> &modelNodeList)
 {
     QPointF postion(std::numeric_limits<qreal>::max(), std::numeric_limits<qreal>::max());
     for (const ModelNode &modelNode : modelNodeList) {
@@ -120,12 +125,14 @@ inline static QPointF getUpperLeftPosition(const QList<ModelNode> &modelNodeList
     return postion;
 }
 
-static void setUpperLeftPostionToNode(const ModelNode &layoutNode, const QList<ModelNode> &modelNodeList)
+void setUpperLeftPostionToNode(const ModelNode &layoutNode, const QList<ModelNode> &modelNodeList)
 {
     QPointF upperLeftPosition = getUpperLeftPosition(modelNodeList);
     layoutNode.variantProperty("x").setValue(qRound(upperLeftPosition.x()));
     layoutNode.variantProperty("y") .setValue(qRound(upperLeftPosition.y()));
 }
+
+} // namespace
 
 namespace ModelNodeOperations {
 
@@ -651,8 +658,8 @@ void addSignalHandlerOrGotoImplementation(const SelectionContext &selectionState
     QmlObjectNode qmlObjectNode(modelNode);
 
     if (!qmlObjectNode.isValid()) {
-        QString title = QCoreApplication::translate("ModelNodeOperations", "Go to Implementation");
-        QString description = QCoreApplication::translate("ModelNodeOperations", "Invalid component.");
+        QString title = Tr::tr("Go to Implementation");
+        QString description = Tr::tr("Invalid component.");
         Core::AsynchronousMessageBox::warning(title, description);
         return;
     }
@@ -667,7 +674,7 @@ void addSignalHandlerOrGotoImplementation(const SelectionContext &selectionState
     QString itemId = modelNode.id();
 
     const Utils::FilePath currentDesignDocument = QmlDesignerPlugin::instance()->documentManager().currentDesignDocument()->fileName();
-    const QString fileName = currentDesignDocument.toString();
+    const QString fileName = currentDesignDocument.toUrlishString();
     const QString typeName = currentDesignDocument.baseName();
 
     QStringList signalNames = cleanSignalNames(getSortedSignalNameList(selectionState.selectedModelNodes().constFirst()));
@@ -676,13 +683,13 @@ void addSignalHandlerOrGotoImplementation(const SelectionContext &selectionState
         = QmlJSEditor::FindReferences::findUsageOfType(currentDesignDocument, typeName);
 
     if (usages.isEmpty()) {
-        QString title = QCoreApplication::translate("ModelNodeOperations", "Go to Implementation");
-        QString description = QCoreApplication::translate("ModelNodeOperations", "Cannot find an implementation.");
+        QString title = Tr::tr("Go to Implementation");
+        QString description = Tr::tr("Cannot find an implementation.");
         Core::AsynchronousMessageBox::warning(title, description);
         return;
     }
 
-    usages = FindImplementation::run(usages.constFirst().path.toString(), typeName, itemId);
+    usages = FindImplementation::run(usages.constFirst().path.toUrlishString(), typeName, itemId);
 
     Core::ModeManager::activateMode(Core::Constants::MODE_EDIT);
 
@@ -718,7 +725,7 @@ void addSignalHandlerOrGotoImplementation(const SelectionContext &selectionState
                           selectionState.view()->model());
 
                 //Move cursor to correct curser position
-                const QString filePath = Core::EditorManager::currentDocument()->filePath().toString();
+                const QString filePath = Core::EditorManager::currentDocument()->filePath().toUrlishString();
                 QList<QmlJSEditor::FindReferences::Usage> usages = FindImplementation::run(filePath, typeName, itemId);
                 Core::EditorManager::openEditorAt({Utils::FilePath::fromString(filePath),
                                                    usages.constFirst().line,
@@ -942,8 +949,8 @@ static void setIndexProperty(const AbstractProperty &property, const QVariant &v
 
     const QString propertyName = QString::fromUtf8(property.name());
 
-    QString title = QCoreApplication::translate("ModelNodeOperations", "Cannot Set Property %1").arg(propertyName);
-    QString description = QCoreApplication::translate("ModelNodeOperations", "The property %1 is bound to an expression.").arg(propertyName);
+    QString title = Tr::tr("Cannot Set Property %1").arg(propertyName);
+    QString description = Tr::tr("The property %1 is bound to an expression.").arg(propertyName);
     Core::AsynchronousMessageBox::warning(title, description);
 }
 
@@ -1078,10 +1085,8 @@ AddFilesResult addFilesToProject(const QStringList &fileNames, const QString &de
         if (targetFilePath.exists()) {
             if (srcFilePath.lastModified() == targetFilePath.lastModified())
                 continue;
-            const QString title = QCoreApplication::translate(
-                        "ModelNodeOperations", "Overwrite Existing File?");
-            const QString question = QCoreApplication::translate(
-                        "ModelNodeOperations", "File already exists. Overwrite?\n\"%1\"").arg(targetFile);
+            const QString title = Tr::tr("Overwrite Existing File?");
+            const QString question = Tr::tr("File already exists. Overwrite?\n\"%1\"").arg(targetFile);
             if (QMessageBox::question(qobject_cast<QWidget *>(Core::ICore::dialogParent()),
                                       title, question, QMessageBox::Yes | QMessageBox::No)
                     != QMessageBox::Yes) {
@@ -1124,7 +1129,7 @@ static QString getAssetDefaultDirectory(const QString &assetDir, const QString &
         assetPath.createDir();
 
     if (assetPath.exists() && assetPath.isDir())
-        adjustedDefaultDirectory = assetPath.toString();
+        adjustedDefaultDirectory = assetPath.toUrlishString();
 
     return adjustedDefaultDirectory;
 }
@@ -1460,7 +1465,7 @@ QString getTemplateDialog(const Utils::FilePath &projectPath)
 {
     const Utils::FilePath templatesPath = projectPath.pathAppended("templates");
 
-    const QStringList templateFiles = QDir(templatesPath.toString()).entryList({"*.qml"});
+    const QStringList templateFiles = QDir(templatesPath.toUrlishString()).entryList({"*.qml"});
 
     QStringList names;
 
@@ -1474,7 +1479,7 @@ QString getTemplateDialog(const Utils::FilePath &projectPath)
     dialog->setMinimumWidth(480);
     dialog->setModal(true);
 
-    dialog->setWindowTitle(QCoreApplication::translate("TemplateMerge","Merge With Template"));
+    dialog->setWindowTitle(Tr::tr("TemplateMerge", "Merge With Template"));
 
     auto mainLayout = new QGridLayout(dialog);
 
@@ -1495,9 +1500,9 @@ QString getTemplateDialog(const Utils::FilePath &projectPath)
         templateFile = newFile;
     };
 
-    QPushButton *browseButton = new QPushButton(QCoreApplication::translate("TemplateMerge", "&Browse..."), dialog);
+    QPushButton *browseButton = new QPushButton(Tr::tr("TemplateMerge", "&Browse..."), dialog);
 
-    mainLayout->addWidget(new QLabel(QCoreApplication::translate("TemplateMerge", "Template:")), 0, 0);
+    mainLayout->addWidget(new QLabel(Tr::tr("TemplateMerge", "Template:")), 0, 0);
     mainLayout->addWidget(comboBox, 1, 0, 1, 3);
     mainLayout->addWidget(browseButton, 1, 3, 1 , 1);
 
@@ -1506,10 +1511,9 @@ QString getTemplateDialog(const Utils::FilePath &projectPath)
     mainLayout->addWidget(buttonBox, 2, 2, 1, 2);
 
     QObject::connect(browseButton, &QPushButton::clicked, dialog, [setTemplate, &projectPath]() {
-
         const QString newFile = QFileDialog::getOpenFileName(Core::ICore::dialogParent(),
-                                                             QCoreApplication::translate("TemplateMerge", "Browse Template"),
-                                                             projectPath.toString(),
+                                                             Tr::tr("TemplateMerge", "Browse Template"),
+                                                             projectPath.toUrlishString(),
                                                              "*.qml");
         if (!newFile.isEmpty())
             setTemplate(newFile);
@@ -1535,7 +1539,7 @@ QString getTemplateDialog(const Utils::FilePath &projectPath)
 
     if (!result.isEmpty() && !QFileInfo::exists(result)) {
         result = templateFiles.at(names.indexOf(result));
-        result = templatesPath.pathAppended(result).toString();
+        result = templatesPath.pathAppended(result).toUrlishString();
     }
 
     return result;
@@ -1718,7 +1722,8 @@ Utils::FilePath findEffectFile(const ModelNode &effectNode)
                                                                  QDirIterator::Subdirectories});
         if (matches.isEmpty()) {
             QMessageBox msgBox;
-            msgBox.setText(::QObject::tr("Effect file %1 not found in the project.").arg(effectFile));
+            msgBox.setText(
+                ::QmlDesigner::Tr::tr("Effect file %1 not found in the project.").arg(effectFile));
             msgBox.setStandardButtons(QMessageBox::Ok);
             msgBox.setDefaultButton(QMessageBox::Ok);
             msgBox.setIcon(QMessageBox::Warning);
@@ -1753,13 +1758,10 @@ void editInEffectComposer(const SelectionContext &selectionContext)
 
 bool isEffectComposerActivated()
 {
-    const ExtensionSystem::PluginSpecs specs = ExtensionSystem::PluginManager::plugins();
-    return std::ranges::find_if(specs,
-                                [](ExtensionSystem::PluginSpec *spec) {
-                                    return spec->name() == "EffectComposer"
-                                           && spec->isEffectivelyEnabled();
-                                })
-           != specs.end();
+    using namespace ExtensionSystem;
+    return Utils::anyOf(PluginManager::plugins(), [](PluginSpec *spec) {
+        return spec->id() == "effectcomposer" && spec->isEffectivelyEnabled();
+    });
 }
 
 void openEffectComposer(const QString &filePath)
@@ -1775,8 +1777,8 @@ void openEffectComposer(const QString &filePath)
 
 void openOldEffectMaker(const QString &filePath)
 {
-    const ProjectExplorer::Target *target = ProjectExplorer::ProjectTree::currentTarget();
-    if (!target) {
+    const ProjectExplorer::Kit *kit = ProjectExplorer::activeKitForCurrentProject();
+    if (!kit) {
         qWarning() << __FUNCTION__ << "No project open";
         return;
     }
@@ -1788,7 +1790,7 @@ void openOldEffectMaker(const QString &filePath)
     if (!effectResPath.exists())
         effectResPath.createDir();
 
-    const QtSupport::QtVersion *baseQtVersion = QtSupport::QtKitAspect::qtVersion(target->kit());
+    const QtSupport::QtVersion *baseQtVersion = QtSupport::QtKitAspect::qtVersion(kit);
     if (baseQtVersion) {
         Utils::Environment env = Utils::Environment::systemEnvironment();
 
@@ -1805,7 +1807,7 @@ void openOldEffectMaker(const QString &filePath)
         arguments << filePath;
         if (effectPath.fileContents()->isEmpty())
             arguments << "--create";
-        arguments << "--exportpath" << effectResPath.toString();
+        arguments << "--exportpath" << effectResPath.toUrlishString();
 
         if (env.osType() == Utils::OsTypeMac)
             env.set("QSG_RHI_BACKEND", "metal");
@@ -1836,7 +1838,7 @@ QString getEffectsDefaultDirectory(const QString &defaultDir)
     if (defaultDir.isEmpty()) {
         return Utils::FilePath::fromString(getAssetDefaultDirectory(
             "effects",
-            QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toString())).toString();
+            QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toUrlishString())).toUrlishString();
     }
 
     return getAssetDefaultDirectory("effects", defaultDir);
@@ -1864,9 +1866,9 @@ bool validateEffect(const QString &effectPath)
     Utils::FilePath qmlPath = effectsResDir.resolvePath(effectName + "/" + effectName + ".qml");
     if (!qmlPath.exists()) {
         QMessageBox msgBox;
-        msgBox.setText(QObject::tr("Effect %1 is not complete.").arg(effectName));
-        msgBox.setInformativeText(QObject::tr("Ensure that you have saved it in the Effect Composer."
-                                              "\nDo you want to edit this effect?"));
+        msgBox.setText(Tr::tr("Effect %1 is not complete.").arg(effectName));
+        msgBox.setInformativeText(Tr::tr("Ensure that you have saved it in the Effect Composer."
+                                         "\nDo you want to edit this effect?"));
         msgBox.setStandardButtons(QMessageBox::No | QMessageBox::Yes);
         msgBox.setDefaultButton(QMessageBox::Yes);
         msgBox.setIcon(QMessageBox::Question);
@@ -1881,7 +1883,7 @@ Utils::FilePath getImagesDefaultDirectory()
 {
     return Utils::FilePath::fromString(getAssetDefaultDirectory(
         "images",
-        QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toString()));
+        QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toUrlishString()));
 }
 
 void jumpToCode(const ModelNode &modelNode)
@@ -1905,41 +1907,15 @@ static bool moveNodeToParent(const NodeAbstractProperty &targetProperty, const M
     return false;
 }
 
-ModelNode createTextureNode(const NodeAbstractProperty &targetProp, const QString &imagePath)
+ModelNode createTextureNode(AbstractView *view, const QString &imagePath)
 {
-    AbstractView *view = targetProp.view();
     QTC_ASSERT(view, return {});
 
-    if (targetProp.isValid()) {
-        // create a texture item lib
-        ItemLibraryEntry itemLibraryEntry;
-        itemLibraryEntry.setName("Texture");
-        itemLibraryEntry.setType("QtQuick3D.Texture", 1, 0);
-
-        // set texture source
-        PropertyName prop = "source";
-        QString type = "QUrl";
-        QVariant val = imagePath;
-        itemLibraryEntry.addProperty(prop, type, val);
-
-        // create a texture
-        ModelNode newModelNode = QmlItemNode::createQmlObjectNode(view,
-                                                                  itemLibraryEntry,
-                                                                  {},
-                                                                  targetProp,
-                                                                  false);
-
-        // Rename the node based on source image
-        QFileInfo fi(imagePath);
-        newModelNode.setIdWithoutRefactoring(
-            view->model()->generateNewId(fi.baseName(), "textureImage"));
-        return newModelNode;
-    }
-    return {};
+    CreateTexture textureCreator(view);
+    return textureCreator.execute(imagePath, AddTextureMode::Texture);
 }
 
 bool dropAsImage3dTexture(const ModelNode &targetNode,
-                          const NodeAbstractProperty &targetProp,
                           const QString &imagePath,
                           ModelNode &newNode,
                           bool &outMoveNodesAfter)
@@ -1949,16 +1925,11 @@ bool dropAsImage3dTexture(const ModelNode &targetNode,
 
     auto bindToProperty = [&](const PropertyName &propName) {
         view->executeInTransaction("NavigatorTreeModel::dropAsImage3dTexture", [&] {
-            newNode = createTextureNode(targetProp, imagePath);
+            newNode = createTextureNode(view, imagePath);
             if (newNode.isValid()) {
                 BindingProperty bindProp = targetNode.bindingProperty(propName);
                 bindProp.setExpression(newNode.validId());
-                ModelNode matLib = Utils3D::materialLibraryNode(view);
-                if (matLib.isValid()) {
-                    NodeAbstractProperty matLibProp = matLib.defaultNodeAbstractProperty();
-                    matLibProp.reparentHere(newNode);
-                    outMoveNodesAfter = false;
-                }
+                outMoveNodesAfter = false;
             }
         });
     };
@@ -1979,7 +1950,7 @@ bool dropAsImage3dTexture(const ModelNode &targetNode,
 
         if (dialog->result() == QDialog::Accepted) {
             view->executeInTransaction("NavigatorTreeModel::dropAsImage3dTexture", [&] {
-                newNode = createTextureNode(targetProp, imagePath);
+                newNode = createTextureNode(view, imagePath);
                 if (newNode.isValid()) // Automatically set the texture to selected property
                     targetNode.bindingProperty(dialog->selectedProperty())
                         .setExpression(newNode.validId());
@@ -1999,10 +1970,11 @@ bool dropAsImage3dTexture(const ModelNode &targetNode,
         return newNode.isValid();
     } else if (targetNode.metaInfo().isQtQuick3DTexture()) {
         // if dropping an image on an existing texture, set the source
-        targetNode.variantProperty("source").setValue(imagePath);
+        targetNode.variantProperty("source").setValue(relativePathToQmlFile(imagePath));
         return true;
     } else if (targetNode.metaInfo().isQtQuick3DModel()) {
-        QTimer::singleShot(0, view, [targetNode, imagePath, view]() {
+        const QString relImagePath = relativePathToQmlFile(imagePath);
+        QTimer::singleShot(0, view, [targetNode, relImagePath, view]() {
             if (view && targetNode.isValid()) {
                 // To MaterialBrowserView. Done async to avoid custom notification in transaction
                 QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("MaterialBrowser");
@@ -2010,9 +1982,9 @@ bool dropAsImage3dTexture(const ModelNode &targetNode,
                                              {targetNode},
                                              {DocumentManager::currentFilePath()
                                                   .absolutePath()
-                                                  .pathAppended(imagePath)
+                                                  .pathAppended(relImagePath)
                                                   .cleanPath()
-                                                  .toString()});
+                                                  .toUrlishString()});
             }
         });
         return true;
@@ -2102,20 +2074,12 @@ ModelNode handleItemLibraryImageDrop(const QString &imagePath,
     AbstractView *view = targetNode.view();
     QTC_ASSERT(view, return {});
 
-    const QString imagePathRelative
-        = DocumentManager::currentFilePath().toFileInfo().dir().relativeFilePath(
-            imagePath); // relative to .ui.qml file
-
     ModelNode newModelNode;
 
-    if (!dropAsImage3dTexture(targetNode,
-                              targetProperty,
-                              imagePathRelative,
-                              newModelNode,
-                              outMoveNodesAfter)) {
+    if (!dropAsImage3dTexture(targetNode, imagePath, newModelNode, outMoveNodesAfter)) {
         if (targetNode.metaInfo().isQtQuickImage() || targetNode.metaInfo().isQtQuickBorderImage()) {
             // if dropping an image on an existing image, set the source
-            targetNode.variantProperty("source").setValue(imagePathRelative);
+            targetNode.variantProperty("source").setValue(relativePathToQmlFile(imagePath));
         } else {
             // create an image
             QmlItemNode newItemNode = QmlItemNode::createQmlItemNodeFromImage(view,
@@ -2176,8 +2140,7 @@ ModelNode handleItemLibraryShaderDrop(const QString &shaderPath,
 
     ModelNode newModelNode;
 
-    const QString relPath = DocumentManager::currentFilePath().toFileInfo().dir().relativeFilePath(
-        shaderPath);
+    const QString relPath = relativePathToQmlFile(shaderPath);
 
     if (targetNode.metaInfo().isQtQuick3DShader()) {
         // if dropping into an existing Shader, update
@@ -2233,8 +2196,7 @@ ModelNode handleItemLibrarySoundDrop(const QString &soundPath,
 
     ModelNode newModelNode;
 
-    const QString relPath = DocumentManager::currentFilePath().toFileInfo().dir().relativeFilePath(
-        soundPath);
+    const QString relPath = relativePathToQmlFile(soundPath);
 
     if (targetNode.metaInfo().isQtMultimediaSoundEffect()) {
         // if dropping into on an existing SoundEffect, update
@@ -2268,7 +2230,6 @@ ModelNode handleItemLibrarySoundDrop(const QString &soundPath,
 }
 
 ModelNode handleItemLibraryTexture3dDrop(const QString &tex3DPath,
-                                         NodeAbstractProperty targetProperty,
                                          const ModelNode &targetNode,
                                          bool &outMoveNodesAfter)
 {
@@ -2279,24 +2240,9 @@ ModelNode handleItemLibraryTexture3dDrop(const QString &tex3DPath,
     if (!view->model()->hasImport(import, true, true))
         return {};
 
-    const QString imagePath = DocumentManager::currentFilePath().toFileInfo().dir().relativeFilePath(
-        tex3DPath); // relative to qml file
-
     ModelNode newModelNode;
 
-    if (!dropAsImage3dTexture(targetNode,
-                              targetProperty,
-                              imagePath,
-                              newModelNode,
-                              outMoveNodesAfter)) {
-        view->executeInTransaction("NavigatorTreeModel::handleItemLibraryTexture3dDrop", [&] {
-            // create a standalone Texture3D at drop location
-            newModelNode = createTextureNode(targetProperty, imagePath);
-            if (!NodeHints::fromModelNode(targetProperty.parentModelNode())
-                     .canBeContainerFor(newModelNode))
-                newModelNode.destroy();
-        });
-    }
+    dropAsImage3dTexture(targetNode, tex3DPath, newModelNode, outMoveNodesAfter);
 
     return newModelNode;
 }

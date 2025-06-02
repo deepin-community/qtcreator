@@ -15,6 +15,7 @@
 #include <nodemetainfo.h>
 #include <qmldesignerconstants.h>
 #include <qmldesignerplugin.h>
+#include <qmldesignertr.h>
 #include <rewriterview.h>
 #include <variantproperty.h>
 
@@ -151,12 +152,12 @@ Import3dDialog::Import3dDialog(
             importPaths = model->importPaths();
     }
 
-    QString targetDir = QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toString();
+    QString targetDir = QmlDesignerPlugin::instance()->documentManager().currentProjectDirPath().toUrlishString();
     if (targetDir.isEmpty())
         targetDir = defaulTargetDirectory;
 
     m_quick3DImportPath = QmlDesignerPlugin::instance()->documentManager()
-                              .generatedComponentUtils().import3dBasePath().toString();
+                              .generatedComponentUtils().import3dBasePath().toUrlishString();
 
     if (!m_quick3DFiles.isEmpty()) {
         QVector<QJsonObject> groups;
@@ -331,9 +332,7 @@ void Import3dDialog::updateImport(AbstractView *view,
                     QString sourcePath = jsonObj.value(
                                 Constants::QUICK_3D_ASSET_IMPORT_DATA_SOURCE_KEY).toString();
                     if (options.isEmpty() || sourcePath.isEmpty()) {
-                        errorMsg = QCoreApplication::translate(
-                                    "ModelNodeOperations",
-                                    "Asset import data file \"%1\" is invalid.").arg(jsonFileName);
+                        errorMsg = Tr::tr("Asset import data file \"%1\" is invalid.").arg(jsonFileName);
                     } else {
                         QFileInfo sourceInfo{sourcePath};
                         if (!sourceInfo.exists()) {
@@ -343,7 +342,7 @@ void Import3dDialog::updateImport(AbstractView *view,
                                     = ProjectExplorer::ProjectManager::projectForFile(
                                         Utils::FilePath::fromString(compFileName));
                             if (currentProject)
-                                initialPath = currentProject->projectDirectory().toString();
+                                initialPath = currentProject->projectDirectory().toUrlishString();
                             else
                                 initialPath = compFileInfo.absolutePath();
                             QStringList selectedFiles = QFileDialog::getOpenFileNames(
@@ -375,32 +374,26 @@ void Import3dDialog::updateImport(AbstractView *view,
                             importDlg->show();
 
                         } else {
-                            errorMsg = QCoreApplication::translate(
-                                        "ModelNodeOperations", "Unable to locate source scene \"%1\".")
-                                    .arg(sourceInfo.fileName());
+                            errorMsg = Tr::tr("Unable to locate source scene \"%1\".")
+                                           .arg(sourceInfo.fileName());
                         }
                     }
                 } else {
                     errorMsg = jsonError.errorString();
                 }
             } else {
-                errorMsg = QCoreApplication::translate("ModelNodeOperations",
-                                                       "Opening asset import data file \"%1\" failed.")
-                        .arg(jsonFileName);
+                errorMsg = Tr::tr("Opening asset import data file \"%1\" failed.").arg(jsonFileName);
             }
         } else {
-            errorMsg = QCoreApplication::translate("ModelNodeOperations",
-                                                   "Unable to resolve asset import path.");
+            errorMsg = Tr::tr("Unable to resolve asset import path.");
         }
     }
 
     if (!errorMsg.isEmpty()) {
-        QMessageBox::warning(
-                    qobject_cast<QWidget *>(Core::ICore::dialogParent()),
-                    QCoreApplication::translate("ModelNodeOperations", "Import Update Failed"),
-                    QCoreApplication::translate("ModelNodeOperations",
-                                                "Failed to update import.\nError:\n%1").arg(errorMsg),
-                    QMessageBox::Close);
+        QMessageBox::warning(qobject_cast<QWidget *>(Core::ICore::dialogParent()),
+                             Tr::tr("Import Update Failed"),
+                             Tr::tr("Failed to update import.\nError:\n%1").arg(errorMsg),
+                             QMessageBox::Close);
     }
 }
 
@@ -1005,8 +998,9 @@ Rectangle {
     m_model = m_view->model()->createModel("Item");
 #else
     m_model = QmlDesigner::Model::create("QtQuick/Item", 2, 1);
-    m_model->setFileUrl(m_previewFile.toUrl());
 #endif
+
+    m_model->setFileUrl(m_previewFile.toUrl());
 
     auto textDocument = std::make_unique<QTextDocument>(previewQml);
     auto modifier = std::make_unique<NotIndentingTextEditModifier>(textDocument.get(),

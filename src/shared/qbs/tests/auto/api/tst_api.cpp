@@ -71,11 +71,17 @@ public:
         qDebug("%s", qPrintable(error.toString()));
         warnings.push_back(error);
     }
+    void doPrintError(const qbs::ErrorInfo &error) override
+    {
+        qDebug("%s", qPrintable(error.toString()));
+        errors.push_back(error);
+    }
     void doPrintMessage(qbs::LoggerLevel, const QString &message, const QString &) override {
         output += '\n' + message;
     }
 
     QList<qbs::ErrorInfo> warnings;
+    QList<qbs::ErrorInfo> errors;
 };
 
 class BuildDescriptionReceiver : public QObject
@@ -167,6 +173,7 @@ void TestApi::initTestCase()
 void TestApi::init()
 {
     m_logSink->warnings.clear();
+    m_logSink->errors.clear();
     m_logSink->setLogLevel(qbs::LoggerInfo);
 }
 
@@ -2241,6 +2248,18 @@ void TestApi::newPatternMatch()
     QVERIFY(receiver.taskDescriptions.contains("Resolving"));
 }
 
+void TestApi::noAssertsInRelaxedMode()
+{
+    qbs::SetupProjectParameters setupParams = defaultSetupParameters(
+        "no-asserts-in-relaxed-mode/no-asserts-in-relaxed-mode.qbs");
+    setupParams.setProductErrorMode(qbs::ErrorHandlingMode::Relaxed);
+    setupParams.setPropertyCheckingMode(qbs::ErrorHandlingMode::Relaxed);
+    const std::unique_ptr<qbs::SetupProjectJob> job(
+        qbs::Project().setupProject(setupParams, m_logSink, nullptr));
+    waitForFinished(job.get());
+    QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
+}
+
 void TestApi::nonexistingProjectPropertyFromProduct()
 {
     qbs::SetupProjectParameters setupParams
@@ -2597,15 +2616,12 @@ void TestApi::relaxedModeRecovery()
                                                                         m_logSink, nullptr));
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
-    if (m_logSink->warnings.size() != 4) {
-        const auto errors = m_logSink->warnings;
-        for (const qbs::ErrorInfo &error : errors)
+    if (m_logSink->errors.size() != 4) {
+        for (const qbs::ErrorInfo &error : std::as_const(m_logSink->errors))
             qDebug() << error.toString();
     }
-    QCOMPARE(m_logSink->warnings.size(), 4);
-
-    const auto errors = m_logSink->warnings;
-    for (const qbs::ErrorInfo &error : errors) {
+    QCOMPARE(m_logSink->errors.size(), 4);
+    for (const qbs::ErrorInfo &error : std::as_const(m_logSink->errors)) {
         QVERIFY2(!error.toString().contains("ASSERT")
                  && (error.toString().contains("Dependency 'blubb' not found")
                      || error.toString().contains("Product 'p1' had errors and was disabled")
@@ -2741,26 +2757,32 @@ void TestApi::restoredWarnings()
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
     job.reset(nullptr);
-    QCOMPARE(toSet(m_logSink->warnings).size(), 5);
-    const auto beforeErrors = m_logSink->warnings;
-    for (const qbs::ErrorInfo &e : beforeErrors) {
+    QCOMPARE(toSet(m_logSink->warnings).size(), 1);
+    QVERIFY2(
+        m_logSink->warnings.first().toString().contains("Superfluous version"),
+        qPrintable(m_logSink->warnings.first().toString()));
+    QCOMPARE(toSet(m_logSink->errors).size(), 4);
+    for (const qbs::ErrorInfo &e : std::as_const(m_logSink->errors)) {
         const QString msg = e.toString();
-        QVERIFY2(msg.contains("Superfluous version")
-                 || msg.contains("Property 'blubb' is not declared")
-                 || msg.contains("this one comes from a thread")
-                 || msg.contains("Product 'theOtherProduct' had errors and was disabled")
-                 || msg.contains("Product 'theProduct' had errors and was disabled"),
-                 qPrintable(msg));
+        QVERIFY2(
+            msg.contains("Property 'blubb' is not declared")
+                || msg.contains("this one comes from a thread")
+                || msg.contains("Product 'theOtherProduct' had errors and was disabled")
+                || msg.contains("Product 'theProduct' had errors and was disabled"),
+            qPrintable(msg));
     }
     m_logSink->warnings.clear();
+    m_logSink->errors.clear();
 
     // Re-resolving with no changes: Errors come from the stored build graph.
     job.reset(qbs::Project().setupProject(setupParams, m_logSink, nullptr));
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
     job.reset(nullptr);
-    QCOMPARE(toSet(m_logSink->warnings).size(), 5);
+    QCOMPARE(toSet(m_logSink->warnings).size(), 1);
+    QCOMPARE(toSet(m_logSink->errors).size(), 4);
     m_logSink->warnings.clear();
+    m_logSink->errors.clear();
 
     // Re-resolving with changes: Errors come from the re-resolving, stored ones must be suppressed.
     QVariantMap overridenValues;
@@ -2770,12 +2792,15 @@ void TestApi::restoredWarnings()
     waitForFinished(job.get());
     QVERIFY2(!job->error().hasError(), qPrintable(job->error().toString()));
     job.reset(nullptr);
-    QCOMPARE(toSet(m_logSink->warnings).size(), 6); // One more for the additional group
-    const auto afterErrors = m_logSink->warnings;
-    for (const qbs::ErrorInfo &e : afterErrors) {
+    QCOMPARE(toSet(m_logSink->warnings).size(), 1);
+    QVERIFY2(
+        m_logSink->warnings.first().toString().contains("Superfluous version"),
+        qPrintable(m_logSink->warnings.first().toString()));
+    QCOMPARE(toSet(m_logSink->errors).size(), 5); // One more for the additional group
+    for (const qbs::ErrorInfo &e : std::as_const(m_logSink->errors)) {
         const QString msg = e.toString();
         QVERIFY2(
-            msg.contains("Superfluous version") || msg.contains("Property 'blubb' is not declared")
+            msg.contains("Property 'blubb' is not declared")
                 || msg.contains("blubb.txt' does not exist")
                 || msg.contains("this one comes from a thread")
                 || msg.contains("Product 'theOtherProduct' had errors and was disabled")
@@ -2784,6 +2809,75 @@ void TestApi::restoredWarnings()
             qPrintable(msg));
     }
     m_logSink->warnings.clear();
+    m_logSink->errors.clear();
+}
+
+void TestApi::restoreAndResolve()
+{
+    qbs::SetupProjectParameters setupParams = defaultSetupParameters("restore-and-resolve");
+    setupParams.setPropertyCheckingMode(qbs::ErrorHandlingMode::Relaxed);
+    setupParams.setProductErrorMode(qbs::ErrorHandlingMode::Relaxed);
+
+    // Initial resolving finishes with warnings due to syntax error.
+    std::unique_ptr<qbs::SetupProjectJob> resolveJob(
+        qbs::Project().setupProject(setupParams, m_logSink, nullptr));
+    waitForFinished(resolveJob.get());
+    QVERIFY2(!resolveJob->error().hasError(), qPrintable(resolveJob->error().toString()));
+    QVERIFY(!m_logSink->errors.isEmpty());
+    QVERIFY(resolveJob->project().projectData().products().isEmpty());
+
+    // Fix syntax error. Next attempt at resolving still fails, because the failed file is not
+    // in the list of build system files and therefore the default RestoreAndTrackChanges mode
+    // cannot detect any changes.
+    m_logSink->errors.clear();
+    REPLACE_IN_FILE("broken-product.qbs", "syntax error", "");
+    WAIT_FOR_NEW_TIMESTAMP();
+    resolveJob.reset(qbs::Project().setupProject(setupParams, m_logSink, nullptr));
+    waitForFinished(resolveJob.get());
+    QVERIFY2(!resolveJob->error().hasError(), qPrintable(resolveJob->error().toString()));
+    QVERIFY(!m_logSink->errors.isEmpty());
+    QVERIFY(resolveJob->project().projectData().products().isEmpty());
+
+    // Now force a new resolve, which should succeed.
+    m_logSink->errors.clear();
+    setupParams.setRestoreBehavior(qbs::SetupProjectParameters::RestoreAndResolve);
+    resolveJob.reset(qbs::Project().setupProject(setupParams, m_logSink, nullptr));
+    waitForFinished(resolveJob.get());
+    QVERIFY2(!resolveJob->error().hasError(), qPrintable(resolveJob->error().toString()));
+    QVERIFY(m_logSink->errors.isEmpty());
+    QCOMPARE(int(resolveJob->project().projectData().products().size()), 1);
+
+    // Build the product.
+    BuildDescriptionReceiver bdr;
+    std::unique_ptr<qbs::BuildJob> buildJob(
+        resolveJob->project().buildAllProducts(qbs::BuildOptions()));
+    connect(
+        buildJob.get(),
+        &qbs::BuildJob::reportCommandDescription,
+        &bdr,
+        &BuildDescriptionReceiver::handleDescription);
+    QVERIFY(waitForFinished(buildJob.get()));
+    QVERIFY2(!buildJob->error().hasError(), qPrintable(buildJob->error().toString()));
+    QVERIFY2(bdr.descriptions.contains("creating dummy.txt"), qPrintable(bdr.descriptions));
+    buildJob.reset(nullptr);
+
+    // Now force a new resolve again and verify that nothing gets rebuilt.
+    m_logSink->errors.clear();
+    bdr.descriptions.clear();
+    resolveJob.reset(qbs::Project().setupProject(setupParams, m_logSink, nullptr));
+    waitForFinished(resolveJob.get());
+    QVERIFY2(!resolveJob->error().hasError(), qPrintable(resolveJob->error().toString()));
+    QVERIFY(m_logSink->errors.isEmpty());
+    QCOMPARE(int(resolveJob->project().projectData().products().size()), 1);
+    buildJob.reset(resolveJob->project().buildAllProducts(qbs::BuildOptions()));
+    connect(
+        buildJob.get(),
+        &qbs::BuildJob::reportCommandDescription,
+        &bdr,
+        &BuildDescriptionReceiver::handleDescription);
+    QVERIFY(waitForFinished(buildJob.get()));
+    QVERIFY2(!buildJob->error().hasError(), qPrintable(buildJob->error().toString()));
+    QVERIFY2(bdr.descriptions.isEmpty(), qPrintable(bdr.descriptions));
 }
 
 void TestApi::ruleConflict()

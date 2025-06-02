@@ -8,7 +8,7 @@
 #include <projectexplorer/devicesupport/idevice.h>
 #include <projectexplorer/devicesupport/idevicefactory.h>
 
-#include <QMutex>
+#include <utils/synchronizedvalue.h>
 
 namespace Docker::Internal {
 
@@ -35,14 +35,12 @@ public:
     bool canCreateProcessModel() const override { return true; }
     bool hasDeviceTester() const override { return false; }
     ProjectExplorer::DeviceTester *createDeviceTester() override;
-    bool usableAsBuildDevice() const override;
 
     Utils::FilePath rootPath() const override;
-    Utils::FilePath filePath(const QString &pathOnDevice) const override;
 
     bool canMount(const Utils::FilePath &filePath) const override
     {
-        return !filePath.needsDevice() || filePath.isSameDevice(rootPath());
+        return filePath.isLocal() || filePath.isSameDevice(rootPath());
     }
 
     bool handlesFile(const Utils::FilePath &filePath) const override;
@@ -51,7 +49,7 @@ public:
 
     Utils::expected_str<Utils::Environment> systemEnvironmentWithError() const override;
 
-    Utils::expected_str<void> updateContainerAccess() const;
+    Utils::Result updateContainerAccess() const;
     void setMounts(const QStringList &mounts) const;
 
     bool prepareForBuild(const ProjectExplorer::Target *target) override;
@@ -94,8 +92,7 @@ public:
     void shutdownExistingDevices();
 
 private:
-    QMutex m_deviceListMutex;
-    std::vector<std::weak_ptr<DockerDevice>> m_existingDevices;
+    Utils::SynchronizedValue<std::vector<std::weak_ptr<DockerDevice>>> m_existingDevices;
 };
 
 } // namespace Docker::Internal

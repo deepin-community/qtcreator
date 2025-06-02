@@ -21,6 +21,7 @@ Item {
     property alias showLeftBorder: leftBorder.visible
     property alias showCloseButton: closeButton.visible
     property alias closeButtonToolTip: closeButton.tooltip
+    property alias closeButtonIcon: closeButton.icon
     property alias showEyeButton: eyeButton.visible
     property alias eyeButtonToolTip: eyeButton.tooltip
     property alias spacing: column.spacing
@@ -38,6 +39,8 @@ Item {
         anchors.verticalCenter: parent?.verticalCenter
         textFormat: Text.RichText
     }
+
+    property Item icons
 
     property int leftPadding: StudioTheme.Values.sectionLeftPadding
     property int rightPadding: 0
@@ -212,6 +215,13 @@ Item {
                     section.eyeEnabled = !section.eyeEnabled
                     section.eyeButtonClicked()
                 }
+            }
+
+            Item {
+                id: iconsContent
+                height: header.height
+                children: [ section.icons ]
+                Layout.preferredWidth: childrenRect.width
             }
 
             IconButton {

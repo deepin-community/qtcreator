@@ -3,6 +3,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import HelperWidgets
 import StudioControls as StudioControls
 import StudioTheme as StudioTheme
@@ -26,7 +27,7 @@ Rectangle {
         acceptedButtons: Qt.LeftButton
 
         tooltip: modelData.canBeAdded ? modelData.nodeDescription
-                                      : qsTr("Existing effect has conflicting properties, this effect cannot be added.")
+                                      : qsTr("An effect with same properties already exists, this effect cannot be added.")
 
         onClicked: {
             if (modelData.canBeAdded)

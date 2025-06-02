@@ -10,6 +10,7 @@ option(QTC_USE_QML_DESIGNER_LITE "Use Qml Designer Lite" ${BUILD_NOT_DESIGNSTUDI
 add_feature_info("Qml Designer Lite" ${QTC_USE_QML_DESIGNER_LITE} "")
 
 option(USE_PROJECTSTORAGE "Use ProjectStorage" ${QTC_USE_QML_DESIGNER_LITE})
+add_feature_info("Use project storage" ${USE_PROJECTSTORAGE} "")
 option(DETACH_DISABLED_VIEWS "Detach disabled views" OFF)
 
 env_with_default("QTC_ENABLE_PROJECT_STORAGE_TRACING" ENV_QTC_ENABLE_PROJECT_STORAGE_TRACING OFF)
@@ -32,7 +33,17 @@ env_with_default("QTC_ENABLE_METAINFO_TRACING" ENV_QTC_ENABLE_METAINFO_TRACING O
 option(ENABLE_METAINFO_TRACING "Enable meta info tracing" ${ENV_QTC_ENABLE_METAINFO_TRACING})
 add_feature_info("Meta info tracing" ${ENABLE_METAINFO_TRACING} "")
 
+env_with_default("QDS_DESIGNVIEWER_USE_STAGING" ENV_QDS_DESIGNVIEWER_USE_STAGING OFF)
+option(QDS_DESIGNVIEWER_USE_STAGING "Use staging API URL for Design Viewer" ${ENV_QDS_DESIGNVIEWER_USE_STAGING})
+add_feature_info("Use staging API URL for Design Viewer" ${QDS_DESIGNVIEWER_USE_STAGING} "")
+
+if(QDS_DESIGNVIEWER_USE_STAGING)
+  add_definitions(-DQDS_DESIGNVIEWER_USE_STAGING)
+endif()
+
 add_subdirectory(libs)
+
+find_package(Qt6 QUIET COMPONENTS WebSockets WebEngineWidgets)
 
 add_qtc_plugin(QmlDesigner
   PLUGIN_RECOMMENDS QmlPreview
@@ -52,19 +63,21 @@ add_qtc_plugin(QmlDesigner
     QmlJS LanguageUtils QmlEditorWidgets AdvancedDockingSystem
     Qt::QuickWidgets Qt::CorePrivate Qt::Xml Qt::Svg Sqlite Zip Qt::GuiPrivate
   PUBLIC_DEPENDS
-    QmlDesignerUtils QmlPuppetCommunication QmlDesignerCore
+    QmlDesignerUtils QmlPuppetCommunication QmlDesignerCore DesignSystem
   DEFINES
     IDE_LIBRARY_BASENAME=\"${IDE_LIBRARY_BASE_PATH}\"
     SHARE_QML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../share/qtcreator/qmldesigner"
-    $<$<BOOL:${USE_PROJECTSTORAGE}>:QDS_USE_PROJECTSTORAGE>
     $<$<BOOL:${QTC_USE_QML_DESIGNER_LITE}>:QTC_USE_QML_DESIGNER_LITE>
     $<$<BOOL:${DETACH_DISABLED_VIEWS}>:DETACH_DISABLED_VIEWS>
+  PUBLIC_DEFINES
+    $<$<BOOL:${USE_PROJECTSTORAGE}>:QDS_USE_PROJECTSTORAGE>
   INCLUDES
     ${CMAKE_CURRENT_LIST_DIR}/libs
     ${CMAKE_CURRENT_LIST_DIR}/components
     ${CMAKE_CURRENT_LIST_DIR}/components/import3d
     ${CMAKE_CURRENT_LIST_DIR}/components/assetslibrary
     ${CMAKE_CURRENT_LIST_DIR}/components/debugview
+    ${CMAKE_CURRENT_LIST_DIR}/components/designsystemview
     ${CMAKE_CURRENT_LIST_DIR}/components/edit3d
     ${CMAKE_CURRENT_LIST_DIR}/components/formeditor
     ${CMAKE_CURRENT_LIST_DIR}/components/integration
@@ -229,9 +242,17 @@ extend_qtc_plugin(QmlDesigner
 )
 
 extend_qtc_plugin(QmlDesigner
+  SOURCES_PREFIX components/designsystemview
+  SOURCES
+    collectionmodel.h collectionmodel.cpp
+    designsysteminterface.h designsysteminterface.cpp
+    designsystemview.cpp designsystemview.h
+    designsystemwidget.cpp designsystemwidget.h
+)
+
+extend_qtc_plugin(QmlDesigner
   SOURCES_PREFIX components/edit3d
   SOURCES
-  cameraviewwidgetaction.cpp cameraviewwidgetaction.h
   edit3dview.cpp edit3dview.h
   edit3dviewconfig.h
   edit3dwidget.cpp edit3dwidget.h
@@ -726,11 +747,40 @@ extend_qtc_plugin(QmlDesigner
 )
 
 extend_qtc_plugin(QmlDesigner
-  SOURCES_PREFIX components/designsystem
+  CONDITION TARGET Qt::WebSockets
+  DEFINES QT_WEBSOCKET_ENABLED
+  DEPENDS
+    Qt::WebSockets
+)
+
+extend_qtc_plugin(QmlDesigner
+  SOURCES_PREFIX components/devicesharing
+  DEPENDS
+    QtCreator::QrCodeGenerator
   SOURCES
-  dsconstants.h
-  dsthememanager.h dsthememanager.cpp
-  dsthemegroup.cpp dsthemegroup.h
+    device.cpp device.h
+    deviceinfo.cpp deviceinfo.h
+    devicemanager.cpp devicemanager.h
+    devicemanagermodel.cpp devicemanagermodel.h
+    devicemanagerwidget.cpp devicemanagerwidget.h
+    websocketmock.h
+)
+
+extend_qtc_plugin(QmlDesigner
+  SOURCES_PREFIX components/runmanager
+  SOURCES
+    runmanager.cpp
+    runmanager.h
+)
+
+extend_qtc_plugin(QmlDesigner
+  CONDITION TARGET Qt::WebEngineWidgets
+  SOURCES_PREFIX components/designviewer
+  DEPENDS
+    Qt::WebEngineWidgets
+  PUBLIC_DEFINES DVCONNECTOR_ENABLED
+  SOURCES
+    dvconnector.cpp dvconnector.h
 )
 
 add_qtc_plugin(assetexporterplugin

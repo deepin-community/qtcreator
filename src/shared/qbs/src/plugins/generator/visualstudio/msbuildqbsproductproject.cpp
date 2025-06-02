@@ -151,10 +151,11 @@ void MSBuildQbsProductProject::addConfiguration(const GeneratableProject &projec
     // General - General
     // We need a trailing backslash for $(OutDir); See also the VS documentation:
     // https://docs.microsoft.com/en-us/cpp/ide/common-macros-for-build-commands-and-properties
-    propertyGroup1->appendProperty(QStringLiteral("OutDir"), relativeTargetDir + QLatin1Char('\\'));
+    propertyGroup1->appendProperty(
+        QStringLiteral("OutDir"), QString(relativeTargetDir + QLatin1Char('\\')));
     propertyGroup1->appendProperty(QStringLiteral("TargetName"), productData.targetName());
-    propertyGroup1->appendProperty(QStringLiteral("PlatformToolset"),
-                                   versionInfo().platformToolsetVersion());
+    propertyGroup1->appendProperty(
+        QStringLiteral("PlatformToolset"), versionInfo().platformToolsetVersion());
     propertyGroup1->appendProperty(QStringLiteral("ConfigurationType"), QStringLiteral("Makefile"));
 
     // VS possible values: Unicode|MultiByte|NotSet
@@ -219,16 +220,19 @@ void MSBuildQbsProductProject::addConfiguration(const GeneratableProject &projec
 
     // NMake - General
     // Skip configuration name, that's handled in qbs-shared.props
-    const auto params = Internal::shellQuote(buildConfigurationCommandLine.mid(1),
-                                                Internal::HostOsInfo::HostOsWindows);
-    propertyGroup1->appendProperty(QStringLiteral("NMakeBuildCommandLine"),
-                                   QStringLiteral("$(QbsBuildCommandLine) ") + params);
-    propertyGroup1->appendProperty(QStringLiteral("NMakeReBuildCommandLine"),
-                                   QStringLiteral("$(QbsReBuildCommandLine) ") + params);
-    propertyGroup1->appendProperty(QStringLiteral("NMakeCleanCommandLine"),
-                                   QStringLiteral("$(QbsCleanCommandLine) ") + params);
-    propertyGroup1->appendProperty(QStringLiteral("NMakeOutput"),
-                                   QStringLiteral("$(OutDir)$(TargetName)$(TargetExt)"));
+    const auto params = Internal::shellQuote(
+        buildConfigurationCommandLine.mid(1), Internal::HostOsInfo::HostOsWindows);
+    propertyGroup1->appendProperty(
+        QStringLiteral("NMakeBuildCommandLine"),
+        QString(QStringLiteral("$(QbsBuildCommandLine) ") + params));
+    propertyGroup1->appendProperty(
+        QStringLiteral("NMakeReBuildCommandLine"),
+        QString(QStringLiteral("$(QbsReBuildCommandLine) ") + params));
+    propertyGroup1->appendProperty(
+        QStringLiteral("NMakeCleanCommandLine"),
+        QString(QStringLiteral("$(QbsCleanCommandLine) ") + params));
+    propertyGroup1->appendProperty(
+        QStringLiteral("NMakeOutput"), QStringLiteral("$(OutDir)$(TargetName)$(TargetExt)"));
 
     // NMake - IntelliSense
     propertyGroup1->appendProperty(QStringLiteral("NMakePreprocessorDefinitions"),
@@ -278,10 +282,9 @@ void MSBuildQbsProductProject::addItemDefGroup(const Project &project,
     const auto compile = new MSBuildClCompile(itemDefGroup);
 
     // C++ - General
-    compile->appendProperty(QStringLiteral("AdditionalIncludeDirectories"),
-                            includePaths.join(sep)
-                                + sep
-                                + QStringLiteral("%(AdditionalIncludeDirectories)"));
+    compile->appendProperty(
+        QStringLiteral("AdditionalIncludeDirectories"),
+        QString(includePaths.join(sep) + sep + QStringLiteral("%(AdditionalIncludeDirectories)")));
     if (warningLevel == QStringLiteral("none"))
         compile->appendProperty(QStringLiteral("WarningLevel"),
                                 QStringLiteral("TurnOffAllWarnings"));
@@ -299,10 +302,9 @@ void MSBuildQbsProductProject::addItemDefGroup(const Project &project,
                                 : QStringLiteral("MaxSpeed"));
 
     // C++ - Preprocessor
-    compile->appendProperty(QStringLiteral("PreprocessorDefinitions"),
-                            cppDefines.join(sep)
-                                + sep
-                                + QStringLiteral("%(PreprocessorDefinitions)"));
+    compile->appendProperty(
+        QStringLiteral("PreprocessorDefinitions"),
+        QString(cppDefines.join(sep) + sep + QStringLiteral("%(PreprocessorDefinitions)")));
 
     // C++ - Code Generation
     compile->appendProperty(QStringLiteral("RuntimeLibrary"), debugBuild
@@ -317,10 +319,14 @@ void MSBuildQbsProductProject::addItemDefGroup(const Project &project,
                                                    QStringLiteral("libraryPaths")).join(sep));
 
     // Linker - Input
-    link->appendProperty(QStringLiteral("AdditionalDependencies"),
-        properties.getModulePropertiesAsStringList(QStringLiteral("cpp"),
-                                                   QStringLiteral("staticLibraries")).join(sep)
-                                            + sep + QStringLiteral("%(AdditionalDependencies)"));
+    link->appendProperty(
+        QStringLiteral("AdditionalDependencies"),
+        QString(
+            properties
+                .getModulePropertiesAsStringList(
+                    QStringLiteral("cpp"), QStringLiteral("staticLibraries"))
+                .join(sep)
+            + sep + QStringLiteral("%(AdditionalDependencies)")));
 
     // Linker - Debugging
     link->appendProperty(QStringLiteral("GenerateDebugInformation"),
@@ -362,9 +368,9 @@ void MSBuildQbsProductProject::addFiles(const GeneratableProject &project,
 
     // Create a ClCompile item for each source file, keeping track of which configurations that
     // file's containing group is enabled in
-    QMapIterator<QString, qbs::ProductData> productDataIt(product.data);
-    while (productDataIt.hasNext()) {
-        productDataIt.next();
+    for (auto productDataIt = product.data.cbegin(), end = product.data.cend();
+         productDataIt != end;
+         ++productDataIt) {
         const auto groups = productDataIt.value().groups();
         for (const auto &group : groups) {
             const auto sourceArtifacts = group.allSourceArtifacts();
@@ -392,17 +398,15 @@ void MSBuildQbsProductProject::addFiles(const GeneratableProject &project,
     // Add ExcludedFromBuild item metadata to each file for each configuration
     // where that file's containing group is disabled
     for (const auto &sourceFileNode : sourceFileNodes) {
-        QMapIterator<QString, qbs::Project> projIt(project.projects);
-        while (projIt.hasNext()) {
-            projIt.next();
-            if (!sourceFileEnabledConfigurations[sourceFileNode.first].contains(projIt.key())) {
+        for (auto it = project.projects.cbegin(), end = project.projects.cend(); it != end; ++it) {
+            if (!sourceFileEnabledConfigurations[sourceFileNode.first].contains(it.key())) {
                 const auto metadata = new MSBuildItemMetadata(
-                            QStringLiteral("ExcludedFromBuild"),
-                            QStringLiteral("true"),
-                            sourceFileNode.second);
-                metadata->setCondition(QStringLiteral("'$(Configuration)|$(Platform)'=='")
-                    + MSBuildUtils::fullName(projIt.value())
-                    + QStringLiteral("'"));
+                    QStringLiteral("ExcludedFromBuild"),
+                    QStringLiteral("true"),
+                    sourceFileNode.second);
+                metadata->setCondition(
+                    QStringLiteral("'$(Configuration)|$(Platform)'=='")
+                    + MSBuildUtils::fullName(it.value()) + QStringLiteral("'"));
             }
         }
     }

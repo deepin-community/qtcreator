@@ -17,13 +17,14 @@
 
 using namespace ProjectExplorer;
 using namespace Utils;
+using namespace std::string_view_literals;
 
 namespace Lua::Internal {
 
 void setupProjectModule()
 {
     registerProvider("Project", [](sol::state_view lua) -> sol::object {
-        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
+        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
         QObject *guard = pluginSpec->connectionGuard.get();
 
         sol::table result = lua.create_table();
@@ -53,13 +54,13 @@ void setupProjectModule()
             "directory",
             sol::property(&Project::projectDirectory),
             "activeRunConfiguration",
-            [](Project *project) { return project->activeTarget()->activeRunConfiguration(); });
+            [](Project *project) { return project->activeRunConfiguration(); });
 
         result["startupProject"] = [] { return ProjectManager::instance()->startupProject(); };
 
         result["canRunStartupProject"] =
             [](const QString &mode) -> std::pair<bool, std::variant<QString, sol::lua_nil_t>> {
-            auto result = ProjectExplorerPlugin::canRunStartupProject(Id::fromString(mode));
+            const auto result = ProjectExplorerPlugin::canRunStartupProject(Id::fromString(mode));
             if (result)
                 return std::make_pair(true, sol::lua_nil);
             return std::make_pair(false, result.error());
@@ -72,7 +73,7 @@ void setupProjectModule()
                 if (!project)
                     throw sol::error("No startup project");
 
-                auto runConfiguration = project->activeTarget()->activeRunConfiguration();
+                auto runConfiguration = project->activeRunConfiguration();
 
                 if (!runConfiguration)
                     throw sol::error("No active run configuration");
@@ -95,7 +96,7 @@ void setupProjectModule()
                 auto startRun = [rc = std::move(rc)]() mutable {
                     if (!rc->createMainWorker())
                         return;
-                    ProjectExplorerPlugin::startRunControl(rc.release());
+                    rc.release()->start();
                 };
 
                 if (status == BuildForRunConfigStatus::Building) {
@@ -122,7 +123,7 @@ void setupProjectModule()
                     if (rc && rc->displayName() == displayName) {
                         stoppedCount++;
 
-                        if (force.has_value() && force.value()) {
+                        if (force.has_value() && *force) {
                             rc->forceStop();
                         } else {
                             rc->initiateStop();

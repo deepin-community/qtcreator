@@ -64,12 +64,12 @@ ProjectExplorer::Target *activeTarget(ProjectExplorer::Project *project)
 
 QString previewDefaultImagePath()
 {
-    return Core::ICore::resourcePath("qmldesigner/welcomepage/images/newThumbnail.png").toString();
+    return Core::ICore::resourcePath("qmldesigner/welcomepage/images/newThumbnail.png").toUrlishString();
 }
 
 QString previewBrokenImagePath()
 {
-    return Core::ICore::resourcePath("qmldesigner/welcomepage/images/noPreview.png").toString();
+    return Core::ICore::resourcePath("qmldesigner/welcomepage/images/noPreview.png").toUrlishString();
 }
 
 ::QmlProjectManager::QmlBuildSystem *getQmlBuildSystem(::ProjectExplorer::Target *target)
@@ -128,7 +128,7 @@ public:
 
 public:
     Sqlite::Database database{Utils::PathString{
-                                  Core::ICore::cacheResourcePath("imagecache-v2.db").toString()},
+                                  Core::ICore::cacheResourcePath("imagecache-v2.db").toUrlishString()},
                               Sqlite::JournalMode::Wal,
                               Sqlite::LockingMode::Normal};
     ImageCacheStorage<Sqlite::Database> storage{database};
@@ -162,7 +162,7 @@ public:
 
 public:
     Sqlite::Database database{Utils::PathString{
-                                  Core::ICore::cacheResourcePath("previewcache.db").toString()},
+                                  Core::ICore::cacheResourcePath("previewcache.db").toUrlishString()},
                               Sqlite::JournalMode::Wal,
                               Sqlite::LockingMode::Normal};
     ImageCacheStorage<Sqlite::Database> storage{database};
@@ -179,13 +179,13 @@ class ProjectStorageData
 {
 public:
     ProjectStorageData(::ProjectExplorer::Project *project, PathCacheType &pathCache)
-        : database{project->projectDirectory().pathAppended("projectstorage.db").toString()}
+        : database{project->projectDirectory().pathAppended("projectstorage.db").toUrlishString()}
         , errorNotifier{pathCache}
         , fileSystem{pathCache}
         , qmlDocumentParser{storage, pathCache}
         , pathWatcher{pathCache, fileSystem, &updater}
         , projectPartId{ProjectPartId::create(
-              pathCache.sourceId(SourcePath{project->projectDirectory().toString() + "/."}).internalId())}
+              pathCache.sourceId(SourcePath{project->projectDirectory().toUrlishString() + "/."}).internalId())}
         , updater{fileSystem,
                   storage,
                   fileStatusCache,
@@ -193,6 +193,7 @@ public:
                   qmlDocumentParser,
                   qmlTypesParser,
                   pathWatcher,
+                  errorNotifier,
                   projectPartId}
     {}
     Sqlite::Database database;
@@ -202,7 +203,7 @@ public:
     FileStatusCache fileStatusCache{fileSystem};
     QmlDocumentParser qmlDocumentParser;
     QmlTypesParser qmlTypesParser{storage};
-    ProjectStoragePathWatcher<QFileSystemWatcher, QTimer, ProjectStorageUpdater::PathCache> pathWatcher;
+    ProjectStoragePathWatcher<QFileSystemWatcher, QTimer, PathCacheType> pathWatcher;
     ProjectPartId projectPartId;
     ProjectStorageUpdater updater;
 };
@@ -265,7 +266,7 @@ public:
                                         Sqlite::LockingMode::Normal};
     QmlDesigner::SourcePathStorage sourcePathStorage{sourcePathDatabase,
                                                      sourcePathDatabase.isInitialized()};
-    PathCacheType pathCache{sourcePathStorage};
+    PathCache pathCache{sourcePathStorage};
 };
 
 QmlDesignerProjectManager::QmlDesignerProjectManager(ExternalDependenciesInterface &externalDependencies)
@@ -322,12 +323,12 @@ AsynchronousImageCache &QmlDesignerProjectManager::asynchronousImageCache()
 }
 
 namespace {
-[[maybe_unused]] ProjectStorage *dummyProjectStorage()
+[[maybe_unused]] ProjectStorageType *dummyProjectStorage()
 {
     return nullptr;
 }
 
-[[maybe_unused]] ProjectStorageUpdater::PathCache *dummyPathCache()
+[[maybe_unused]] PathCacheType *dummyPathCache()
 {
     return nullptr;
 }
@@ -354,26 +355,13 @@ void QmlDesignerProjectManager::editorsClosed(const QList<::Core::IEditor *> &) 
 
 namespace {
 
-QtSupport::QtVersion *getQtVersion(::ProjectExplorer::Target *target)
-{
-    if (target)
-        return QtSupport::QtKitAspect::qtVersion(target->kit());
-
-    return {};
-}
-
-[[maybe_unused]] QtSupport::QtVersion *getQtVersion(::ProjectExplorer::Project *project)
-{
-    return getQtVersion(project->activeTarget());
-}
-
-Utils::FilePath qmlPath(::ProjectExplorer::Target *target)
+QString qmlPath(::ProjectExplorer::Target *target)
 {
     auto qt = QtSupport::QtKitAspect::qtVersion(target->kit());
     if (qt)
-        return qt->qmlPath();
+        return qt->qmlPath().path();
 
-    return {};
+    return QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
 }
 
 [[maybe_unused]] void projectQmldirPaths(::ProjectExplorer::Target *target, QStringList &qmldirPaths)
@@ -388,7 +376,7 @@ Utils::FilePath qmlPath(::ProjectExplorer::Target *target)
 [[maybe_unused]] void qtQmldirPaths(::ProjectExplorer::Target *target, QStringList &qmldirPaths)
 {
     if constexpr (useProjectStorage()) {
-        auto qmlRootPath = qmlPath(target).toString();
+        auto qmlRootPath = qmlPath(target);
         qmldirPaths.push_back(qmlRootPath + "/QtQml");
         qmldirPaths.push_back(qmlRootPath + "/QtQuick");
         qmldirPaths.push_back(qmlRootPath + "/QtQuick3D");
@@ -443,13 +431,13 @@ Utils::FilePath qmlPath(::ProjectExplorer::Target *target)
     QStringList qmldirPaths;
     qmldirPaths.reserve(2);
 
-    const QString qmlRootPath = qmlPath(target).toString();
+    const QString qmlRootPath = qmlPath(target);
 
     qmldirPaths.append(qmlRootPath + "/builtins.qmltypes");
     qmldirPaths.append(qmlRootPath + "/jsroot.qmltypes");
 
     qmldirPaths.append(
-        Core::ICore::resourcePath("qmldesigner/projectstorage/fake.qmltypes").toString());
+        Core::ICore::resourcePath("qmldesigner/projectstorage/fake.qmltypes").toUrlishString());
 
     return qmldirPaths;
 }
@@ -465,7 +453,7 @@ Utils::FilePath qmlPath(::ProjectExplorer::Target *target)
     qmldirPaths.append(qmlRootPath + "/jsroot.qmltypes");
 
     qmldirPaths.append(
-        Core::ICore::resourcePath("qmldesigner/projectstorage/fake.qmltypes").toString());
+        Core::ICore::resourcePath("qmldesigner/projectstorage/fake.qmltypes").toUrlishString());
 
     return qmldirPaths;
 }
@@ -477,12 +465,12 @@ QString propertyEditorResourcesPath()
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
     }
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 QString qtCreatorItemLibraryPath()
 {
-    return Core::ICore::resourcePath("qmldesigner/itemLibrary").toString();
+    return Core::ICore::resourcePath("qmldesigner/itemLibrary").toUrlishString();
 }
 
 } // namespace
@@ -529,7 +517,7 @@ void QmlDesignerProjectManager::generatePreview()
 
     if (qmlBuildSystem) {
         m_previewImageCacheData->collector.setTarget(m_projectData->activeTarget);
-        m_previewImageCacheData->factory.generate(qmlBuildSystem->mainFilePath().toString().toUtf8());
+        m_previewImageCacheData->factory.generate(qmlBuildSystem->mainFilePath().toUrlishString().toUtf8());
     }
 }
 
@@ -617,16 +605,19 @@ void QmlDesignerProjectManager::update()
     if (!m_projectData || !m_projectData->projectStorageData)
         return;
 
-    if constexpr (isUsingQmlDesignerLite()) {
-        m_projectData->projectStorageData->updater.update({directoriesForLiteDesigner(),
-                                                           qmlTypesForLiteDesigner(),
-                                                           propertyEditorResourcesPath(),
-                                                           {qtCreatorItemLibraryPath()}});
-    } else {
-        m_projectData->projectStorageData->updater.update({directories(m_projectData->activeTarget),
-                                                           qmlTypes(m_projectData->activeTarget),
-                                                           propertyEditorResourcesPath(),
-                                                           {qtCreatorItemLibraryPath()}});
+    try {
+        if constexpr (isUsingQmlDesignerLite()) {
+            m_projectData->projectStorageData->updater.update({directoriesForLiteDesigner(),
+                                                               qmlTypesForLiteDesigner(),
+                                                               propertyEditorResourcesPath(),
+                                                               {qtCreatorItemLibraryPath()}});
+        } else {
+            m_projectData->projectStorageData->updater.update({directories(m_projectData->activeTarget),
+                                                               qmlTypes(m_projectData->activeTarget),
+                                                               propertyEditorResourcesPath(),
+                                                               {qtCreatorItemLibraryPath()}});
+        }
+    } catch (const std::exception &) {
     }
 }
 

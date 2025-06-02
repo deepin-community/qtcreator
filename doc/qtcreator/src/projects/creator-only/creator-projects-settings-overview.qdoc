@@ -56,7 +56,7 @@
     If you selected CMake as the build system for the project, a
     \e {Release with Debug Information} build configuration is also available.
     It is similar to a \e profile configuration, but with
-    \l{Debugging Qt Quick Projects}{QML debugging and profiling} explicitly turned off.
+    \l{Debugging Qt Quick projects}{QML debugging and profiling} explicitly turned off.
     You can also use a \e {Minimum Size Release} build configuration to create the
     final installation binary package. It is a release build that makes the size
     of the binary package as small as possible, even if this makes the
@@ -72,7 +72,7 @@
     \image qtcreator-settings-run-desktop.webp {Run Settings}
 
     To prevent \QC from automatically creating run configurations, select
-    \preferences > \uicontrol {Build & Run}, and then deselect the
+    \preferences > \uicontrol {Build & Run}, and then clear the
     \uicontrol {Create suitable run configurations automatically} check box.
 
     \section1 Overriding Global Preferences
@@ -91,10 +91,9 @@
                 \li \l{Specify dependencies}{Dependencies}
                 \li \l{Document code}{Documentation Comments}
                 \li \l{Specify editor settings}{Editor}
-                \li \l{Specify the environment for projects}{Environment}
+                \li \l{Specify the environment for projects}{Project Environment}
                 \li \l{Link projects with GitLab}{GitLab}
-                \li \l{Configure language server workspace}{Language Server}
-                \li \l{Turn on or off \QMLLS for a project}{Qt Quick}
+                \li \l{Configure language servers for projects}{Language Server}
                 \li \l{Specify settings for quick fixes}{Quick Fixes}
                 \li \l{Apply filters before scanning for tests}{Testing}
                 \li \l{Exclude files from to-do lists}{To-Do} (experimental)

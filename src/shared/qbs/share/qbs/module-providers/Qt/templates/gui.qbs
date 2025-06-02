@@ -18,7 +18,7 @@ QtModule {
         Artifact {
             filePath: FileInfo.joinPaths(input.moduleProperty("Qt.core", "generatedHeadersDir"),
                                          'ui_' + input.completeBaseName + '.h')
-            fileTags: ["hpp"]
+            fileTags: ["hpp", "qt.untranslatable"]
         }
 
         prepare: {
@@ -34,6 +34,7 @@ QtModule {
     }
 
     property string defaultQpaPlugin: @defaultQpaPlugin@
+    version: @version@
     architectures: @archs@
     targetPlatform: @targetPlatform@
     staticLibsDebug: @staticLibsDebug@

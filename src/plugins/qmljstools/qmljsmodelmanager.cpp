@@ -16,7 +16,7 @@
 
 #include <projectexplorer/buildconfiguration.h>
 #include <projectexplorer/buildsystem.h>
-#include <projectexplorer/kitaspects.h>
+#include <projectexplorer/environmentkitaspect.h>
 #include <projectexplorer/kitmanager.h>
 #include <projectexplorer/project.h>
 #include <projectexplorer/projectexplorerconstants.h>
@@ -57,11 +57,8 @@ namespace Internal {
 
 static void setupProjectInfoQmlBundles(ModelManagerInterface::ProjectInfo &projectInfo)
 {
-    Target *activeTarget = nullptr;
-    if (projectInfo.project)
-        activeTarget = projectInfo.project->activeTarget();
-    Kit *activeKit = activeTarget ? activeTarget->kit() : KitManager::defaultKit();
-    const QHash<QString, QString> replacements = {{QLatin1String("$(QT_INSTALL_QML)"), projectInfo.qtQmlPath.toString()}};
+    Kit *activeKit = projectInfo.project ? projectInfo.project->activeKit() : KitManager::defaultKit();
+    const QHash<QString, QString> replacements = {{QLatin1String("$(QT_INSTALL_QML)"), projectInfo.qtQmlPath.toUrlishString()}};
 
     for (IBundleProvider *bp : IBundleProvider::allBundleProviders())
         bp->mergeBundlesForKit(activeKit, projectInfo.activeBundle, replacements);
@@ -88,18 +85,16 @@ static void findAllQrcFiles(const FilePath &filePath, FilePaths &out)
             out.append(path.canonicalPath());
             return IterationPolicy::Continue;
         },
-        {{"*.qrc"}, QDir::Files});
+        {{"*.qrc"}, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories});
 }
 
 static FilePaths findGeneratedQrcFiles(const ModelManagerInterface::ProjectInfo &pInfo,
                                        const FilePaths &hiddenRccFolders)
 {
     FilePaths result;
-    // Search in Application Directories for directories named ".rcc"
-    // and add all .qrc files in there to the resource file list.
+    // Search recursively in Application Directories for .qrc files.
     for (const Utils::FilePath &path : pInfo.applicationDirectories) {
-        Utils::FilePath generatedQrcDir = path.pathAppended(".rcc");
-        findAllQrcFiles(generatedQrcDir, result);
+        findAllQrcFiles(path, result);
     }
 
     for (const Utils::FilePath &hiddenRccFolder : hiddenRccFolders) {
@@ -115,7 +110,6 @@ ModelManagerInterface::ProjectInfo ModelManager::defaultProjectInfoForProject(
     ModelManagerInterface::ProjectInfo projectInfo;
     projectInfo.project = project;
     projectInfo.qmlDumpEnvironment = Utils::Environment::systemEnvironment();
-    Target *activeTarget = nullptr;
     if (project) {
         using namespace Utils::Constants;
         const QSet<QString> qmlTypeNames = { QML_MIMETYPE ,
@@ -131,14 +125,14 @@ ModelManagerInterface::ProjectInfo ModelManager::defaultProjectInfoForProject(
                     && qmlTypeNames.contains(Utils::mimeTypeForFile(fn->filePath(),
                                                                     MimeMatchMode::MatchExtension).name());
         });
-        activeTarget = project->activeTarget();
     }
-    Kit *activeKit = activeTarget ? activeTarget->kit() : KitManager::defaultKit();
-    QtSupport::QtVersion *qtVersion = QtSupport::QtKitAspect::qtVersion(activeKit);
+    Kit *activeKit = ProjectExplorer::activeKit(project);
+    Kit *kit = activeKit ? activeKit : KitManager::defaultKit();
+    QtSupport::QtVersion *qtVersion = QtSupport::QtKitAspect::qtVersion(kit);
 
     projectInfo.tryQmlDump = false;
 
-    if (activeTarget) {
+    if (activeKit) {
         FilePath baseDir;
         auto addAppDir = [&baseDir, &projectInfo](const FilePath &mdir) {
             auto dir = mdir.cleanPath();
@@ -154,7 +148,7 @@ ModelManagerInterface::ProjectInfo ModelManager::defaultProjectInfoForProject(
                 projectInfo.applicationDirectories.append(dir);
         };
 
-        if (BuildConfiguration *bc = activeTarget->activeBuildConfiguration()) {
+        if (BuildConfiguration *bc = project->activeBuildConfiguration()) {
             // Append QML2_IMPORT_PATH if it is defined in build configuration.
             // It enables qmlplugindump to correctly dump custom plugins or other dependent
             // plugins that are not installed in default Qt qml installation directory.
@@ -174,7 +168,7 @@ ModelManagerInterface::ProjectInfo ModelManager::defaultProjectInfoForProject(
         // For an IDE things are a bit more complicated because source files might be edited,
         // and the directory of the executable might be outdated.
         // Here we try to get the directory of the executable, adding all targets
-        auto *bs = activeTarget->buildSystem();
+        auto *bs = project->activeBuildSystem();
         const auto appTargets = bs ? bs->applicationTargets() : QList<BuildTargetInfo>{};
         for (const auto &target : appTargets) {
             if (target.targetFilePath.isEmpty())
@@ -205,7 +199,7 @@ ModelManagerInterface::ProjectInfo ModelManager::defaultProjectInfoForProject(
         auto v = qtVersion->qtVersion();
         projectInfo.qmllsPath = ModelManagerInterface::qmllsForBinPath(qtVersion->hostBinPath(), v);
         projectInfo.qtVersionString = qtVersion->qtVersionString();
-    } else if (!activeKit || !activeKit->value(QtSupport::Constants::FLAGS_SUPPLIES_QTQUICK_IMPORT_PATH, false).toBool()) {
+    } else if (!kit || !kit->value(QtSupport::Constants::FLAGS_SUPPLIES_QTQUICK_IMPORT_PATH, false).toBool()) {
         projectInfo.qtQmlPath = FilePath::fromUserInput(QLibraryInfo::path(QLibraryInfo::Qml2ImportsPath));
         projectInfo.qmllsPath = ModelManagerInterface::qmllsForBinPath(
             FilePath::fromUserInput(QLibraryInfo::path(QLibraryInfo::BinariesPath)), QLibraryInfo::version());
@@ -213,7 +207,7 @@ ModelManagerInterface::ProjectInfo ModelManager::defaultProjectInfoForProject(
     }
 
     projectInfo.qmlDumpPath.clear();
-    const QtSupport::QtVersion *version = QtSupport::QtKitAspect::qtVersion(activeKit);
+    const QtSupport::QtVersion *version = QtSupport::QtKitAspect::qtVersion(kit);
     if (version && projectInfo.tryQmlDump) {
         projectInfo.qmlDumpPath = version->qmlplugindumpFilePath();
         projectInfo.qmlDumpHasRelocatableFlag = version->hasQmlDumpWithRelocatableFlag();
@@ -296,8 +290,8 @@ void ModelManager::delayedInitialization()
 void ModelManager::loadDefaultQmlTypeDescriptions()
 {
     if (ICore::instance()) {
-        loadQmlTypeDescriptionsInternal(ICore::resourcePath().toString());
-        loadQmlTypeDescriptionsInternal(ICore::userResourcePath().toString());
+        loadQmlTypeDescriptionsInternal(ICore::resourcePath().toUrlishString());
+        loadQmlTypeDescriptionsInternal(ICore::userResourcePath().toUrlishString());
     }
 }
 

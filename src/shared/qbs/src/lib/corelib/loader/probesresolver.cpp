@@ -175,13 +175,15 @@ void ProbesResolver::resolveProbe(ProductContext &productContext, Item *parent,
     } else {
         importedFilesUsedInConfigure = resolvedProbe->importedFilesUsed();
     }
-    QVariantMap properties;
     QMap<QString, VariantValuePtr> storedValues;
     for (const ProbeProperty &b : probeBindings) {
+        if (b.first == StringConstants::conditionProperty()
+            || b.first == StringConstants::configureProperty())
+            continue;
         VariantValuePtr storedValue;
         QVariant newValue;
         if (resolvedProbe) {
-            newValue = resolvedProbe->properties().value(b.first);
+            storedValue = resolvedProbe->values().value(b.first);
         } else {
             if (condition) {
                 JSValue v = getJsProperty(ctx, configureScope, b.first);
@@ -216,29 +218,29 @@ void ProbesResolver::resolveProbe(ProductContext &productContext, Item *parent,
             } else {
                 newValue = initialProperties.value(b.first);
             }
+            storedValue = VariantValue::createStored(newValue);
         }
-        // TODO: it seems we can extract the StoredValue in the if above and omit this check
-        // in case of the resolved Probe. Also we should probably remember the fact we did change
-        // the value from code above and avoid this check.
-        if (!qVariantsEqual(newValue, getJsVariant(ctx, b.second))) {
-            if (!resolvedProbe)
-                storedValue = VariantValue::createStored(newValue);
-            else
-                storedValue = resolvedProbe->values().value(b.first);
-
-            if (storedValue)
+        if (storedValue) {
+            // It would be simplier and faster to do this unconditionally, but setting invalid
+            // VariantValue for "undefined" (e.g. unchanged) properties leads to undesired
+            // convertion of lists properties from "undefined" to [].
+            // See convertToPropertyType in evaluator.cpp and QTBUG-51237
+            if (!qVariantsEqual(storedValue->value(), getJsVariant(ctx, b.second))) {
                 probe->setProperty(b.first, storedValue);
-        }
-        if (!resolvedProbe) {
-            properties.insert(b.first, newValue);
-            if (storedValue)
+            }
+            if (!resolvedProbe)
                 storedValues[b.first] = storedValue;
         }
     }
     if (!resolvedProbe) {
-        resolvedProbe = Probe::create(probeId, probe->location(), condition,
-                                      sourceCode, properties, initialProperties, storedValues,
-                                      importedFilesUsedInConfigure);
+        resolvedProbe = Probe::create(
+            probeId,
+            probe->location(),
+            condition,
+            sourceCode,
+            initialProperties,
+            storedValues,
+            importedFilesUsedInConfigure);
         m_loaderState.topLevelProject().addNewlyResolvedProbe(resolvedProbe);
     }
     if (isProjectLevelProbe)

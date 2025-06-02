@@ -4,6 +4,8 @@
 #include "../luaengine.h"
 #include "../luaqttypes.h"
 
+#include <coreplugin/icore.h>
+
 #include "utils.h"
 
 #include <utils/async.h>
@@ -12,6 +14,7 @@
 #include <utils/hostosinfo.h>
 #include <utils/icon.h>
 #include <utils/id.h>
+#include <utils/infobar.h>
 #include <utils/processinterface.h>
 
 #include <QDesktopServices>
@@ -19,6 +22,7 @@
 #include <QUuid>
 
 using namespace Utils;
+using namespace std::string_view_literals;
 
 namespace Lua::Internal {
 
@@ -26,7 +30,8 @@ void setupUtilsModule()
 {
     registerProvider(
         "Utils", [futureSync = FutureSynchronizer()](sol::state_view lua) mutable -> sol::object {
-            const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
+
+            const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
 
             auto async = lua.script("return require('async')", "_utils_").get<sol::table>();
 
@@ -42,12 +47,12 @@ void setupUtilsModule()
                                      const FilePath &p,
                                      const sol::table &options,
                                      const sol::function &cb) {
-                const QStringList nameFilters = options.get_or<QStringList>("nameFilters", {});
+                const QStringList nameFilters = options.get_or<QStringList>("nameFilters"sv, {});
                 QDir::Filters fileFilters
-                    = (QDir::Filters) options.get_or<int>("fileFilters", QDir::NoFilter);
+                    = (QDir::Filters) options.get_or<int>("fileFilters"sv, QDir::NoFilter);
                 QDirIterator::IteratorFlags flags
                     = (QDirIterator::IteratorFlags)
-                          options.get_or<int>("flags", QDirIterator::NoIteratorFlags);
+                          options.get_or<int>("flags"sv, QDirIterator::NoIteratorFlags);
 
                 FileFilter filter(nameFilters, fileFilters, flags);
 
@@ -87,6 +92,10 @@ void setupUtilsModule()
             utils.set_function("__searchInPath_cb__", searchInPath_cb);
 
             utils.set_function("createUuid", []() { return QUuid::createUuid().toString(); });
+
+            utils.set_function("getNativeShortcut", [](QString shortcut) {
+                return QKeySequence::fromString(shortcut).toString(QKeySequence::NativeText);
+            });
 
             sol::function wrap = async["wrap"].get<sol::function>();
 
@@ -244,7 +253,7 @@ void setupUtilsModule()
                     return QString("ProcessRunData{\n  command=%1,\n  workingDirectory=%2,\n  "
                                    "environment={\n    %3\n}\n}")
                         .arg(prd.command.toUserOutput())
-                        .arg(prd.workingDirectory.toString())
+                        .arg(prd.workingDirectory.toUrlishString())
                         .arg(prd.environment.toStringList().join(",\n    "));
                 });
 
@@ -316,6 +325,12 @@ void setupUtilsModule()
 
             return utils;
         });
+}
+
+InfoBarCleaner::~InfoBarCleaner()
+{
+    for (const auto &id : openInfoBars)
+        Core::ICore::infoBar()->removeInfo(id);
 }
 
 } // namespace Lua::Internal

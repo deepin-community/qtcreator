@@ -118,11 +118,20 @@ bool Probe::needsReconfigure(const FileTime &referenceTime) const
     return Internal::any_of(m_importedFilesUsed, criterion);
 }
 
-void Probe::restoreValues()
+void Probe::restoreValues(const QVariantMap &properties)
 {
-    for (auto it = m_properties.begin(), end = m_properties.end(); it != end; ++it) {
+    for (auto it = properties.begin(), end = properties.end(); it != end; ++it) {
         m_values[it.key()] = VariantValue::createStored(it.value());
     }
+}
+
+QVariantMap Probe::storeValues() const
+{
+    QVariantMap result;
+    for (auto it = m_values.begin(), end = m_values.end(); it != end; ++it) {
+        result[it.key()] = it.value()->value();
+    }
+    return result;
 }
 
 /*!
@@ -883,19 +892,16 @@ bool operator==(const Rule &r1, const Rule &r2)
             return false;
     }
 
-    return r1.module->name == r2.module->name
-            && r1.prepareScript == r2.prepareScript
-            && r1.outputArtifactsScript == r2.outputArtifactsScript
-            && r1.inputs == r2.inputs
-            && r1.outputFileTags == r2.outputFileTags
-            && r1.auxiliaryInputs == r2.auxiliaryInputs
-            && r1.excludedInputs == r2.excludedInputs
-            && r1.inputsFromDependencies == r2.inputsFromDependencies
-            && r1.explicitlyDependsOn == r2.explicitlyDependsOn
-            && r1.explicitlyDependsOnFromDependencies == r2.explicitlyDependsOnFromDependencies
-            && r1.multiplex == r2.multiplex
-            && r1.requiresInputs == r2.requiresInputs
-            && r1.alwaysRun == r2.alwaysRun;
+    return r1.module->name == r2.module->name && r1.prepareScript == r2.prepareScript
+           && r1.outputArtifactsScript == r2.outputArtifactsScript && r1.inputs == r2.inputs
+           && r1.outputFileTags == r2.outputFileTags && r1.auxiliaryInputs == r2.auxiliaryInputs
+           && r1.auxiliaryInputsFromDependencies == r2.auxiliaryInputsFromDependencies
+           && r1.excludedInputs == r2.excludedInputs
+           && r1.inputsFromDependencies == r2.inputsFromDependencies
+           && r1.explicitlyDependsOn == r2.explicitlyDependsOn
+           && r1.explicitlyDependsOnFromDependencies == r2.explicitlyDependsOnFromDependencies
+           && r1.multiplex == r2.multiplex && r1.requiresInputs == r2.requiresInputs
+           && r1.alwaysRun == r2.alwaysRun;
 }
 
 bool ruleListsAreEqual(const std::vector<RulePtr> &l1, const std::vector<RulePtr> &l2)

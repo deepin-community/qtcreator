@@ -1,3 +1,60 @@
+qtcreator (16.0.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update the build dependencies according to the upstream build system:
+    - add zlib1g-dev
+
+ -- Pino Toscano <pino@debian.org>  Tue, 15 Apr 2025 09:44:26 +0200
+
+qtcreator (16.0.0-2) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Switch Vcs-* fields back to the 'master' packaging branch.
+  * Bump Standards-Version to 4.7.2, no changes required.
+
+ -- Pino Toscano <pino@debian.org>  Fri, 14 Mar 2025 17:27:07 +0100
+
+qtcreator (16.0.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Switch watch file back to stable releases.
+  * Update the patches:
+    - debian_paths.diff: refresh
+    - revert_libdir_setting.diff: hopefully no more needed now
+
+ -- Pino Toscano <pino@debian.org>  Thu, 13 Mar 2025 20:39:58 +0100
+
+qtcreator (16.0.0~rc1-2) experimental; urgency=medium
+
+  * Bump the qt6-base-dev build dependency to 6.7.3, to ensure that QmlDesigner
+    is built.
+
+ -- Pino Toscano <pino@debian.org>  Sun, 02 Mar 2025 08:48:59 +0100
+
+qtcreator (16.0.0~rc1-1) experimental; urgency=medium
+
+  * New upstream development release.
+  * Locally revert an upstream commit that breaks the detection of the distro
+    paths done by GNUInstallDirs; patch revert_libdir_setting.diff.
+
+ -- Pino Toscano <pino@debian.org>  Fri, 28 Feb 2025 07:30:17 +0100
+
+qtcreator (16.0.0~beta2-1) experimental; urgency=medium
+
+  * New upstream development release.
+
+ -- Pino Toscano <pino@debian.org>  Thu, 13 Feb 2025 22:03:29 +0100
+
+qtcreator (16.0.0~beta1-1) experimental; urgency=medium
+
+  * New upstream development release.
+  * Switch watch file to the unstable releases.
+  * Switch Vcs-* fields to the 'experimental' packaging branch.
+  * Update the build dependencies according to the upstream build system:
+    - add qt6-websockets-dev
+
+ -- Pino Toscano <pino@debian.org>  Mon, 03 Feb 2025 22:09:56 +0100
+
 qtcreator (15.0.1-1) unstable; urgency=medium
 
   * New upstream release.

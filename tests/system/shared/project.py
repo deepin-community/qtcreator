@@ -437,10 +437,14 @@ def __chooseTargets__(targets, availableTargets=None, additionalFunc=None):
                 checkedTargets.add(current)
 
                 # perform additional function on detailed kits view
-                if additionalFunc:
+                if additionalFunc and detailsButton.enabled:
                     ensureChecked(detailsButton)
                     additionalFunc()
-            ensureChecked(detailsButton, False)
+            if detailsButton.enabled:
+                ensureChecked(detailsButton, False)
+            else:
+                test.verify(not detailsButton.checked,
+                            'A disabled "Details" button should not be expanded.')
         except LookupError:
             if mustCheck:
                 test.fail("Failed to check target '%s'." % Targets.getStringForTarget(current))
@@ -526,6 +530,8 @@ def __getSupportedPlatforms__(text, templateName, getAsStrings=False, ignoreVali
         version = None
     if templateName in ("Qt Quick 2 Extension Plugin", "Qt Quick Application"):
         result = set([Targets.DESKTOP_6_2_4])
+    elif templateName == "XR Application":
+        result = set() # we need Qt6.8+
     elif 'Supported Platforms' in text:
         supports = text[text.find('Supported Platforms'):].split(":")[1].strip().split("\n")
         result = set()
@@ -534,7 +540,10 @@ def __getSupportedPlatforms__(text, templateName, getAsStrings=False, ignoreVali
                                        Targets.DESKTOP_5_14_1_DEFAULT,
                                        Targets.DESKTOP_6_2_4]))
             if platform.system() in ('Windows', 'Microsoft'):
-                result.add(Targets.DESKTOP_5_4_1_GCC)
+                if os.getenv('SYSTEST_NEW_SETTINGS') == '1':
+                    result.add(Targets.DESKTOP_6_7_3_GCC)
+                else:
+                    result.add(Targets.DESKTOP_5_4_1_GCC)
     elif 'Platform independent' in text:
         result = Targets.desktopTargetClasses()
     else:
@@ -688,17 +697,10 @@ def addCPlusPlusFile(name, template, projectName, forceOverwrite=False, addToVCS
                     % (buttonToClick, overwriteDialog))
 
 # if one of the parameters is set to 0 the function will not wait in this step
-# beginParsingTimeout      milliseconds to wait for parsing to begin
 # projectParsingTimeout    milliseconds to wait for project parsing
 # codemodelParsingTimeout  milliseconds to wait for C++ parsing
-def waitForProjectParsing(beginParsingTimeout=0, projectParsingTimeout=10000,
-                          codemodelParsingTimeout=10000):
+def waitForProjectParsing(projectParsingTimeout=10000, codemodelParsingTimeout=10000):
     runButton = findObject(':*Qt Creator.Run_Core::Internal::FancyToolButton')
-    if beginParsingTimeout > 0:
-        # currently unused
-        test.warning("Waiting for the runButton to become disabled is probably futile.",
-                     "The button isn't disabled during project parsing anymore.")
-        waitFor("not runButton.enabled", beginParsingTimeout)
     # Wait for parsing to complete
     waitFor("runButton.enabled", projectParsingTimeout)
     if codemodelParsingTimeout > 0:

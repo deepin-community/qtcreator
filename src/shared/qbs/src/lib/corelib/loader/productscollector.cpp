@@ -80,7 +80,10 @@ public:
                         ProductContext *mainProduct = nullptr);
     void handleSubProject(ProjectContext &projectContext, Item *projectItem,
                           const Set<QString> &referencedFilePaths);
-    void copyProperties(const Item *sourceProject, Item *targetProject);
+
+    enum class PropertyFilter { All, BuiltIns };
+    void copyProperties(const Item *sourceProject, Item *targetProject, PropertyFilter filter);
+
     QList<Item *> loadReferencedFile(
             const QString &relativePath, const CodeLocation &referencingLocation,
             const Set<QString> &referencedFilePaths, ProductContext &dummyContext);
@@ -218,7 +221,7 @@ void ProductsCollector::Private::handleProject(Item *projectItem, ProjectContext
             handleSubProject(projectContext, child, referencedFilePaths);
             break;
         case ItemType::Project:
-            copyProperties(projectItem, child);
+            copyProperties(projectItem, child, PropertyFilter::All);
             handleProject(child, &projectContext, referencedFilePaths);
             break;
         default:
@@ -238,7 +241,7 @@ void ProductsCollector::Private::handleProject(Item *projectItem, ProjectContext
         } catch (const ErrorInfo &error) {
             if (parameters.productErrorMode() == ErrorHandlingMode::Strict)
                 throw;
-            logger.printWarning(error);
+            logger.printError(error);
         }
     }
     for (Item * const subItem : std::as_const(additionalProjectChildren)) {
@@ -248,7 +251,7 @@ void ProductsCollector::Private::handleProject(Item *projectItem, ProjectContext
             prepareProduct(projectContext, subItem);
             break;
         case ItemType::Project:
-            copyProperties(projectItem, subItem);
+            copyProperties(projectItem, subItem, PropertyFilter::All);
             handleProject(subItem, &projectContext,
                           Set<QString>(referencedFilePaths) << subItem->file()->filePath());
             break;
@@ -373,9 +376,10 @@ void ProductsCollector::Private::prepareProduct(ProjectContext &projectContext, 
     // and nothing else, thus providing us with the pure environment that we need to
     // evaluate the product's exported properties in isolation in the project resolver.
     Item * const importer = Item::create(&loaderState.itemPool(), ItemType::Product);
-    importer->setProperty(QStringLiteral("name"),
-                          VariantValue::create(StringConstants::shadowProductPrefix()
-                                               + productContext.name));
+    importer->setProperty(
+        QStringLiteral("name"),
+        VariantValue::create(
+            QString(StringConstants::shadowProductPrefix() + productContext.name)));
     importer->setFile(productItem->file());
     importer->setLocation(productItem->location());
     importer->setScope(projectContext.scope);
@@ -426,7 +430,7 @@ void ProductsCollector::Private::handleSubProject(
     } catch (const ErrorInfo &error) {
         if (parameters.productErrorMode() == ErrorHandlingMode::Strict)
             throw;
-        logger.printWarning(error);
+        logger.printError(error);
         return;
     }
 
@@ -434,8 +438,10 @@ void ProductsCollector::Private::handleSubProject(
     const bool inheritProperties = evaluator.boolValue(
         projectItem, StringConstants::inheritPropertiesProperty());
 
-    if (inheritProperties)
-        copyProperties(projectItem->parent(), loadedItem);
+    copyProperties(
+        projectItem->parent(),
+        loadedItem,
+        inheritProperties ? PropertyFilter::All : PropertyFilter::BuiltIns);
     if (propertiesItem) {
         const Item::PropertyMap &overriddenProperties = propertiesItem->properties();
         for (auto it = overriddenProperties.begin(); it != overriddenProperties.end(); ++it)
@@ -447,7 +453,8 @@ void ProductsCollector::Private::handleSubProject(
     handleProject(loadedItem, &projectContext, Set<QString>(referencedFilePaths) << subProjectFilePath);
 }
 
-void ProductsCollector::Private::copyProperties(const Item *sourceProject, Item *targetProject)
+void ProductsCollector::Private::copyProperties(
+    const Item *sourceProject, Item *targetProject, PropertyFilter filter)
 {
     if (!sourceProject)
         return;
@@ -474,9 +481,10 @@ void ProductsCollector::Private::copyProperties(const Item *sourceProject, Item 
             continue;
         }
 
+        if (filter == PropertyFilter::BuiltIns)
+            continue;
         if (builtinProjectPropertyNames.contains(it.key()))
             continue;
-
         if (targetProject->hasOwnProperty(it.key()))
             continue; // Ignore stuff the target project already has.
 

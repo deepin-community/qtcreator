@@ -13,6 +13,7 @@
 #include <nodelistproperty.h>
 #include <nodemetainfo.h>
 #include <qmldesignerplugin.h>
+#include <qmldesignertr.h>
 #include <qmlobjectnode.h>
 #include <uniquename.h>
 #include <utils3d.h>
@@ -114,10 +115,10 @@ ModelNode CreateTexture::execute(const QString &filePath, AddTextureMode mode, i
         return {};
 
     if (mode == AddTextureMode::LightProbe && sceneId != -1)
-        assignTextureAsLightProbe(texture, sceneId);
+        Utils3D::assignTextureAsLightProbe(m_view, texture, sceneId);
 
-    QTimer::singleShot(0, m_view, [this, texture]() {
-        if (m_view->model() && texture.isValid()) {
+    QTimer::singleShot(0, m_view, [view = m_view, texture]() {
+        if (view && view->model() && texture.isValid()) {
             QmlDesignerPlugin::instance()->mainWidget()->showDockWidget("MaterialBrowser");
             Utils3D::selectTexture(texture);
         }
@@ -210,14 +211,20 @@ ModelNode CreateTexture::execute(const ModelNode &texture)
     return duplicateTextureNode;
 }
 
+void CreateTexture::execute(const QStringList &filePaths, AddTextureMode mode, int sceneId)
+{
+    for (const QString &path : filePaths)
+        execute(path, mode, sceneId);
+}
+
 bool CreateTexture::addFileToProject(const QString &filePath)
 {
     AddFilesResult result = ModelNodeOperations::addImageToProject(
-                {filePath}, ModelNodeOperations::getImagesDefaultDirectory().toString(), false);
+                {filePath}, ModelNodeOperations::getImagesDefaultDirectory().toUrlishString(), false);
 
     if (result.status() == AddFilesResult::Failed) {
-        Core::AsynchronousMessageBox::warning(QObject::tr("Failed to Add Texture"),
-                                              QObject::tr("Could not add %1 to project.").arg(filePath));
+        Core::AsynchronousMessageBox::warning(Tr::tr("Failed to Add Texture"),
+                                              Tr::tr("Could not add %1 to project.").arg(filePath));
         return false;
     }
 
@@ -235,7 +242,7 @@ ModelNode CreateTexture::createTextureFromImage(const  Utils::FilePath &assetPat
 
     NodeMetaInfo metaInfo = m_view->model()->qtQuick3DTextureMetaInfo();
 
-    QString textureSource = assetPath.relativePathFrom(DocumentManager::currentFilePath()).toString();
+    QString textureSource = assetPath.relativePathFrom(DocumentManager::currentFilePath()).toUrlishString();
 
     ModelNode newTexNode = Utils3D::getTextureDefaultInstance(textureSource, m_view);
     if (!newTexNode.isValid()) {
@@ -258,50 +265,6 @@ ModelNode CreateTexture::createTextureFromImage(const  Utils::FilePath &assetPat
     }
 
     return newTexNode;
-}
-
-void CreateTexture::assignTextureAsLightProbe(const ModelNode &texture, int sceneId)
-{
-    ModelNode sceneEnvNode = resolveSceneEnv(sceneId);
-    QmlObjectNode sceneEnv = sceneEnvNode;
-    if (sceneEnv.isValid()) {
-        sceneEnv.setBindingProperty("lightProbe", texture.id());
-        sceneEnv.setVariantProperty("backgroundMode",
-                                    QVariant::fromValue(Enumeration("SceneEnvironment",
-                                                                    "SkyBox")));
-    }
-}
-
-ModelNode CreateTexture::resolveSceneEnv(int sceneId)
-{
-    ModelNode activeSceneEnv;
-    ModelNode selectedNode = m_view->firstSelectedModelNode();
-
-    if (selectedNode.metaInfo().isQtQuick3DSceneEnvironment()) {
-        activeSceneEnv = selectedNode;
-    } else if (sceneId != -1) {
-        ModelNode activeScene = Utils3D::active3DSceneNode(m_view);
-        if (activeScene.isValid()) {
-            QmlObjectNode view3D;
-            if (activeScene.metaInfo().isQtQuick3DView3D()) {
-                view3D = activeScene;
-            } else {
-                ModelNode sceneParent = activeScene.parentProperty().parentModelNode();
-                if (sceneParent.metaInfo().isQtQuick3DView3D())
-                    view3D = sceneParent;
-            }
-            if (view3D.isValid())
-                activeSceneEnv = m_view->modelNodeForId(view3D.expression("environment"));
-        }
-    }
-
-    return activeSceneEnv;
-}
-
-void CreateTextures::execute(const QStringList &filePaths, AddTextureMode mode, int sceneId)
-{
-    for (const QString &path : filePaths)
-        CreateTexture::execute(path, mode, sceneId);
 }
 
 } // namespace QmlDesigner

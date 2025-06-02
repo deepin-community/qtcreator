@@ -21,7 +21,7 @@
 
     \list
 
-        \li Press \key {Ctrl+K} (\key {Cmd+K} on \macos).
+        \li Select \key {Ctrl+K} (\key {Cmd+K} on \macos).
 
         \li Go to \uicontrol Tools, and then select \uicontrol Locate.
 
@@ -47,18 +47,18 @@
     To use a locator filter:
 
     \list
-        \li Type the locator filter prefix followed by \key Space. The prefix
-            is usually short, from one to three characters. Then type the search
+        \li Enter the locator filter prefix followed by \key Space. The prefix
+            is usually short, from one to three characters. Then enter the search
             string (for example, a filename or class name) or the command to
             execute.
 
         \li Select a locator filter in the filter list to use it. Press
-            the up and down arrow keys or press \key Ctrl+P and \key Ctrl+N
-            to move up and down the list, and then press \key Enter to use the
+            the up and down arrow keys or select \key Ctrl+P and \key Ctrl+N
+            to move up and down the list, and then select \key Enter to use the
             selected filter.
     \endlist
 
-    As you type a search string,
+    As you enter a search string,
     the locator shows the occurrences of that string regardless of where in the
     name of an object it appears. Some locator filters, such as colon, \c m,
     and \c t, support \e fuzzy matching, which means that you can enter the
@@ -118,8 +118,8 @@
     To create a new file and open it in the editor:
 
     \list 1
-        \li Type \c f followed by \key Space, followed by path and file name
-        \li Press \key Enter or select \uicontrol {Create and Open File}.
+        \li Enter \c f followed by \key Space, followed by path and file name
+        \li Select \key Enter or select \uicontrol {Create and Open File}.
     \endlist
 
     To create a directory, select \uicontrol {Create Directory}.
