@@ -1,5 +1,8 @@
 if (IS_SUPPORTED_PROJECTSTORAGE_QT)
   find_package(Qt6 COMPONENTS QmlDomPrivate QmlCompiler REQUIRED)
+  if (QT_VERSION VERSION_GREATER_EQUAL 6.9.0)
+    find_package(Qt6 COMPONENTS QmlCompilerPrivate REQUIRED)
+  endif()
 endif()
 
 add_qtc_library(QmlDesignerCore
@@ -21,6 +24,7 @@ add_qtc_library(QmlDesignerCore
   DEFINES
      $<$<BOOL:${USE_PROJECTSTORAGE}>:QDS_USE_PROJECTSTORAGE>
      $<$<BOOL:${QTC_USE_QML_DESIGNER_LITE}>:QTC_USE_QML_DESIGNER_LITE>
+     $<$<BOOL:${DETACH_DISABLED_VIEWS}>:DETACH_DISABLED_VIEWS>
   PUBLIC_INCLUDES
     ${CMAKE_CURRENT_LIST_DIR}
     include
@@ -30,6 +34,7 @@ extend_qtc_library(QmlDesignerCore
   PUBLIC_INCLUDES designercoreutils
   SOURCES_PREFIX designercoreutils
   SOURCES
+    functional.h
     generatedcomponentutils.cpp
     generatedcomponentutils.h
     modelmerger.cpp
@@ -169,6 +174,7 @@ extend_qtc_library(QmlDesignerCore
     abstractview.h
     bytearraymodifier.h
     componenttextmodifier.h
+    designercoretr.h
     forwardview.h
     itemlibraryentry.h
     model.h
@@ -373,6 +379,11 @@ extend_qtc_library(QmlDesignerCore
 extend_qtc_library(QmlDesignerCore
     CONDITION QT_BUILT_WITH_MSVC2019
     DEFINES QML_DOM_MSVC2019_COMPAT
+)
+
+extend_qtc_library(QmlDesignerCore
+    CONDITION WITH_TESTS
+    PUBLIC_DEFINES QDS_MODEL_USE_PROJECTSTORAGEINTERFACE
 )
 
 extend_qtc_library(QmlDesignerCore

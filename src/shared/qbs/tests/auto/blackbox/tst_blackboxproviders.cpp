@@ -86,6 +86,12 @@ void TestBlackboxProviders::conanProvider()
     if (executable.isEmpty())
         QSKIP("conan is not installed or not available in PATH.");
 
+    const auto conanVersion = this->conanVersion(executable);
+    if (!conanVersion.isValid())
+        QSKIP("Can't get conan version.");
+    if (compare(conanVersion, qbs::Version(2, 6)) < 0)
+        QSKIP("This test apples only to conan 2.6 and newer.");
+
     const auto profilePath = QDir::homePath() + "/.conan2/profiles/qbs-test";
     if (!QFileInfo(profilePath).exists())
         QSKIP("conan profile is not installed, run './scripts/setup-conan-profiles.sh'.");
@@ -135,6 +141,35 @@ void TestBlackboxProviders::conanProvider_data()
 
     QTest::addRow("no conan files generated") << false << false;
     QTest::addRow("conan files generated") << true << true;
+}
+
+void TestBlackboxProviders::conanFileProbe()
+{
+    const auto executable = findExecutable({"conan"});
+    if (executable.isEmpty())
+        QSKIP("conan is not installed or not available in PATH.");
+
+    const auto conanVersion = this->conanVersion(executable);
+    if (!conanVersion.isValid())
+        QSKIP("Can't get conan version.");
+    if (compare(conanVersion, qbs::Version(2, 6)) < 0)
+        QSKIP("This test apples only to conan 2.6 and newer.");
+
+    const auto profilePath = QDir::homePath() + "/.conan2/profiles/qbs-test";
+    if (!QFileInfo(profilePath).exists())
+        QSKIP("conan profile is not installed, run './scripts/setup-conan-profiles.sh'.");
+
+    // install testlib
+    QProcess conan;
+    QDir::setCurrent(testDataDir + "/conanfile-probe/testlib");
+    conan.start(executable, {"create", ".", "--profile:all=qbs-test"});
+    QVERIFY(waitForProcessSuccess(conan));
+
+    // now build an app
+    QDir::setCurrent(testDataDir + "/conanfile-probe");
+
+    QCOMPARE(runQbs(QbsRunParameters{"resolve"}), 0);
+    QCOMPARE(runQbs(QbsRunParameters{"build"}), 0);
 }
 
 void TestBlackboxProviders::moduleProviders()
@@ -333,7 +368,8 @@ void TestBlackboxProviders::qbsModuleProviders()
     QDir::setCurrent(testDataDir + "/qbs-module-providers");
 
     QbsRunParameters params("resolve");
-    params.arguments = arguments;
+    params.arguments << arguments << "-f"
+                     << "qbs-module-providers.qbs";
     QCOMPARE(runQbs(params), 0);
     QVERIFY2(m_qbsStdout.contains(("p1.qbsmetatestmodule.prop: " + firstProp).toUtf8()),
              m_qbsStdout);
@@ -433,6 +469,19 @@ void TestBlackboxProviders::qbspkgconfigModuleProvider()
 
     QbsRunParameters params;
     params.arguments << "moduleProviders.qbspkgconfig.sysroot:" + sysroot;
+    QCOMPARE(runQbs(params), 0);
+}
+
+void TestBlackboxProviders::qtBug51237()
+{
+    const SettingsPtr s = settings();
+    qbs::Internal::TemporaryProfile profile("qbs_autotests_qtBug51237", s.get());
+    profile.p.setValue("moduleProviders.provider.theProperty", QStringList());
+    s->sync();
+
+    QDir::setCurrent(testDataDir + "/QTBUG-51237");
+    QbsRunParameters params;
+    params.profile = profile.p.name();
     QCOMPARE(runQbs(params), 0);
 }
 

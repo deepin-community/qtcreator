@@ -68,8 +68,8 @@ QdsNewDialog::QdsNewDialog(QWidget *parent)
                                          new Internal::NewProjectDialogImageProvider());
     QmlDesigner::Theme::setupTheme(m_dialog->engine());
     qmlRegisterSingletonInstance<QdsNewDialog>("BackendApi", 1, 0, "BackendApi", this);
-    m_dialog->engine()->addImportPath(Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources/imports").toString());
-    m_dialog->engine()->addImportPath(Core::ICore::resourcePath("qmldesigner/newprojectdialog/imports").toString());
+    m_dialog->engine()->addImportPath(Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources/imports").toUrlishString());
+    m_dialog->engine()->addImportPath(Core::ICore::resourcePath("qmldesigner/newprojectdialog/imports").toUrlishString());
     m_dialog->setSource(QUrl::fromLocalFile(qmlPath()));
 
     m_dialog->setWindowModality(Qt::ApplicationModal);
@@ -94,10 +94,6 @@ QdsNewDialog::QdsNewDialog(QWidget *parent)
         QMessageBox::critical(m_dialog.get(), tr("New Project"), tr("Failed to initialize data."));
         reject();
     });
-
-    QObject::connect(m_styleModel.data(), &StyleModel::modelAboutToBeReset, this, [this] {
-        m_qmlStyleIndex = -1;
-    });
 }
 
 bool QdsNewDialog::eventFilter(QObject *obj, QEvent *event)
@@ -117,8 +113,7 @@ void QdsNewDialog::onDeletingWizard()
     m_qmlScreenSizeIndex = -1;
     m_screenSizeModel->reset();
 
-    m_styleModel->setBackendModel(nullptr);
-    m_qmlStyleIndex = -1;
+    m_styleModel->setSourceModel(nullptr);
 }
 
 void QdsNewDialog::setProjectName(const QString &name)
@@ -131,6 +126,15 @@ void QdsNewDialog::setProjectLocation(const QString &location)
 {
     m_qmlProjectLocation = Utils::FilePath::fromString(QDir::toNativeSeparators(location));
     m_wizard.setProjectLocation(m_qmlProjectLocation);
+}
+
+void QdsNewDialog::setHasCMakeGeneration(bool haveCmakeGen)
+{
+    if (m_qmlHasCMakeGeneration == haveCmakeGen)
+        return;
+
+    m_qmlHasCMakeGeneration = haveCmakeGen;
+    emit hasCMakeGenerationChanged();
 }
 
 void QdsNewDialog::onStatusMessageChanged(Utils::InfoLabel::InfoType type, const QString &message)
@@ -182,7 +186,7 @@ void QdsNewDialog::onWizardCreated(QStandardItemModel *screenSizeModel, QStandar
         m_screenSizeModel->setBackendModel(screenSizeModel);
 
     if (styleModel)
-        m_styleModel->setBackendModel(styleModel);
+        m_styleModel->setSourceModel(styleModel);
 
     if (!m_currentPreset) {
         qWarning() << "Wizard has been created but there is no Preset selected!";
@@ -192,9 +196,25 @@ void QdsNewDialog::onWizardCreated(QStandardItemModel *screenSizeModel, QStandar
     auto userPreset = m_currentPreset->asUserPreset();
 
     if (m_qmlDetailsLoaded) {
+        setHasCMakeGeneration(m_wizard.hasCMakeGeneration());
+
+        if (m_currentPreset->isUserPreset()) {
+            if (getHaveVirtualKeyboard())
+                setUseVirtualKeyboard(userPreset->useQtVirtualKeyboard);
+            if (hasCMakeGeneration())
+                setEnableCMakeGeneration(userPreset->enableCMakeGeneration);
+
+            setStyleName(userPreset->styleName);
+        } else {
+            if (getHaveVirtualKeyboard())
+                setUseVirtualKeyboard(m_wizard.virtualKeyboardUsed());
+            if (hasCMakeGeneration())
+                setEnableCMakeGeneration(m_wizard.cmakeGenerationEnabled());
+
+            setStyleName(m_wizard.styleName());
+        }
+
         m_targetQtVersions.clear();
-        if (m_currentPreset->isUserPreset() && m_wizard.haveVirtualKeyboard())
-            setUseVirtualKeyboard(userPreset->useQtVirtualKeyboard);
         if (m_wizard.haveTargetQtVersion()) {
             m_targetQtVersions = m_wizard.targetQtVersionNames();
             int index = m_currentPreset->isUserPreset() ? m_wizard.targetQtVersionIndex(userPreset->qtVersion)
@@ -210,21 +230,26 @@ void QdsNewDialog::onWizardCreated(QStandardItemModel *screenSizeModel, QStandar
         updateScreenSizes();
 
         setProjectName(m_qmlProjectName);
-        setProjectLocation(m_qmlProjectLocation.toString());
+        setProjectLocation(m_qmlProjectLocation.toUrlishString());
     }
+}
 
-    if (m_qmlStylesLoaded && m_wizard.haveStyleModel()) {
-        if (m_currentPreset->isUserPreset()) {
-            int index = m_wizard.styleIndex(userPreset->styleName);
-            if (index != -1)
-                setStyleIndex(index);
-        } else {
-            /* NOTE: For a builtin preset, we don't need to set style index. That's because defaults
-             *       will be loaded from the backend Wizard.
-             */
-        }
-        m_styleModel->reset();
-    }
+void QdsNewDialog::setStyleName(const QString &newStyleName)
+{
+    if (m_styleName == newStyleName)
+        return;
+
+    m_styleName = newStyleName;
+    emit styleNameChanged();
+}
+
+void QdsNewDialog::setEnableCMakeGeneration(bool newQmlEnableCMakeGeneration)
+{
+    if (m_qmlEnableCMakeGeneration == newQmlEnableCMakeGeneration)
+        return;
+
+    m_qmlEnableCMakeGeneration = newQmlEnableCMakeGeneration;
+    emit enableCMakeGenerationChanged();
 }
 
 QString QdsNewDialog::currentPresetQmlPath() const
@@ -261,44 +286,9 @@ int QdsNewDialog::getTargetQtVersionIndex() const
     return m_qmlTargetQtVersionIndex;
 }
 
-void QdsNewDialog::setStyleIndex(int index)
-{
-    if (!m_qmlStylesLoaded)
-        return;
-
-    if (index == -1) {
-        m_qmlStyleIndex = index;
-        return;
-    }
-
-    m_qmlStyleIndex = index;
-    int actualIndex = m_styleModel->actualIndex(m_qmlStyleIndex);
-    QTC_ASSERT(actualIndex >= 0, return);
-
-    m_wizard.setStyleIndex(actualIndex);
-}
-
 int QdsNewDialog::getStyleIndex() const
 {
-    /**
-     * m_wizard.styleIndex property is the wizard's (backend's) value of the style index.
-     * The initial value (saved in the wizard.json) is read from there. Any subsequent reads of
-     * the style index should use m_styleIndex, which is the QML's style index property. Setting
-     * the style index should update both the m_styleIndex and the backend. In this regard, the
-     * QdsNewDialog's m_styleIndex acts as some kind of cache.
-    */
-
-    if (!m_qmlStylesLoaded)
-        return -1;
-
-    if (m_qmlStyleIndex == -1) {
-        int actualIndex = m_wizard.styleIndex();
-        // Not nice, get sets the property... m_qmlStyleIndex acts like a cache.
-        m_qmlStyleIndex = m_styleModel->filteredIndex(actualIndex);
-        return m_qmlStyleIndex;
-    }
-
-    return m_styleModel->actualIndex(m_qmlStyleIndex);
+    return m_styleModel->findSourceIndex(m_styleName);
 }
 
 void QdsNewDialog::setUseVirtualKeyboard(bool value)
@@ -315,7 +305,7 @@ void QdsNewDialog::setWizardFactories(QList<Core::IWizardFactory *> factories_,
 {
     Utils::Id platform = Utils::Id::fromSetting("Desktop");
 
-    WizardFactories factories{factories_, m_dialog.get(), platform};
+    WizardFactories factories{factories_, platform};
 
     std::vector<UserPresetData> recents = m_recentsStore.fetchAll();
     std::vector<UserPresetData> userPresets =  m_userPresetsStore.fetchAll();
@@ -333,10 +323,10 @@ void QdsNewDialog::setWizardFactories(QList<Core::IWizardFactory *> factories_,
     const Core::IWizardFactory *first = factories.front();
     Utils::FilePath projectLocation = first->runPath(defaultLocation);
 
-    m_qmlProjectName = uniqueProjectName(projectLocation.toString());
+    m_qmlProjectName = uniqueProjectName(projectLocation.toUrlishString());
     emit projectNameChanged(); // So that QML knows to update the field
 
-    m_qmlProjectLocation = Utils::FilePath::fromString(QDir::toNativeSeparators(projectLocation.toString()));
+    m_qmlProjectLocation = Utils::FilePath::fromString(QDir::toNativeSeparators(projectLocation.toUrlishString()));
     emit projectLocationChanged(); // So that QML knows to update the field
 
     /* NOTE:
@@ -367,7 +357,7 @@ QString QdsNewDialog::recentsTabName() const
 
 QString QdsNewDialog::qmlPath() const
 {
-    return Core::ICore::resourcePath("qmldesigner/newprojectdialog/NewProjectDialog.qml").toString();
+    return Core::ICore::resourcePath("qmldesigner/newprojectdialog/NewProjectDialog.qml").toUrlishString();
 }
 
 void QdsNewDialog::showDialog()
@@ -385,9 +375,16 @@ bool QdsNewDialog::getHaveTargetQtVersion() const
     return m_wizard.haveTargetQtVersion();
 }
 
+bool QdsNewDialog::hasCMakeGeneration() const
+{
+    return m_qmlHasCMakeGeneration;
+}
+
 void QdsNewDialog::accept()
 {
     CreateProject create{m_wizard};
+    // Get a snapshot of the preset before hiding the dialog
+    UserPresetData preset = currentUserPresetData(m_currentPreset->displayName());
 
     m_dialog->hide();
     create.withName(m_qmlProjectName)
@@ -395,13 +392,11 @@ void QdsNewDialog::accept()
         .withScreenSizes(m_qmlScreenSizeIndex, m_qmlCustomWidth, m_qmlCustomHeight)
         .withStyle(getStyleIndex())
         .useQtVirtualKeyboard(m_qmlUseVirtualKeyboard)
+        .enableCMakeGeneration(m_qmlEnableCMakeGeneration)
         .saveAsDefaultLocation(m_qmlSaveAsDefaultLocation)
         .withTargetQtVersion(m_qmlTargetQtVersionIndex)
         .execute();
 
-    std::shared_ptr<PresetItem> item = m_wizard.preset();
-
-    UserPresetData preset = currentUserPresetData(m_currentPreset->displayName());
     m_recentsStore.save(preset);
 
     m_dialog->close();
@@ -410,7 +405,7 @@ void QdsNewDialog::accept()
 void QdsNewDialog::reject()
 {
     m_screenSizeModel->setBackendModel(nullptr);
-    m_styleModel->setBackendModel(nullptr);
+    m_styleModel->setSourceModel(nullptr);
     m_wizard.destroyWizard();
 
     m_dialog->close();
@@ -418,11 +413,10 @@ void QdsNewDialog::reject()
 
 QString QdsNewDialog::chooseProjectLocation()
 {
-    Utils::FilePath newPath = Utils::FileUtils::getExistingDirectory(m_dialog.get(),
-                                                                     tr("Choose Directory"),
+    Utils::FilePath newPath = Utils::FileUtils::getExistingDirectory(tr("Choose Directory"),
                                                                      m_qmlProjectLocation);
 
-    return QDir::toNativeSeparators(newPath.toString());
+    return QDir::toNativeSeparators(newPath.toUrlishString());
 }
 
 void QdsNewDialog::setSelectedPreset(int selection)
@@ -446,23 +440,29 @@ UserPresetData QdsNewDialog::currentUserPresetData(const QString &displayName) c
     QString targetQtVersion = "";
     QString styleName = "";
     bool useVirtualKeyboard = false;
+    bool enableCMakeGeneration = false;
 
     if (m_wizard.haveTargetQtVersion())
         targetQtVersion = m_wizard.targetQtVersionName(m_qmlTargetQtVersionIndex);
 
     if (m_wizard.haveStyleModel())
-        styleName = m_wizard.styleName(getStyleIndex());
+        styleName = m_wizard.styleNameAt(getStyleIndex());
 
     if (m_wizard.haveVirtualKeyboard())
         useVirtualKeyboard = m_qmlUseVirtualKeyboard;
 
-    UserPresetData preset = {m_currentPreset->categoryId,
-                             m_currentPreset->wizardName,
-                             displayName,
-                             screenSize,
-                             useVirtualKeyboard,
-                             targetQtVersion,
-                             styleName};
+    if (m_wizard.hasCMakeGeneration())
+        enableCMakeGeneration = m_qmlEnableCMakeGeneration;
+
+    UserPresetData preset{
+        m_currentPreset->categoryId,
+        m_currentPreset->wizardName,
+        displayName,
+        screenSize,
+        useVirtualKeyboard,
+        enableCMakeGeneration,
+        targetQtVersion,
+        styleName};
 
     return preset;
 }

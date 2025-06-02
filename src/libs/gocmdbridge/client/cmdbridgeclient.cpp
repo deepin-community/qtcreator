@@ -244,10 +244,8 @@ Client::Client(const Utils::FilePath &remoteCmdBridgePath)
 
 Client::~Client()
 {
-    if (d->thread->isRunning()) {
-        exit();
-        d->thread->wait();
-    }
+    if (d->thread->isRunning() && exit())
+        d->thread->wait(2000);
 }
 
 expected_str<QFuture<Environment>> Client::start()
@@ -292,6 +290,9 @@ expected_str<QFuture<Environment>> Client::start()
             d->process->setCommand({d->remoteCmdBridgePath, {}});
             d->process->setProcessMode(ProcessMode::Writer);
             d->process->setProcessChannelMode(QProcess::ProcessChannelMode::SeparateChannels);
+            // Make sure the process has a codec, otherwise it will try to ask us recursively
+            // and dead lock.
+            d->process->setUtf8Codec();
 
             connect(d->process, &Process::done, d->process, [this] {
                 if (d->process->resultData().m_exitCode != 0) {
@@ -337,7 +338,8 @@ expected_str<QFuture<Environment>> Client::start()
                                 return;
                             }
                             // Broken package, search for next magic marker
-                            qCWarning(clientLog) << "Magic marker was not found";
+                            qCWarning(clientLog)
+                                << "Magic marker was not found, buffer content:" << buffer;
                             // If we don't find a magic marker, the rest of the buffer is trash.
                             buffer.clear();
                         } else {
@@ -444,8 +446,7 @@ static Utils::expected_str<QFuture<R>> createJob(
                     std::make_exception_ptr(std::system_error(ENOENT, std::generic_category())));
                 promise->finish();
             } else if (errType == "NormalExit") {
-                promise->setException(
-                    std::make_exception_ptr(std::runtime_error(err.toStdString())));
+                promise->setException(std::make_exception_ptr(std::runtime_error("NormalExit")));
                 promise->finish();
             } else {
                 qCWarning(clientLog) << "Error (" << errType << "):" << err;
@@ -853,12 +854,26 @@ Utils::expected_str<QFuture<void>> Client::signalProcess(int pid, Utils::Control
         "signalsuccess");
 }
 
-void Client::exit()
+bool Client::exit()
 {
     try {
-        createVoidJob(d.get(), QCborMap{{"Type", "exit"}}, "exitres")->waitForFinished();
+        createVoidJob(d.get(), QCborMap{{"Type", "exit"}}, "exitres").and_then([](auto future) {
+            future.waitForFinished();
+            return expected_str<void>();
+        });
+        return true;
+    } catch (const std::runtime_error &e) {
+        if (e.what() == std::string("NormalExit"))
+            return true;
+
+        qCWarning(clientLog) << "Client::exit() caught exception:" << e.what();
+        return false;
+    } catch (const std::exception &e) {
+        qCWarning(clientLog) << "Client::exit() caught exception:" << e.what();
+        return false;
     } catch (...) {
-        return;
+        qCWarning(clientLog) << "Client::exit() caught unexpected exception";
+        return false;
     }
 }
 

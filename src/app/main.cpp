@@ -17,8 +17,8 @@
 #include <utils/fileutils.h>
 #include <utils/fsengine/fsengine.h>
 #include <utils/hostosinfo.h>
+#include <utils/processreaper.h>
 #include <utils/qtcsettings.h>
-#include <utils/singleton.h>
 #include <utils/stylehelper.h>
 #include <utils/temporarydirectory.h>
 #include <utils/terminalcommand.h>
@@ -54,6 +54,12 @@
 #include "client/settings.h"
 #endif
 
+#ifdef ENABLE_SENTRY
+#include <sentry.h>
+
+Q_LOGGING_CATEGORY(sentryLog, "qtc.sentry", QtWarningMsg)
+#endif
+
 using namespace ExtensionSystem;
 using namespace Utils;
 
@@ -66,6 +72,7 @@ const char fixedOptionsC[]
       "    -help                         Display this help\n"
       "    -version                      Display program version\n"
       "    -client                       Attempt to connect to already running first instance\n"
+      "    -clientid                     A postfix for the ID used by -client\n"
       "    -settingspath <path>          Override the default path where user settings are stored\n"
       "    -installsettingspath <path>   Override the default path from where user-independent "
       "settings are read\n"
@@ -82,10 +89,12 @@ const char HELP_OPTION4[] = "--help";
 const char VERSION_OPTION[] = "-version";
 const char VERSION_OPTION2[] = "--version";
 const char CLIENT_OPTION[] = "-client";
+const char CLIENTID_OPTION[] = "-clientid";
 const char SETTINGS_OPTION[] = "-settingspath";
 const char INSTALL_SETTINGS_OPTION[] = "-installsettingspath";
 const char TEST_OPTION[] = "-test";
 const char STYLE_OPTION[] = "-style";
+const char QML_LITE_DESIGNER_OPTION[] = "-qml-lite-designer";
 const char TEMPORARY_CLEAN_SETTINGS1[] = "-temporarycleansettings";
 const char TEMPORARY_CLEAN_SETTINGS2[] = "-tcs";
 const char PID_OPTION[] = "-pid";
@@ -289,6 +298,19 @@ static void setHighDpiEnvironmentVariable()
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(userPolicy);
 }
 
+static void setRHIOpenGLVariable()
+{
+    QSettings installSettings(
+        QSettings::IniFormat,
+        QSettings::SystemScope,
+        QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR),
+        QLatin1String(Core::Constants::IDE_CASED_ID));
+
+    const QVariant value = installSettings.value("Core/RhiBackend");
+    if (value.isValid())
+        qputenv("QSG_RHI_BACKEND", value.toByteArray());
+}
+
 void setPixmapCacheLimit()
 {
     const int originalLimit = QPixmapCache::cacheLimit();
@@ -312,6 +334,7 @@ struct Options
     QString installSettingsPath;
     QStringList customPluginPaths;
     QString uiLanguage;
+    QString singleAppIdPostfix;
     // list of arguments that were handled and not passed to the application or plugin manager
     QStringList preAppArguments;
     // list of arguments to be passed to the application or plugin manager
@@ -355,11 +378,17 @@ Options parseCommandLine(int argc, char *argv[])
         } else if (arg == TEMPORARY_CLEAN_SETTINGS1 || arg == TEMPORARY_CLEAN_SETTINGS2) {
             options.wantsCleanSettings = true;
             options.preAppArguments << arg;
+        } else if (arg == CLIENTID_OPTION && hasNext) {
+            ++it;
+            options.singleAppIdPostfix = nextArg;
+            options.preAppArguments << arg << nextArg;
         } else { // arguments that are still passed on to the application
             if (arg == STYLE_OPTION)
                 options.hasStyleOption = true;
             if (arg == TEST_OPTION)
                 options.hasTestOption = true;
+            if (arg == QML_LITE_DESIGNER_OPTION)
+                options.singleAppIdPostfix = QML_LITE_DESIGNER_OPTION;
             options.appArguments.push_back(*it);
         }
         ++it;
@@ -405,8 +434,8 @@ QStringList lastSessionArgument()
 {
     // using insider information here is not particularly beautiful, anyhow
     const bool hasProjectExplorer = Utils::anyOf(PluginManager::plugins(),
-                                                 Utils::equal(&PluginSpec::name,
-                                                              QString("ProjectExplorer")));
+                                                 Utils::equal(&PluginSpec::id,
+                                                              QString("projectexplorer")));
     return hasProjectExplorer ? QStringList({"-lastsession"}) : QStringList();
 }
 
@@ -473,6 +502,35 @@ void startCrashpad(const AppInfo &appInfo, bool crashReportingEnabled)
 }
 #endif
 
+#ifdef ENABLE_SENTRY
+void configureSentry(const AppInfo &appInfo, bool crashReportingEnabled)
+{
+    if (!crashReportingEnabled)
+        return;
+
+    sentry_options_t *options = sentry_options_new();
+    sentry_options_set_dsn(options, SENTRY_DSN);
+#ifdef Q_OS_WIN
+    sentry_options_set_database_pathw(options, appInfo.crashReports.nativePath().toStdWString().c_str());
+#else
+    sentry_options_set_database_path(options, appInfo.crashReports.nativePath().toUtf8().constData());
+#endif
+#ifdef SENTRY_CRASHPAD_PATH
+    if (const FilePath handlerpath = appInfo.libexec / "crashpad_handler"; handlerpath.exists()) {
+        sentry_options_set_handler_path(options, handlerpath.nativePath().toUtf8().constData());
+    } else if (const auto fallback = FilePath::fromString(SENTRY_CRASHPAD_PATH); fallback.exists()) {
+        sentry_options_set_handler_path(options, fallback.nativePath().toUtf8().constData());
+    } else {
+        qCWarning(sentryLog) << "Failed to find crashpad_handler for Sentry crash reports.";
+    }
+#endif
+    const QString release = QString(SENTRY_PROJECT) + "@" + QCoreApplication::applicationVersion();
+    sentry_options_set_release(options, release.toUtf8().constData());
+    sentry_options_set_debug(options, sentryLog().isDebugEnabled() ? 1 : 0);
+    sentry_init(options);
+}
+#endif
+
 class ShowInGuiHandler
 {
 public:
@@ -491,8 +549,7 @@ private:
             // Show some kind of GUI with collected messages before exiting.
             // For Windows, Qt already uses a dialog.
             if (HostOsInfo::isLinuxHost()) {
-#if (QT_VERSION >= QT_VERSION_CHECK(6, 5, 0) && QT_VERSION < QT_VERSION_CHECK(6, 5, 3)) \
-    || (QT_VERSION >= QT_VERSION_CHECK(6, 6, 0) && QT_VERSION < QT_VERSION_CHECK(6, 6, 1))
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 6, 0) && QT_VERSION < QT_VERSION_CHECK(6, 6, 1))
                 // Information about potentially missing libxcb-cursor0 is printed by Qt since Qt 6.5.3 and Qt 6.6.1
                 // Add it manually for other versions >= 6.5.0
                 instance->messages.prepend("From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed to "
@@ -581,7 +638,7 @@ int main(int argc, char **argv)
         const FilePaths addedPaths
             = Environment::pathListFromValue(item.value, HostOsInfo::hostOs());
         FilePaths allPaths = Environment::systemEnvironment().pathListValue(varName);
-        Utils::eraseOne(allPaths, [&addedPaths](const FilePath &p) {
+        Utils::erase(allPaths, [&addedPaths](const FilePath &p) {
             return addedPaths.contains(p);
         });
         diff.emplaceBack(
@@ -680,6 +737,7 @@ int main(int argc, char **argv)
     // though. So we set up install settings with a educated guess here, and re-setup it later.
     setupInstallSettings(options.installSettingsPath);
     setHighDpiEnvironmentVariable();
+    setRHIOpenGLVariable();
 
     SharedTools::QtSingleApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
@@ -688,9 +746,10 @@ int main(int argc, char **argv)
     // create a custom Qt message handler that shows messages in a bare bones UI
     // if creation of the QGuiApplication fails.
     auto handler = std::make_unique<ShowInGuiHandler>();
-    std::unique_ptr<SharedTools::QtSingleApplication>
-        appPtr(SharedTools::createApplication(QLatin1String(Core::Constants::IDE_DISPLAY_NAME),
-                                              numberOfArguments, options.appArguments.data()));
+    const QString singleAppId = QString(Core::Constants::IDE_DISPLAY_NAME)
+                                + options.singleAppIdPostfix;
+    std::unique_ptr<SharedTools::QtSingleApplication> appPtr(
+        SharedTools::createApplication(singleAppId, numberOfArguments, options.appArguments.data()));
     handler.reset();
     SharedTools::QtSingleApplication &app = *appPtr;
     QCoreApplication::setApplicationName(Core::Constants::IDE_CASED_ID);
@@ -698,7 +757,7 @@ int main(int argc, char **argv)
     QCoreApplication::setOrganizationName(QLatin1String(Core::Constants::IDE_SETTINGSVARIANT_STR));
     QGuiApplication::setApplicationDisplayName(Core::Constants::IDE_DISPLAY_NAME);
 
-    const QScopeGuard cleanup([] { Singleton::deleteAll(); });
+    const QScopeGuard cleanup([] { ProcessReaper::deleteAll(); });
 
     const QStringList pluginArguments = app.arguments();
 
@@ -758,7 +817,7 @@ int main(int argc, char **argv)
     info.resources = (appDirPath / RELATIVE_DATA_PATH).cleanPath();
     info.userResources = userResourcePath(settings->fileName(), Constants::IDE_ID);
     info.libexec = (appDirPath / RELATIVE_LIBEXEC_PATH).cleanPath();
-    // sync with src\tools\qml2puppet\qml2puppet\qmlpuppet.cpp -> QString crashReportsPath()
+    // sync with src\tools\qmlpuppet\qmlpuppet\qmlpuppet.cpp -> QString crashReportsPath()
     info.crashReports = info.userResources / "crashpad_reports";
     info.luaPlugins = info.resources / "lua-plugins";
     info.userLuaPlugins = info.userResources / "lua-plugins";
@@ -768,10 +827,15 @@ int main(int argc, char **argv)
     CrashHandlerSetup setupCrashHandler(
         Core::Constants::IDE_DISPLAY_NAME, CrashHandlerSetup::EnableRestart, info.libexec.path());
 
-#ifdef ENABLE_CRASHPAD
     // depends on AppInfo and QApplication being created
-    bool crashReportingEnabled = settings->value("CrashReportingEnabled", false).toBool();
+    const bool crashReportingEnabled = settings->value("CrashReportingEnabled", false).toBool();
+
+#if defined(ENABLE_CRASHPAD)
     startCrashpad(info, crashReportingEnabled);
+#elif defined(ENABLE_SENTRY)
+    configureSentry(info, crashReportingEnabled);
+#else
+    Q_UNUSED(crashReportingEnabled)
 #endif
 
     PluginManager pluginManager;
@@ -825,6 +889,11 @@ int main(int argc, char **argv)
 
     // Make sure we honor the system's proxy settings
     QNetworkProxyFactory::setUseSystemConfiguration(true);
+
+    PluginManager::removePluginsAfterRestart();
+
+    // We need to install plugins before we scan for them.
+    PluginManager::installPluginsAfterRestart();
 
     // Load
     const QStringList pluginPaths = installPluginPaths + options.customPluginPaths;
@@ -954,5 +1023,9 @@ int main(int argc, char **argv)
         QApplication::setEffectEnabled(Qt::UI_AnimateMenu, false);
     }
 
-    return restarter.restartOrExit(app.exec());
+    const int exitCode = restarter.restartOrExit(app.exec());
+#ifdef ENABLE_SENTRY
+    sentry_close();
+#endif
+    return exitCode;
 }

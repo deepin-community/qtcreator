@@ -370,16 +370,19 @@ void ItemLibraryModel::update(Model *model)
         itemLibImport->setImportExpanded(loadExpandedState(itemLibImport->importUrl()));
     }
 
+#ifndef QDS_USE_PROJECTSTORAGE
     DesignDocument *document = QmlDesignerPlugin::instance()->currentDesignDocument();
     const bool blockNewImports = document->inFileComponentModelActive();
+#endif
     const QList<ItemLibraryEntry> itemLibEntries = model->itemLibraryEntries();
     for (const ItemLibraryEntry &entry : itemLibEntries) {
         NodeMetaInfo metaInfo;
 
-        if constexpr (useProjectStorage())
-            metaInfo = NodeMetaInfo{entry.typeId(), model->projectStorage()};
-        else
-            metaInfo = model->metaInfo(entry.typeName());
+#ifdef QDS_USE_PROJECTSTORAGE
+        metaInfo = NodeMetaInfo{entry.typeId(), model->projectStorage()};
+#else
+        metaInfo = model->metaInfo(entry.typeName());
+#endif
 
 #ifdef QDS_USE_PROJECTSTORAGE
         bool valid = metaInfo.isValid();
@@ -406,13 +409,18 @@ void ItemLibraryModel::update(Model *model)
                 blocked = true;
         }
 
+#ifndef QDS_USE_PROJECTSTORAGE
         Import import = entryToImport(entry);
         bool hasImport = model->hasImport(import, true, true);
         bool isImportPossible = false;
         if (!hasImport)
             isImportPossible = !blockNewImports && model->isImportPossible(import, true, true);
+#else
+        bool hasImport = true;
+        bool isImportPossible = false;
+#endif
         bool isUsable = (valid && (isItem || forceVisibility))
-                && (entry.requiredImport().isEmpty() || hasImport);
+                        && (entry.requiredImport().isEmpty() || hasImport);
         if (!blocked && (isUsable || isImportPossible)) {
             ItemLibraryImport *importSection = nullptr;
             QString catName = entry.category();

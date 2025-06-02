@@ -128,11 +128,15 @@ BuildGraphLoadResult BuildGraphLoader::load(const TopLevelProjectPtr &existingPr
     if (!m_result.loadedProject)
         return m_result;
     if (parameters.restoreBehavior() == SetupProjectParameters::RestoreOnly) {
+        for (const ErrorInfo &e : std::as_const(m_result.loadedProject->errorsEncountered))
+            m_logger.printError(e);
         for (const ErrorInfo &e : std::as_const(m_result.loadedProject->warningsEncountered))
             m_logger.printWarning(e);
         return m_result;
     }
-    QBS_CHECK(parameters.restoreBehavior() == SetupProjectParameters::RestoreAndTrackChanges);
+    QBS_CHECK(
+        parameters.restoreBehavior() == SetupProjectParameters::RestoreAndTrackChanges
+        || parameters.restoreBehavior() == SetupProjectParameters::RestoreAndResolve);
 
     if (m_parameters.logElapsedTime()) {
         m_wildcardExpansionEffort = 0;
@@ -330,7 +334,15 @@ void BuildGraphLoader::trackProjectChanges()
         reResolvingNecessary = true;
     }
 
+    if (!reResolvingNecessary
+        && m_parameters.restoreBehavior() == SetupProjectParameters::RestoreAndResolve) {
+        m_logger.qbsInfo() << Tr::tr("No changes detected, but re-resolve was forced.");
+        reResolvingNecessary = true;
+    }
+
     if (!reResolvingNecessary) {
+        for (const ErrorInfo &e : std::as_const(restoredProject->errorsEncountered))
+            m_logger.printError(e);
         for (const ErrorInfo &e : std::as_const(restoredProject->warningsEncountered))
             m_logger.printWarning(e);
         return;
@@ -445,7 +457,7 @@ void BuildGraphLoader::trackProjectChanges()
     // Products still left in the list need resolving, either because they are new
     // or because they are newly enabled.
     if (!allNewlyResolvedProducts.empty()) {
-        BuildDataResolver bpr(m_logger);
+        BuildDataResolver bpr(m_logger, m_parameters);
         bpr.resolveProductBuildDataForExistingProject(m_result.newlyResolvedProject,
                                                       allNewlyResolvedProducts);
     }

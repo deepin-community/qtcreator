@@ -42,7 +42,7 @@ static QString propertyEditorResourcesPath()
     if (qEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 MaterialBrowserView::MaterialBrowserView(AsynchronousImageCache &imageCache,
@@ -209,7 +209,7 @@ WidgetInfo MaterialBrowserView::widgetInfo()
         });
 
         connect(texturesModel, &MaterialBrowserTexturesModel::updateSceneEnvStateRequested, this, [this] {
-            ModelNode activeSceneEnv = CreateTexture(this).resolveSceneEnv(m_sceneId);
+            ModelNode activeSceneEnv = Utils3D::resolveSceneEnv(this, m_sceneId);
             const bool sceneEnvExists = activeSceneEnv.isValid();
             m_widget->materialBrowserTexturesModel()->setHasSceneEnv(sceneEnvExists);
         });
@@ -222,12 +222,14 @@ WidgetInfo MaterialBrowserView::widgetInfo()
             m_widget->materialBrowserTexturesModel()->setHasSingleModelSelection(hasModel);
         });
 
-        connect(texturesModel, &MaterialBrowserTexturesModel::applyAsLightProbeRequested, this,
-                [&] (const ModelNode &texture) {
-            executeInTransaction(__FUNCTION__, [&] {
-                CreateTexture(this).assignTextureAsLightProbe(texture, m_sceneId);
-            });
-        });
+        connect(texturesModel,
+                &MaterialBrowserTexturesModel::applyAsLightProbeRequested,
+                this,
+                [&](const ModelNode &texture) {
+                    executeInTransaction(__FUNCTION__, [&] {
+                        Utils3D::assignTextureAsLightProbe(this, texture, m_sceneId);
+                    });
+                });
     }
 
     return createWidgetInfo(m_widget.data(),
@@ -239,13 +241,9 @@ WidgetInfo MaterialBrowserView::widgetInfo()
 
 void MaterialBrowserView::createTextures(const QStringList &assetPaths)
 {
-    auto *create = new CreateTextures(this);
-
     executeInTransaction("MaterialBrowserView::createTextures", [&]() {
-        create->execute(assetPaths, AddTextureMode::Texture, m_sceneId);
+        CreateTexture(this).execute(assetPaths, AddTextureMode::Texture, m_sceneId);
     });
-
-    create->deleteLater();
 }
 
 void MaterialBrowserView::modelAttached(Model *model)
@@ -257,7 +255,7 @@ void MaterialBrowserView::modelAttached(Model *model)
     m_hasQuick3DImport = model->hasImport("QtQuick3D");
     m_widget->materialBrowserModel()->setIsQt6Project(externalDependencies().isQt6Project());
 
-    // Project load is already very busy and may even trigger puppet reset, so let's wait a moment
+    // Project load is already very busy and may even trigger QML Puppet reset, so let's wait a moment
     // before refreshing the model
     QTimer::singleShot(1000, model, [this] {
         refreshModel(true);
@@ -583,7 +581,7 @@ void MaterialBrowserView::importsChanged([[maybe_unused]] const Imports &addedIm
 
     loadPropertyGroups();
 
-    // Import change will trigger puppet reset, so we don't want to update previews immediately
+    // Import change will trigger QML Puppet reset, so we don't want to update previews immediately
     refreshModel(false);
 }
 
@@ -625,7 +623,7 @@ void MaterialBrowserView::currentStateChanged([[maybe_unused]] const ModelNode &
 void MaterialBrowserView::instancesCompleted(const QVector<ModelNode> &completedNodeList)
 {
     for (const ModelNode &node : completedNodeList) {
-        // We use root node completion as indication of puppet reset
+        // We use root node completion as indication of QML Puppet reset
         if (node.isRootNode()) {
             m_puppetResetPending  = false;
             QTimer::singleShot(1000, this, [this] {
@@ -740,11 +738,10 @@ void MaterialBrowserView::applyTextureToProperty(const QString &matId, const QSt
 {
     executeInTransaction(__FUNCTION__, [&] {
         if (m_appliedTextureId.isEmpty() && !m_appliedTexturePath.isEmpty()) {
-            auto texCreator = new CreateTexture(this);
-            ModelNode tex = texCreator->execute(m_appliedTexturePath, AddTextureMode::Texture);
+            CreateTexture texCreator(this);
+            ModelNode tex = texCreator.execute(m_appliedTexturePath, AddTextureMode::Texture);
             m_appliedTextureId = tex.id();
             m_appliedTexturePath.clear();
-            texCreator->deleteLater();
         }
 
         QTC_ASSERT(!m_appliedTextureId.isEmpty(), return);

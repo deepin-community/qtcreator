@@ -66,7 +66,7 @@ Utils::PathString createNormalizedPath(Utils::SmallStringView directoryPath,
 Storage::Import createImport(const QmlDom::Import &qmlImport,
                              SourceId sourceId,
                              Utils::SmallStringView directoryPath,
-                             QmlDocumentParser::ProjectStorage &storage)
+                             ProjectStorageType &storage)
 {
     using Storage::ModuleKind;
     using QmlUriKind = QQmlJS::Dom::QmlUri::Kind;
@@ -99,9 +99,9 @@ Storage::Import createImport(const QmlDom::Import &qmlImport,
 QualifiedImports createQualifiedImports(const QList<QmlDom::Import> &qmlImports,
                                         SourceId sourceId,
                                         Utils::SmallStringView directoryPath,
-                                        QmlDocumentParser::ProjectStorage &storage)
+                                        ProjectStorageType &storage)
 {
-    NanotraceHR::Tracer tracer{"create qualified imports"_t,
+    NanotraceHR::Tracer tracer{"create qualified imports",
                                category(),
                                keyValue("sourceId", sourceId),
                                keyValue("directoryPath", directoryPath)};
@@ -123,7 +123,7 @@ void addImports(Storage::Imports &imports,
                 const QList<QmlDom::Import> &qmlImports,
                 SourceId sourceId,
                 Utils::SmallStringView directoryPath,
-                QmlDocumentParser::ProjectStorage &storage)
+                ProjectStorageType &storage)
 {
     int importCount = 0;
     for (const QmlDom::Import &qmlImport : qmlImports) {
@@ -324,7 +324,7 @@ Storage::Synchronization::Type QmlDocumentParser::parse(const QString &sourceCon
                                                         SourceId sourceId,
                                                         Utils::SmallStringView directoryPath)
 {
-    NanotraceHR::Tracer tracer{"qml document parser parse"_t,
+    NanotraceHR::Tracer tracer{"qml document parser parse",
                                category(),
                                keyValue("sourceId", sourceId),
                                keyValue("directoryPath", directoryPath)};

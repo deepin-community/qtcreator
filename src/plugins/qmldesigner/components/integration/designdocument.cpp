@@ -50,8 +50,6 @@
 #include <QRandomGenerator>
 #include <QClipboard>
 
-using namespace ProjectExplorer;
-
 enum {
     debug = false
 };
@@ -323,7 +321,7 @@ bool DesignDocument::hasQmlParseErrors() const
 
 QString DesignDocument::displayName() const
 {
-    return fileName().toString();
+    return fileName().toUrlishString();
 }
 
 QString DesignDocument::simplfiedDisplayName() const
@@ -337,10 +335,10 @@ QString DesignDocument::simplfiedDisplayName() const
 void DesignDocument::updateFileName(const Utils::FilePath & /*oldFileName*/, const Utils::FilePath &newFileName)
 {
     if (m_documentModel)
-        m_documentModel->setFileUrl(QUrl::fromLocalFile(newFileName.toString()));
+        m_documentModel->setFileUrl(QUrl::fromLocalFile(newFileName.toUrlishString()));
 
     if (m_inFileComponentModel)
-        m_inFileComponentModel->setFileUrl(QUrl::fromLocalFile(newFileName.toString()));
+        m_inFileComponentModel->setFileUrl(QUrl::fromLocalFile(newFileName.toUrlishString()));
 
     emit displayNameChanged(displayName());
 }
@@ -545,7 +543,7 @@ void DesignDocument::close()
 void DesignDocument::updateSubcomponentManager()
 {
     Q_ASSERT(m_subComponentManager);
-    m_subComponentManager->update(QUrl::fromLocalFile(fileName().toString()),
+    m_subComponentManager->update(QUrl::fromLocalFile(fileName().toUrlishString()),
                                   currentModel()->imports() + currentModel()->possibleImports());
 }
 
@@ -752,29 +750,38 @@ void DesignDocument::redo()
     viewManager().resetPropertyEditorView();
 }
 
-static Target *getActiveTarget(DesignDocument *designDocument)
+static ProjectExplorer::Target *getActiveTarget(DesignDocument *designDocument)
 {
-    Project *currentProject = ProjectManager::projectForFile(designDocument->fileName());
+    auto currentProject = ProjectExplorer::ProjectManager::projectForFile(designDocument->fileName());
 
     if (!currentProject)
-        currentProject = ProjectTree::currentProject();
+        currentProject = ProjectExplorer::ProjectTree::currentProject();
 
     if (!currentProject)
         return nullptr;
 
-    QObject::connect(ProjectTree::instance(), &ProjectTree::currentProjectChanged,
-                     designDocument, &DesignDocument::updateActiveTarget, Qt::UniqueConnection);
+    QObject::connect(ProjectExplorer::ProjectTree::instance(),
+                     &ProjectExplorer::ProjectTree::currentProjectChanged,
+                     designDocument,
+                     &DesignDocument::updateActiveTarget,
+                     Qt::UniqueConnection);
 
-    QObject::connect(currentProject, &Project::activeTargetChanged,
-                     designDocument, &DesignDocument::updateActiveTarget, Qt::UniqueConnection);
+    QObject::connect(currentProject,
+                     &ProjectExplorer::Project::activeTargetChanged,
+                     designDocument,
+                     &DesignDocument::updateActiveTarget,
+                     Qt::UniqueConnection);
 
-    Target *target = currentProject->activeTarget();
+    auto target = currentProject->activeTarget();
 
     if (!target || !target->kit()->isValid())
         return nullptr;
 
-    QObject::connect(target, &Target::kitChanged,
-                     designDocument, &DesignDocument::updateActiveTarget, Qt::UniqueConnection);
+    QObject::connect(target,
+                     &ProjectExplorer::Target::kitChanged,
+                     designDocument,
+                     &DesignDocument::updateActiveTarget,
+                     Qt::UniqueConnection);
 
     return target;
 }

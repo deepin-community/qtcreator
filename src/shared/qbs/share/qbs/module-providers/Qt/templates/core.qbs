@@ -56,6 +56,7 @@ Module {
     property string mocName: "moc"
     property stringList mocFlags: []
     property string lreleaseName: "lrelease"
+    property string lupdateName: "lupdate"
     property string rccName: "rcc"
     property string qdocName: versionMajor >= 5 ? "qdoc" : "qdoc3"
     property stringList qdocEnvironment
@@ -354,16 +355,17 @@ Module {
             inputs: [objcppInput, cppInput]
             auxiliaryInputs: "qt_plugin_metadata"
             excludedInputs: "unmocable"
-            outputFileTags: ["hpp", "unmocable", "qt.core.metatypes.in"]
+            outputFileTags: ["hpp", "unmocable", "qt.core.metatypes.in", "qt.untranslatable"]
             outputArtifacts: Moc.outputArtifacts.apply(Moc, arguments)
             prepare: Moc.commands.apply(Moc, arguments)
         }
         Rule {
             name: "QtCoreMocRuleHpp"
             inputs: "hpp"
-            auxiliaryInputs: ["qt_plugin_metadata", "cpp", "objcpp"];
+            auxiliaryInputs: ["qt_plugin_metadata", "cpp", "objcpp"]
             excludedInputs: "unmocable"
-            outputFileTags: ["hpp", "cpp", "moc_cpp", "unmocable", "qt.core.metatypes.in"]
+            outputFileTags: ["hpp", "cpp", "moc_cpp", "unmocable", "qt.core.metatypes.in",
+                             "qt.untranslatable"]
             outputArtifacts: Moc.outputArtifacts.apply(Moc, arguments)
             prepare: Moc.commands.apply(Moc, arguments)
         }
@@ -374,7 +376,7 @@ Module {
         inputs: ["moc_cpp"]
         Artifact {
             filePath: "amalgamated_moc_" + product.targetName + ".cpp"
-            fileTags: ["cpp", "unmocable"]
+            fileTags: ["cpp", "unmocable", "qt.untranslatable"]
         }
         prepare: Moc.generateMocCppCommands(inputs, output)
     }
@@ -406,7 +408,7 @@ Module {
 
     Rule {
         inputs: ["qrc"]
-        outputFileTags: ["cpp", "cpp_intermediate_object"]
+        outputFileTags: ["cpp", "cpp_intermediate_object", "qt.untranslatable"]
         outputArtifacts: Rcc.rccOutputArtifacts(input)
         prepare: Rcc.rccCommands(product, input, output)
     }

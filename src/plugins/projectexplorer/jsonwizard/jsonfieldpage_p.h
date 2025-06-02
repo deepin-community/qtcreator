@@ -195,7 +195,7 @@ private:
     {
         QString result;
         QTextStream out(&result);
-        out << "PathChooser{path:" << m_path.toString()
+        out << "PathChooser{path:" << m_path.toUrlishString()
             << "; base:" << m_basePath
             << "; historyId:" << m_historyId
             << "; kind:" << (int)Utils::PathChooser::ExistingDirectory
@@ -215,6 +215,7 @@ public:
     bool suppressName() const override { return true; }
 
     void setChecked(bool);
+    bool isChecked() const;
 
 private:
     bool parseData(const QVariant &data, QString *errorMessage) override;

@@ -51,6 +51,7 @@ private slots:
     void includedMocCpp();
     void linkerVariant();
     void lrelease();
+    void lupdate();
     void metaTypes_data();
     void metaTypes();
     void mixedBuildVariants();
@@ -58,6 +59,7 @@ private slots:
     void mocFlags();
     void mocCompilerDefines();
     void mocSameFileName();
+    void noMocRunAfterTouchingOtherCppFile();
     void noRelinkOnQDebug();
     void noRelinkOnQDebug_data();
     void pkgconfig();

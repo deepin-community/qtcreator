@@ -81,15 +81,12 @@ RuleNode::ApplicationResult RuleNode::apply(
 {
     ApplicationResult result;
     ArtifactSet allCompatibleInputs = currentInputArtifacts();
-    const ArtifactSet explicitlyDependsOn
-            = RulesApplicator::collectExplicitlyDependsOn(m_rule.get(), product.get());
-    const ArtifactSet auxiliaryInputs
-            = RulesApplicator::collectAuxiliaryInputs(m_rule.get(), product.get());
+    const ArtifactSet explicitlyDependsOn = RulesApplicator::collectExplicitlyDependsOn(
+        m_rule.get(), product.get());
     const ArtifactSet addedInputs = allCompatibleInputs - m_oldInputArtifacts;
     const ArtifactSet removedInputs = m_oldInputArtifacts - allCompatibleInputs;
-    const ArtifactSet changedInputs = changedInputArtifacts(allCompatibleInputs,
-                                                            explicitlyDependsOn,
-                                                            auxiliaryInputs);
+    const ArtifactSet changedInputs = changedInputArtifacts(
+        allCompatibleInputs, explicitlyDependsOn);
     bool upToDate = changedInputs.empty() && addedInputs.empty() && removedInputs.empty();
 
     qCDebug(lcBuildGraph).noquote().nospace()
@@ -172,9 +169,13 @@ RuleNode::ApplicationResult RuleNode::apply(
             // parent must always have a transformer, because it's generated.
             QBS_CHECK(parent->transformer);
 
-            // artifact is a former input of m_rule and parent was created by m_rule
-            // the inputs of the transformer must contain artifact
-            QBS_CHECK(parent->transformer->inputs.contains(artifact));
+            // Artifact is a former input of m_rule and parent was created by m_rule.
+            // The inputs of the transformer must contain artifact, or it is a scanned dependency,
+            // in which case it is not relevant here.
+            if (!parent->transformer->inputs.contains(artifact)) {
+                QBS_CHECK(parent->childrenAddedByScanner.contains(artifact));
+                continue;
+            }
 
             if (removedInputForcesOutputRemoval)
                 outputArtifactsToRemove += parent;
@@ -203,7 +204,6 @@ RuleNode::ApplicationResult RuleNode::apply(
     }
     m_oldInputArtifacts = allCompatibleInputs;
     m_oldExplicitlyDependsOn = explicitlyDependsOn;
-    m_oldAuxiliaryInputs = auxiliaryInputs;
     product->topLevelProject()->buildData->setDirty();
     return result;
 }
@@ -273,9 +273,8 @@ ArtifactSet RuleNode::currentInputArtifacts() const
     return s;
 }
 
-ArtifactSet RuleNode::changedInputArtifacts(const ArtifactSet &allCompatibleInputs,
-                                            const ArtifactSet &explicitlyDependsOn,
-                                            const ArtifactSet &auxiliaryInputs) const
+ArtifactSet RuleNode::changedInputArtifacts(
+    const ArtifactSet &allCompatibleInputs, const ArtifactSet &explicitlyDependsOn) const
 {
     ArtifactSet changedInputArtifacts;
     if (explicitlyDependsOn != m_oldExplicitlyDependsOn)
@@ -284,12 +283,6 @@ ArtifactSet RuleNode::changedInputArtifacts(const ArtifactSet &allCompatibleInpu
         return changedInputArtifacts;
 
     for (Artifact * const artifact : explicitlyDependsOn) {
-        if (artifact->timestamp() > m_lastApplicationTime)
-            return allCompatibleInputs;
-    }
-    if (auxiliaryInputs != m_oldAuxiliaryInputs)
-        return allCompatibleInputs;
-    for (Artifact * const artifact : auxiliaryInputs) {
         if (artifact->timestamp() > m_lastApplicationTime)
             return allCompatibleInputs;
     }
@@ -311,11 +304,6 @@ void RuleNode::removeOldInputArtifact(Artifact *artifact)
         qCDebug(lcBuildGraph) << "remove old explicitlyDependsOn" << artifact->filePath()
                               << "from rule" << rule()->toString();
         m_oldExplicitlyDependsOn.insert(nullptr);
-    }
-    if (m_oldAuxiliaryInputs.remove(artifact)) {
-        qCDebug(lcBuildGraph) << "remove old auxiliaryInput" << artifact->filePath()
-                              << "from rule" << rule()->toString();
-        m_oldAuxiliaryInputs.insert(nullptr);
     }
 }
 

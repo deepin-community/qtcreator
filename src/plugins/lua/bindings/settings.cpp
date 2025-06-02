@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "../luaengine.h"
+#include "utils.h"
 
 #include <utils/aspects.h>
 #include <utils/environment.h>
@@ -14,6 +15,7 @@
 
 using namespace Utils;
 using namespace Core;
+using namespace std::string_view_literals;
 
 namespace Lua::Internal {
 
@@ -318,7 +320,7 @@ public:
 void setupSettingsModule()
 {
     registerProvider("Settings", [pool = ObjectPool()](sol::state_view lua) -> sol::object {
-        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
+        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
         sol::table async = lua.script("return require('async')", "_process_").get<sol::table>();
         sol::function wrap = async["wrap"];
 
@@ -478,11 +480,11 @@ void setupSettingsModule()
                     options,
                     [](ToggleAspect *aspect, const std::string &key, const sol::object &value) {
                         if (key == "offIcon")
-                            aspect->setOffIcon(QIcon(value.as<QString>()));
+                            aspect->setOffIcon(toIcon(value.as<IconFilePathOrString>())->icon());
                         else if (key == "offTooltip")
                             aspect->setOffTooltip(value.as<QString>());
                         else if (key == "onIcon")
-                            aspect->setOnIcon(QIcon(value.as<QString>()));
+                            aspect->setOnIcon(toIcon(value.as<IconFilePathOrString>())->icon());
                         else if (key == "onTooltip")
                             aspect->setOnTooltip(value.as<QString>());
                         else if (key == "onText")
@@ -657,21 +659,20 @@ void setupSettingsModule()
         public:
             OptionsPage(const ScriptPluginSpec *spec, const sol::table &options)
             {
-                setId(
-                    Id::fromString(QString("%1.%2").arg(spec->id).arg(options.get<QString>("id"))));
                 setCategory(Id::fromString(
-                    QString("%1.%2").arg(spec->id).arg(options.get<QString>("categoryId"))));
-
-                setDisplayName(options.get<QString>("displayName"));
-                setDisplayCategory(options.get<QString>("displayCategory"));
-
-                const FilePath catIcon = options.get<std::optional<FilePath>>("categoryIconPath")
+                    QString("%1.%2").arg(spec->id).arg(options.get<QString>("categoryId"sv))));
+                const QString catName = options.get<QString>("displayCategory"sv);
+                const FilePath catIcon = options.get<std::optional<FilePath>>("categoryIconPath"sv)
                                              .value_or(FilePath::fromUserInput(
-                                                 options.get_or<QString>("categoryIconPath", {})));
+                                                 options.get_or<QString>("categoryIconPath"sv, {})));
+                if (!catName.isEmpty() || !catIcon.isEmpty())
+                    IOptionsPage::registerCategory(category(), catName, catIcon);
 
-                setCategoryIconPath(catIcon);
+                setId(Id::fromString(
+                    QString("%1.%2").arg(spec->id).arg(options.get<QString>("id"sv))));
+                setDisplayName(options.get<QString>("displayName"sv));
 
-                AspectContainer *container = options.get<AspectContainer *>("aspectContainer");
+                AspectContainer *container = options.get<AspectContainer *>("aspectContainer"sv);
                 if (container->isAutoApply())
                     throw sol::error("AspectContainer must have autoApply set to false");
 

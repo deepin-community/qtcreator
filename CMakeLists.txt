@@ -77,6 +77,21 @@ find_package(Qt6
   REQUIRED
 )
 
+find_package(Qt6 OPTIONAL_COMPONENTS Quick QuickWidgets Designer DesignerComponentsPrivate
+                                     Help SerialPort Svg Tools LinguistTools QUIET)
+
+if (QT_VERSION VERSION_GREATER_EQUAL 6.9.0)
+  find_package(Qt6 OPTIONAL_COMPONENTS
+    CorePrivate
+    Core5CompatPrivate
+    GuiPrivate
+    DesignerComponentsPrivate
+    QmlPrivate
+    QuickPrivate
+    QUIET
+  )
+endif()
+
 # depending on Qt version and compiler version enable or disable Qml Designer
 # can be overwritten by variable WITH_QMLDESIGNER / QTC_WITH_QMLDESIGNER (env)
 configure_qml_designer(${Qt6_VERSION})
@@ -106,9 +121,6 @@ if (MSVC AND QT_FEATURE_static_runtime)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-find_package(Qt6 OPTIONAL_COMPONENTS Quick QuickWidgets Designer DesignerComponentsPrivate
-                                     Help SerialPort Svg Tools LinguistTools QUIET)
-
 find_package(Threads)
 find_package(Clang QUIET)
 
@@ -123,6 +135,32 @@ if(CRASHPAD_BACKEND_URL AND (WIN32 OR APPLE)) # Linux is not supported for now
   endif()
 endif()
 add_feature_info("Build with Crashpad" ${BUILD_WITH_CRASHPAD} "")
+
+set(SENTRY_DSN "$ENV{QTC_SENTRY_DSN}" CACHE STRING "Data Source Name to use for sending Sentry events.")
+set(SENTRY_PROJECT "" CACHE STRING "Project ID to use for sending Sentry events.")
+set(BUILD_WITH_SENTRY OFF)
+if(SENTRY_DSN AND SENTRY_PROJECT)
+  find_package(sentry QUIET)
+  if(TARGET sentry::sentry)
+    set(BUILD_WITH_SENTRY ON)
+    get_target_property(__sentry_configs sentry::sentry IMPORTED_CONFIGURATIONS)
+    get_target_property(__sentry_lib sentry::sentry IMPORTED_LOCATION_${__sentry_configs})
+    install(FILES ${__sentry_lib}
+      DESTINATION "${IDE_LIBRARY_ARCHIVE_PATH}"
+      COMPONENT Dependencies
+      EXCLUDE_FROM_ALL
+    )
+    if (TARGET sentry_crashpad::crashpad_handler)
+      get_target_property(SENTRY_CRASHPAD_PATH sentry_crashpad::crashpad_handler IMPORTED_LOCATION_${__sentry_configs})
+      install(PROGRAMS ${SENTRY_CRASHPAD_PATH}
+        DESTINATION "${IDE_LIBEXEC_PATH}"
+        COMPONENT Dependencies
+        EXCLUDE_FROM_ALL
+      )
+    endif()
+  endif()
+endif()
+add_feature_info("Build with Sentry" ${BUILD_WITH_SENTRY} "")
 
 function (set_if_target var target)
    if (TARGET "${target}")

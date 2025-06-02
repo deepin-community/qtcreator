@@ -267,8 +267,9 @@ void ProjectBuildData::store(PersistentPool &pool)
     serializationOp<PersistentPool::Store>(pool);
 }
 
-
-BuildDataResolver::BuildDataResolver(Logger logger) : m_logger(std::move(logger))
+BuildDataResolver::BuildDataResolver(Logger logger, const SetupProjectParameters &parameters)
+    : m_logger(std::move(logger))
+    , m_parameters(parameters)
 {
 }
 
@@ -377,11 +378,9 @@ static bool areRulesCompatible(const RuleNode *ruleNode, const RuleNode *depende
         return false;
     if (ruleNode->rule()->inputsFromDependencies.intersects(outTags))
         return true;
-    if (!dependencyRule->product->fileTags.intersects(outTags))
-        return false;
     if (ruleNode->rule()->explicitlyDependsOnFromDependencies.intersects(outTags))
         return true;
-    return ruleNode->rule()->auxiliaryInputs.intersects(outTags);
+    return ruleNode->rule()->auxiliaryInputsFromDependencies.intersects(outTags);
 }
 
 void BuildDataResolver::resolveProductBuildData(const ResolvedProductPtr &product)
@@ -395,7 +394,10 @@ void BuildDataResolver::resolveProductBuildData(const ResolvedProductPtr &produc
     ArtifactSetByFileTag artifactsPerFileTag;
 
     for (const auto &dependency : std::as_const(product->dependencies)) {
-        QBS_CHECK(dependency->enabled);
+        if (!dependency->enabled) {
+            QBS_CHECK(m_parameters.productErrorMode() == ErrorHandlingMode::Relaxed);
+            continue;
+        }
         resolveProductBuildData(dependency);
     }
 
@@ -451,11 +453,12 @@ void BuildDataResolver::connectRulesToDependencies(const ResolvedProductPtr &pro
             for (RuleNode *ruleNode : ruleNodes) {
                 static const FileTag installableTag("installable");
                 if (areRulesCompatible(ruleNode, depRuleNode)
-                        || ((ruleNode->rule()->inputsFromDependencies.contains(installableTag)
-                             || ruleNode->rule()->auxiliaryInputs.contains(installableTag)
-                             || ruleNode->rule()->explicitlyDependsOnFromDependencies.contains(
-                                 installableTag))
-                            && isRootRuleNode(depRuleNode))) {
+                    || ((ruleNode->rule()->inputsFromDependencies.contains(installableTag)
+                         || ruleNode->rule()->auxiliaryInputsFromDependencies.contains(
+                             installableTag)
+                         || ruleNode->rule()->explicitlyDependsOnFromDependencies.contains(
+                             installableTag))
+                        && isRootRuleNode(depRuleNode))) {
                     connect(ruleNode, depRuleNode);
                 }
             }

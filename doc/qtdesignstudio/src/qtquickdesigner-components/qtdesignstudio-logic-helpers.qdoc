@@ -1,4 +1,4 @@
-// Copyright (C) 2021 The Qt Company Ltd.
+// Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
@@ -6,7 +6,7 @@
     \previouspage quick-design-effects.html
     \nextpage quick-animations.html
 
-    \title Logic Helpers
+    \title Logic helpers
 
     To have your UI perform certain operations, you might need to write
     JavaScript expressions for conditions or convert numbers to strings.
@@ -22,7 +22,7 @@
 
     Logic helpers are invisible components that you can use in connection with
     controls, such as a \l {slider-control}{Slider} or \l {Check Box}.
-    To use a logic helper, drag-and-drop it from \uicontrol Components >
+    To use a logic helper, drag it from \uicontrol Components >
     \uicontrol {Qt Quick Studio Logic Helper} to \l Navigator. If you cannot
     find the logic helpers in \uicontrol {Components}, you need to add the
     \uicontrol {Qt Quick Studio Logic Helper} module to your project,
@@ -31,7 +31,7 @@
     The following sections describe the different types of logic helpers in more
     detail.
 
-    \section1 Boolean Helpers
+    \section1 Boolean helpers
 
     You can use logic helpers to bind property values using the boolean AND, OR,
     and NOT operators.
@@ -42,13 +42,13 @@
     The output is evaluated as \c true if both inputs are \c true.
 
     For example, we could use the checked state of two check boxes to determine
-    the checked state of a third one. First, we drag-and-drop three instances of
+    the checked state of a third one. First, we drag three instances of
     the \uicontrol {Check Box} components and one instance of the
     \uicontrol {And Operator} component to \uicontrol Navigator (1). Then, we
     select the \uicontrol {And Operator} component instance (2) and set its
     properties in \l Properties (3).
 
-    We select \inlineimage icons/action-icon.png
+    We select \imageactionicon
     next to the \uicontrol {Input 01} field to display the \uicontrol Actions
     menu, and then \uicontrol {Set Binding} (4) to open the
     \uicontrol {Binding Editor} (5). There we bind the value of the \c input01
@@ -64,7 +64,7 @@
 
     \image studio-logic-helper-and-checkbox3.png "Binding Checked property to Output property."
 
-    When we \l{Previewing on Desktop}{preview} our UI, all the check boxes are
+    When we \l{Previewing on desktop}{preview} our UI, all the check boxes are
     initially unchecked. However, when we select the first and second check box,
     the third one also becomes checked.
 
@@ -81,7 +81,7 @@
     condition is not met.
 
     For example, we could specify that if one check box is checked, another
-    one cannot be checked. First, we drag-and-drop two instances of the
+    one cannot be checked. First, we drag two instances of the
     \uicontrol {Check Box} component and one instance of the
     \uicontrol {Not Operator} component to \uicontrol Navigator. Then, we select
     the \uicontrol {Not Operator} component instance and set its properties in
@@ -97,12 +97,12 @@
 
     \image studio-logic-helper-not-check-box.png "Check box checked property bound to NOT operator output"
 
-    When we preview our UI, the second check box is initially checked. However,
+    When we preview our UI, the second check box is initially selected. However,
     when we select the first check box, the second one is automatically cleared.
 
     \image studio-logic-helper-not-operator.gif "Previewing two check boxes bound with a NOT operator"
 
-    \section1 Bi-directional Binding
+    \section1 Bi-Directional Binding
 
     The \uicontrol {Bi Direct. Binding} component binds the values of two
     controls together, so that when one value is changed, the other one
@@ -110,7 +110,7 @@
     a slider and checkbox. Typically, it is used to bind a backend value
     to a control, such as a slider.
 
-    For example, to synchronize the values of two sliders, we drag-and-drop two
+    For example, to synchronize the values of two sliders, we drag two
     instances of the \uicontrol Slider component and one instance of the
     \uicontrol {Bi Direct. Binding} component to the same parent component in
     \uicontrol Navigator. Then, we select the bi-directional binding instance
@@ -133,14 +133,14 @@
     \section1 String Mapper
 
     The \uicontrol {String Mapper} component maps numbers to strings. First, you
-    \l{Adding Bindings Between Properties}{add a binding} between the string
+    \l{Adding bindings between properties}{add a binding} between the string
     mapper \c input property and the \c value property of the control that you
     want to fetch the values from. Then, you add a binding between the \c text
     property of the string mapper and that of the component that will display
     the string.
 
     For example, to use a \l Text component to display the value of a
-    slider, we drag-and-drop \uicontrol Text, \uicontrol Slider, and
+    slider, we drag \uicontrol Text, \uicontrol Slider, and
     \uicontrol {String Mapper} components to the same parent component. Then,
     we select the \uicontrol {String Mapper} instance in \uicontrol Navigator
     to display its properties in \uicontrol Properties. There we bind the value
@@ -175,7 +175,7 @@
 
     For example, to restrict the maximum value of a slider to 0.60,
     regardless of the maximum value set in the slider properties,
-    we drag-and-drop a \uicontrol {Min Max Mapper} to our example
+    we drag a \uicontrol {Min Max Mapper} to our example
     above. We select it to display its properties in \uicontrol Properties.
     Then, we bind the value of the \uicontrol Input property of the mapper to
     the value of the \c value property of the slider and set the value
@@ -234,7 +234,7 @@
 
     \image studio-logic-helper-range-mapper.gif "Previewing a range mapper"
 
-    \section1 Combining Several Logic Helpers
+    \section1 Combining several logic helpers
 
     You can combine several logic helpers of the same type or different types to
     define the application logic.
@@ -291,7 +291,7 @@
 
     We can now evaluate values of the \uicontrol {Min Max Mapper}
     and \uicontrol {And Operator} components to apply different
-    \l{Applying States}{states} that display different button text
+    \l{Applying states}{states} that display different button text
     and sell hints. For this purpose, we create the states and set
     \c when conditions for them.
 
@@ -330,43 +330,43 @@
     \youtube
     \endomit
 
-    \section1 Summary of Logic Helpers
+    \section1 Summary of the logic helper components
 
     The following table summarizes the available logic helpers.
 
     \table
     \header
         \li Icon
-        \li Logic Helper
+        \li Logic helper
         \li Description
     \row
-        \li \inlineimage icons/lc-and-operator-16px.png
+        \li \imagelcandoperator16px
         \li And Operator
         \li Boolean AND.
     \row
-        \li \inlineimage icons/lc-bidirectional-binding-16px.png
+        \li \imagelcbidirectionalbinding16px
         \li Bi Direct. Binding
         \li A bi-directional binding that binds two values in both directions
             and keeps them in sync.
     \row
-        \li \inlineimage icons/lc-min-max-16px.png
+        \li \imagelcminmax16px
         \li Min Max Mapper
         \li Maps a number to another number with a minimum and maximum value.
     \row
-        \li \inlineimage icons/lc-not-operator-16px.png
+        \li \imagelcnotoperator16px
         \li Not Operator
         \li Boolean NOT.
     \row
-        \li \inlineimage icons/lc-or-operator-16px.png
+        \li \imagelcoroperator16px
         \li Or Operator
         \li Boolean OR.
     \row
-        \li \inlineimage icons/lc-range-mapper-16px.png
+        \li \imagelcrangemapper16px
         \li Range Mapper
         \li Maps a numerical range to another range, so that the output value
             of the second range follows the input value of the original range.
     \row
-        \li \inlineimage icons/lc-string-mapper-16px.png
+        \li \imagelcstringmapper16px
         \li String Mapper
         \li Maps a number to a string with the defined precision.
     \endtable

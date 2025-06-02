@@ -48,7 +48,7 @@ void FileStoreIo::write(const QByteArray &data)
 
 QString FileStoreIo::fullFilePath(const QString &fileName) const
 {
-    return Core::ICore::userResourcePath(fileName).toString();
+    return Core::ICore::userResourcePath(fileName).toUrlishString();
 }
 
 UserPresetsStore::UserPresetsStore(const QString &fileName, StorePolicy policy)
@@ -67,13 +67,16 @@ void UserPresetsStore::savePresets(const std::vector<UserPresetData> &presetItem
     QJsonArray jsonArray;
 
     for (const auto &preset : presetItems) {
-        QJsonObject obj({{"categoryId", preset.categoryId},
-                         {"wizardName", preset.wizardName},
-                         {"name", preset.name},
-                         {"screenSize", preset.screenSize},
-                         {"useQtVirtualKeyboard", preset.useQtVirtualKeyboard},
-                         {"qtVersion", preset.qtVersion},
-                         {"styleName", preset.styleName}});
+        QJsonObject obj{
+            {"categoryId", preset.categoryId},
+            {"wizardName", preset.wizardName},
+            {"name", preset.name},
+            {"screenSize", preset.screenSize},
+            {"useQtVirtualKeyboard", preset.useQtVirtualKeyboard},
+            {"enableCMakeGeneration", preset.enableCMakeGeneration},
+            {"qtVersion", preset.qtVersion},
+            {"styleName", preset.styleName},
+        };
 
         jsonArray.append(QJsonValue{obj});
     }
@@ -164,6 +167,7 @@ std::vector<UserPresetData> UserPresetsStore::fetchAll() const
         preset.name = obj["name"].toString();
         preset.screenSize = obj["screenSize"].toString();
         preset.useQtVirtualKeyboard = obj["useQtVirtualKeyboard"].toBool();
+        preset.enableCMakeGeneration = obj["enableCMakeGeneration"].toBool();
         preset.qtVersion = obj["qtVersion"].toString();
         preset.styleName = obj["styleName"].toString();
 

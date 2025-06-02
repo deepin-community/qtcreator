@@ -9,6 +9,7 @@
 #include <modelutils.h>
 #include <nodemetainfo.h>
 #include <qmldesignerplugin.h>
+#include <qmldesignertr.h>
 #include <qmlitemnode.h>
 #include <qmlobjectnode.h>
 #include <rewriterview.h>
@@ -85,13 +86,13 @@ private:
     std::atomic<bool> m_quitDumper;
 };
 
-
-
-AssetExporter::AssetExporter(AssetExporterView *view, ProjectExplorer::Project *project, QObject *parent) :
-    QObject(parent),
-    m_currentState(*this),
-    m_project(project),
-    m_view(view)
+AssetExporter::AssetExporter(AssetExporterView *view,
+                             ProjectExplorer::Project *project,
+                             ProjectStorageDependencies projectStorageDependencies)
+    : m_currentState(*this)
+    , m_project(project)
+    , m_view(view)
+    , m_projectStorageDependencies{projectStorageDependencies}
 {
     connect(m_view, &AssetExporterView::loadingFinished, this, &AssetExporter::onQmlFileLoaded);
     connect(m_view, &AssetExporterView::loadingError, this, &AssetExporter::notifyLoadError);
@@ -260,7 +261,14 @@ void AssetExporter::preprocessQmlFile(const Utils::FilePath &path)
 {
     // Load the QML file and assign UUIDs to items having none.
     // Meanwhile cache the Component UUIDs as well
-    ModelPointer model(Model::create("Item", 2, 7));
+#ifdef QDS_USE_PROJECTSTORAGE
+    ModelPointer model = Model::create(m_projectStorageDependencies,
+                                       "Item",
+                                       {Import::createLibraryImport("QtQuick")},
+                                       path.path());
+#else
+    ModelPointer model = Model::create("Item", 2, 7);
+#endif
     Utils::FileReader reader;
     if (!reader.fetch(path)) {
         ExportNotification::addError(tr("Cannot preprocess file: %1. Error %2")
@@ -280,7 +288,7 @@ void AssetExporter::preprocessQmlFile(const Utils::FilePath &path)
     rewriterView->restoreAuxiliaryData();
     ModelNode rootNode = rewriterView->rootModelNode();
     if (!rootNode.isValid()) {
-        ExportNotification::addError(tr("Cannot preprocess file: %1").arg(path.toString()));
+        ExportNotification::addError(tr("Cannot preprocess file: %1").arg(path.toUrlishString()));
         return;
     }
 
@@ -309,7 +317,7 @@ void AssetExporter::preprocessQmlFile(const Utils::FilePath &path)
 
     // Cache component UUID
     const QString uuid = rootNode.auxiliaryDataWithDefault(uuidProperty).toString();
-    m_componentUuidCache[path.toString()] = uuid;
+    m_componentUuidCache[path.toUrlishString()] = uuid;
 }
 
 bool AssetExporter::assignUuids(const ModelNode &root)
@@ -386,7 +394,7 @@ void AssetExporter::writeMetadata() const
     auto writeFile = [](const Utils::FilePath &path, const QJsonArray &artboards) {
         if (!makeParentPath(path)) {
             ExportNotification::addError(tr("Writing metadata failed. Cannot create file %1").
-                                         arg(path.toString()));
+                                         arg(path.toUrlishString()));
             return;
         }
 
@@ -530,14 +538,12 @@ void AssetDumper::savePixmap(const QPixmap &p, Utils::FilePath &path) const
     }
 
     if (!makeParentPath(path)) {
-        ExportNotification::addError(AssetExporter::tr("Error creating asset directory. %1")
-                                     .arg(path.fileName()));
+        ExportNotification::addError(Tr::tr("Error creating asset directory. %1").arg(path.fileName()));
         return;
     }
 
-    if (!p.save(path.toString())) {
-        ExportNotification::addError(AssetExporter::tr("Error saving asset. %1")
-                                     .arg(path.fileName()));
+    if (!p.save(path.toUrlishString())) {
+        ExportNotification::addError(Tr::tr("Error saving asset. %1").arg(path.fileName()));
     }
 }
 

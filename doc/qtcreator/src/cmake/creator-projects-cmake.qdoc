@@ -94,7 +94,7 @@
     source files are located. To hide the subfolder names and arrange the files
     only according to their source group, select \preferences >
     \uicontrol CMake > \uicontrol General, and then
-    deselect the \uicontrol {Show subfolders inside source group folders} check
+    clear the \uicontrol {Show subfolders inside source group folders} check
     box. The change takes effect after you select \uicontrol Build >
     \uicontrol {Run CMake}.
 
@@ -190,7 +190,7 @@
     The kit also specifies the CMake generator that is used for producing
     project files for \QC and the initial configuration parameters:
 
-    \image qtcreator-kits-cmake.png {Kits preferences}
+    \image qtcreator-preferences-kits.webp {Kits preferences}
 
     \sa {Build applications on remote Linux devices}, {Build on Docker devices},
     {Build with CMake}{How To: Build with CMake},
@@ -271,7 +271,7 @@
         \li \c{$ENV} for environment variables
     \endlist
 
-    Press \key Tab or \key Enter to accept the selected suggestion and complete
+    Select \key Tab or \key Enter to accept the selected suggestion and complete
     the code.
 
     \sa {Build with CMake}{How To: Build with CMake}, {CMake}, {Completion},

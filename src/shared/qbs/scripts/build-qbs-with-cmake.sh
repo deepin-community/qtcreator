@@ -49,7 +49,7 @@ BUILD_OPTIONS="\
     -DWITH_UNIT_TESTS=1 \
     -DQBS_INSTALL_HTML_DOCS=1 \
     -DQBS_INSTALL_QCH_DOCS=1 \
-    ${BUILD_OPTIONS} \
+    ${BUILD_OPTIONS:-} \
 "
 
 EXE_SUFFIX=""
@@ -76,6 +76,11 @@ pushd build
 cmake -GNinja -DQt5_DIR=${QT_DIR}/lib/cmake/Qt5/ ${BUILD_OPTIONS} ..
 cmake --build .
 cmake --install . --prefix "install-root"
+
+WITH_TESTS=${WITH_TESTS:-1}
+if [ "$WITH_TESTS" -eq 0 ]; then
+    exit 0
+fi
 
 QBS_AUTOTEST_PROFILE="${QBS_AUTOTEST_PROFILE:-}"
 #
@@ -111,5 +116,3 @@ fi
 (while true; do echo "" && sleep 590; done) &
 trap "kill $!; wait $! 2>/dev/null || true; killall sleep || true" EXIT
 ctest -j $(nproc --all) --output-on-failure
-
-popd

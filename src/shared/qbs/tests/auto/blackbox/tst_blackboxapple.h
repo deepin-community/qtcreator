@@ -68,6 +68,7 @@ private slots:
     void iconset();
     void iconsetApp();
     void infoPlist();
+    void privacymanifest();
     void infoPlistVariables();
     void lipoSymlinks();
     void lipoSymlinks_data();

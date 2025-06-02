@@ -31,6 +31,13 @@ public:
                               const QList<QmlDesigner::ModelNode> &lastSelectedNodeList) override;
     void nodeAboutToBeRemoved(const QmlDesigner::ModelNode &removedNode) override;
 
+    void dragStarted(QMimeData *mimeData) override;
+    void dragEnded() override;
+
+    void highlightSupportedProperties(bool highlight, const QString &suffix = {});
+
+    static void registerDeclarativeTypes();
+
 private:
     void customNotification(const AbstractView *view, const QString &identifier,
                             const QList<QmlDesigner::ModelNode> &nodeList, const QList<QVariant> &data) override;

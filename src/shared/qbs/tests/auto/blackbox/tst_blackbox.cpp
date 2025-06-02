@@ -151,6 +151,17 @@ bool TestBlackbox::prepareAndRunConan()
         qInfo() << "conan is not installed or not available in PATH.";
         return false;
     }
+
+    const auto conanVersion = this->conanVersion(executable);
+    if (!conanVersion.isValid()) {
+        qInfo() << "Can't get conan version.";
+        return false;
+    }
+    if (compare(conanVersion, qbs::Version(2, 6)) < 0) {
+        qInfo() << "This test apples only to conan 2.6 and newer.";
+        return false;
+    }
+
     const auto profilePath = QDir::homePath() + "/.conan2/profiles/qbs-test-libs";
     if (!QFileInfo(profilePath).exists()) {
         qInfo() << "conan profile is not installed, run './scripts/setup-conan-profiles.sh'";
@@ -1550,6 +1561,22 @@ void TestBlackbox::vcsGit()
     QVERIFY2(m_qbsStdout.contains("compiling main.cpp"), m_qbsStderr.constData());
     newRepoState = getRepoStateFromApp();
     QVERIFY(oldRepoState != newRepoState);
+
+    // https://bugreports.qt.io/projects/QBS/issues/QBS-1814
+    oldRepoState = newRepoState;
+    WAIT_FOR_NEW_TIMESTAMP();
+    touch("loremipsum.txt");
+    git.start(gitFilePath, QStringList({"add", "loremipsum.txt"}));
+    QVERIFY(waitForProcessSuccess(git));
+    git.start(gitFilePath, QStringList({"commit", "-m", "loremipsum!"}));
+    QVERIFY(waitForProcessSuccess(git));
+    // Remove .git/logs/HEAD
+    QFile::remove(repoDir.path() + "/.git/logs/HEAD");
+    QCOMPARE(runQbs(params), 0);
+    QVERIFY2(m_qbsStdout.contains("generating my-repo-state.h"), m_qbsStderr.constData());
+    QVERIFY2(m_qbsStdout.contains("compiling main.cpp"), m_qbsStderr.constData());
+    newRepoState = getRepoStateFromApp();
+    QVERIFY(oldRepoState != newRepoState);
 }
 
 void TestBlackbox::vcsSubversion()
@@ -1996,17 +2023,20 @@ void TestBlackbox::conanfileProbe()
 {
     QFETCH(bool, forceFailure);
 
-    QSKIP("Skip this test");
-
     QString executable = findExecutable({"conan"});
     if (executable.isEmpty())
         QSKIP("conan is not installed or not available in PATH.");
 
+    const auto conanVersion = this->conanVersion(executable);
+    if (!conanVersion.isValid())
+        QSKIP("Can't get conan version.");
+    if (compare(conanVersion, qbs::Version(2, 0)) >= 0)
+        QSKIP("This test does not apply to conan 2.0 and newer.");
+
     // We first build a dummy package testlib and use that as dependency
     // in the testapp package.
     QDir::setCurrent(testDataDir + "/conanfile-probe/testlib");
-    QStringList arguments { "create", "-o", "opt=True", "-s", "os=AIX", ".",
-                            "testlib/1.2.3@qbs/testing" };
+    QStringList arguments{"create -o opt=True -s os=AIX . testlib/1.2.3@qbs/testing"};
     QProcess conan;
     conan.start(executable, arguments);
     QVERIFY(waitForProcessSuccess(conan));
@@ -3409,6 +3439,16 @@ void TestBlackbox::overrideProjectProperties()
     QCOMPARE(runQbs(params), 0);
 }
 
+void TestBlackbox::partiallyBuiltDependency()
+{
+    QDir::setCurrent(testDataDir + "/partially-built-dependency");
+    QCOMPARE(runQbs(QbsRunParameters({"-p", "p"})), 0);
+    QCOMPARE(m_qbsStdout.count("generating main.cpp"), 1);
+    QCOMPARE(m_qbsStdout.count("copying main.cpp"), 1);
+    QCOMPARE(m_qbsStdout.count("compiling main.cpp"), 1);
+    QVERIFY2(!m_qbsStdout.contains("linking"), m_qbsStdout.constData());
+}
+
 void TestBlackbox::pathProbe_data()
 {
     QTest::addColumn<QString>("projectFile");
@@ -4696,7 +4736,7 @@ void TestBlackbox::fileDependencies()
     WAIT_FOR_NEW_TIMESTAMP();
     touch("awesomelib/magnificent.h");
     QCOMPARE(runQbs(), 0);
-    QVERIFY2(m_qbsStdout.contains("compiling narf.cpp [myapp]"), m_qbsStdout.constData());
+    QVERIFY2(m_qbsStdout.contains("[myapp] compiling narf.cpp"), m_qbsStdout.constData());
     QVERIFY(!m_qbsStdout.contains("compiling zort.cpp"));
 }
 
@@ -7067,7 +7107,7 @@ void TestBlackbox::qbsSession()
     // Wait for and verify hello packet.
     QJsonObject receivedMessage = getNextSessionPacket(sessionProc, incomingData);
     QCOMPARE(receivedMessage.value("type"), "hello");
-    QCOMPARE(receivedMessage.value("api-level").toInt(), 6);
+    QCOMPARE(receivedMessage.value("api-level").toInt(), 8);
     QCOMPARE(receivedMessage.value("api-compat-level").toInt(), 2);
 
     // Resolve & verify structure
@@ -7994,7 +8034,7 @@ void TestBlackbox::checkTimestamps()
     QVERIFY2(!m_qbsStdout.contains("compiling main.cpp"), m_qbsStdout.constData());
 }
 
-void TestBlackbox::chooseModuleInstanceByPriority()
+void TestBlackbox::chooseModuleInstanceByPriorityAndVersion()
 {
     QFETCH(QString, idol);
     QFETCH(QStringList, expectedSubStrings);
@@ -8024,7 +8064,7 @@ void TestBlackbox::chooseModuleInstanceByPriority()
     }
 }
 
-void TestBlackbox::chooseModuleInstanceByPriority_data()
+void TestBlackbox::chooseModuleInstanceByPriorityAndVersion_data()
 {
     QTest::addColumn<QString>("idol");
     QTest::addColumn<QStringList>("expectedSubStrings");

@@ -57,7 +57,6 @@ ContentLibraryView::ContentLibraryView(AsynchronousImageCache &imageCache,
                                        ExternalDependenciesInterface &externalDependencies)
     : AbstractView(externalDependencies)
     , m_imageCache(imageCache)
-    , m_createTexture(this)
 {}
 
 ContentLibraryView::~ContentLibraryView()
@@ -88,15 +87,37 @@ WidgetInfo ContentLibraryView::widgetInfo()
             m_draggedBundleItem = item;
         });
 
-        connect(m_widget, &ContentLibraryWidget::addTextureRequested, this,
-                [&] (const QString &texPath, AddTextureMode mode) {
-            executeInTransaction("ContentLibraryView::widgetInfo", [&]() {
-                m_createTexture.execute(texPath, mode, m_sceneId);
-            });
+        connect(m_widget, &ContentLibraryWidget::acceptTexturesDrop, this,
+                [this](const QList<QUrl> &urls) {
+            QStringList paths;
+
+            for (const QUrl &url : urls) {
+                QString path = url.toLocalFile();
+
+                if (Asset(path).isImage())
+                    paths.append(path);
+            }
+            addLibAssets(paths);
         });
 
+        connect(m_widget, &ContentLibraryWidget::acceptMaterialDrop, this,
+                [this](const QString &internalId) {
+            ModelNode matNode = QmlDesignerPlugin::instance()->viewManager()
+                                .view()->modelNodeForInternalId(internalId.toInt());
+            addLibItem(matNode);
+        });
+
+        connect(m_widget,
+                &ContentLibraryWidget::addTextureRequested,
+                this,
+                [&](const QString &texPath, AddTextureMode mode) {
+                    executeInTransaction("ContentLibraryView::widgetInfo", [&]() {
+                        CreateTexture(this).execute(texPath, mode, m_sceneId);
+                    });
+                });
+
         connect(m_widget, &ContentLibraryWidget::updateSceneEnvStateRequested, this, [this] {
-            ModelNode activeSceneEnv = m_createTexture.resolveSceneEnv(m_sceneId);
+            ModelNode activeSceneEnv = Utils3D::resolveSceneEnv(this, m_sceneId);
             const bool sceneEnvExists = activeSceneEnv.isValid();
             m_widget->texturesModel()->setHasSceneEnv(sceneEnvExists);
             m_widget->environmentsModel()->setHasSceneEnv(sceneEnvExists);
@@ -569,17 +590,18 @@ void ContentLibraryView::addLibAssets(const QStringList &paths)
     m_widget->userModel()->addTextures(targetPathsToAdd);
 }
 
+// TODO: combine this method with BundleHelper::exportComponent()
 void ContentLibraryView::addLib3DComponent(const ModelNode &node)
 {
     auto compUtils = QmlDesignerPlugin::instance()->documentManager().generatedComponentUtils();
+    auto bundlePath = Utils::FilePath::fromString(Paths::bundlesPathSetting() + "/User/3d/");
 
     m_bundleId = compUtils.user3DBundleId();
 
-    QString compBaseName = node.simplifiedTypeName();
-    QString compFileName = compBaseName + ".qml";
-
-    auto compDir = Utils::FilePath::fromString(ModelUtils::componentFilePath(node)).parentDir();
-    auto bundlePath = Utils::FilePath::fromString(Paths::bundlesPathSetting() + "/User/3d/");
+    Utils::FilePath compFilePath = Utils::FilePath::fromString(ModelUtils::componentFilePath(node));
+    Utils::FilePath compDir = compFilePath.parentDir();
+    QString compBaseName = compFilePath.completeBaseName();
+    QString compFileName = compFilePath.fileName();
 
     // confirm overwrite if an item with same name exists
     if (bundlePath.pathAppended(compFileName).exists()) {
@@ -598,24 +620,28 @@ void ContentLibraryView::addLib3DComponent(const ModelNode &node)
     m_iconSavePath = bundlePath.pathAppended(iconPath);
     m_iconSavePath.parentDir().ensureWritableDir();
 
-    const Utils::FilePaths sourceFiles = compDir.dirEntries({{}, QDir::Files, QDirIterator::Subdirectories});
-    const QStringList ignoreList {"_importdata.json", "qmldir", compBaseName + ".hints"};
+    const QSet<AssetPath> compDependencies = m_bundleHelper->getComponentDependencies(compFilePath, compDir);
+
     QStringList filesList; // 3D component's assets (dependencies)
+    for (const AssetPath &asset : compDependencies) {
+        Utils::FilePath assetAbsPath = asset.absFilPath();
+        QByteArray assetContent = asset.fileContent();
 
-    for (const Utils::FilePath &sourcePath : sourceFiles) {
-        Utils::FilePath relativePath = sourcePath.relativePathFrom(compDir);
-        if (ignoreList.contains(sourcePath.fileName()) || relativePath.startsWith("source scene"))
-            continue;
+        // remove imports of sub components
+        for (const QString &import : std::as_const(asset.importsToRemove)) {
+            int removeIdx = assetContent.indexOf(QByteArray("import " + import.toLatin1()));
+            int removeLen = assetContent.indexOf('\n', removeIdx) - removeIdx;
+            assetContent.remove(removeIdx, removeLen);
+        }
 
-        Utils::FilePath targetPath = bundlePath.pathAppended(relativePath.path());
+        Utils::FilePath targetPath = bundlePath.pathAppended(asset.relativePath);
         targetPath.parentDir().ensureWritableDir();
 
-        // copy item from project to user bundle
-        auto result = sourcePath.copyFile(targetPath);
+        auto result = targetPath.writeFileContents(assetContent);
         QTC_ASSERT_EXPECTED(result,);
 
-        if (sourcePath.fileName() != compFileName) // skip component file (only collect dependencies)
-            filesList.append(relativePath.path());
+        if (assetAbsPath.fileName() != compFileName) // skip component file (only collect dependencies)
+            filesList.append(asset.relativePath);
     }
 
     // add the item to the bundle json

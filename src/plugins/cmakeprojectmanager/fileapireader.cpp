@@ -40,9 +40,9 @@ FileApiReader::FileApiReader()
     : m_lastReplyTimestamp()
 {
     QObject::connect(&m_watcher,
-                     &FileSystemWatcher::directoryChanged,
+                     &FileSystemWatcher::fileChanged,
                      this,
-                     &FileApiReader::handleReplyDirectoryChange);
+                     &FileApiReader::handleReplyIndexFileChange);
 }
 
 FileApiReader::~FileApiReader()
@@ -60,11 +60,7 @@ void FileApiReader::setParameters(const BuildDirParameters &p)
     m_parameters = p;
     qCDebug(cmakeFileApiMode) << "Work directory:" << m_parameters.buildDirectory.toUserOutput();
 
-    FileApiParser::setupCMakeFileApi(m_parameters.buildDirectory);
-
-    const FilePath replyDirectory = FileApiParser::cmakeReplyDirectory(m_parameters.buildDirectory);
-    if (!m_watcher.watchesDirectory(replyDirectory))
-        m_watcher.addDirectory(replyDirectory.path(), FileSystemWatcher::WatchAllChanges);
+    setupCMakeFileApi();
 
     resetData();
 }
@@ -324,11 +320,13 @@ void FileApiReader::makeBackupConfiguration(bool store)
     if (!store)
         std::swap(cmakeCacheTxt, cmakeCacheTxtPrev);
 
-    if (cmakeCacheTxt.exists())
-        if (!FileUtils::copyIfDifferent(cmakeCacheTxt, cmakeCacheTxtPrev))
+    if (cmakeCacheTxt.exists()) {
+        if (Result res = FileUtils::copyIfDifferent(cmakeCacheTxt, cmakeCacheTxtPrev); !res) {
             Core::MessageManager::writeFlashing(addCMakePrefix(
-                Tr::tr("Failed to copy \"%1\" to \"%2\".")
-                    .arg(cmakeCacheTxt.toUserOutput(), cmakeCacheTxtPrev.toUserOutput())));
+                Tr::tr("Failed to copy \"%1\" to \"%2\": %3")
+                    .arg(cmakeCacheTxt.toUserOutput(), cmakeCacheTxtPrev.toUserOutput(), res.error())));
+        }
+    }
 }
 
 void FileApiReader::writeConfigurationIntoBuildDirectory(const QStringList &configurationArguments)
@@ -347,6 +345,15 @@ void FileApiReader::writeConfigurationIntoBuildDirectory(const QStringList &conf
 
     const FilePath settingsFile = buildDir / "qtcsettings.cmake";
     QTC_ASSERT_EXPECTED(settingsFile.writeFileContents(contents), return);
+}
+
+void FileApiReader::setupCMakeFileApi()
+{
+    FileApiParser::setupCMakeFileApi(m_parameters.buildDirectory);
+
+    const FilePath replyIndexfile = FileApiParser::scanForCMakeReplyFile(m_parameters.buildDirectory);
+    if (!replyIndexfile.isEmpty() && !m_watcher.watchesFile(replyIndexfile))
+        m_watcher.addFile(replyIndexfile.path(), FileSystemWatcher::WatchAllChanges);
 }
 
 QString FileApiReader::cmakeGenerator() const
@@ -401,16 +408,13 @@ void FileApiReader::cmakeFinishedState(int exitCode)
     if (m_lastCMakeExitCode != 0)
         makeBackupConfiguration(false);
 
-    FileApiParser::setupCMakeFileApi(m_parameters.buildDirectory);
-
-    m_watcher.addDirectory(FileApiParser::cmakeReplyDirectory(m_parameters.buildDirectory).path(),
-                           FileSystemWatcher::WatchAllChanges);
+    setupCMakeFileApi();
 
     endState(FileApiParser::scanForCMakeReplyFile(m_parameters.buildDirectory),
              m_lastCMakeExitCode != 0);
 }
 
-void FileApiReader::handleReplyDirectoryChange(const QString &directory)
+void FileApiReader::handleReplyIndexFileChange(const QString &indexFile)
 {
     if (m_isParsing)
         return; // This has been triggered by ourselves, ignore.
@@ -419,8 +423,8 @@ void FileApiReader::handleReplyDirectoryChange(const QString &directory)
     const FilePath dir = reply.absolutePath();
     if (dir.isEmpty())
         return; // CMake started to fill the result dir, but has not written a result file yet
-    QTC_CHECK(!dir.needsDevice());
-    QTC_ASSERT(dir.path() == directory, return);
+    QTC_CHECK(dir.isLocal());
+    QTC_ASSERT(dir == FilePath::fromString(indexFile).parentDir(), return);
 
     if (m_lastReplyTimestamp.isValid() && reply.lastModified() > m_lastReplyTimestamp) {
         m_lastReplyTimestamp = reply.lastModified();

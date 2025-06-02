@@ -5,6 +5,7 @@
 
 #include "builderutils.h"
 
+#include <QAction>
 #include <QString>
 
 #include <initializer_list>
@@ -38,6 +39,7 @@ class QStackedWidget;
 class QTabWidget;
 class QTextEdit;
 class QToolBar;
+class QToolButton;
 class QVBoxLayout;
 class QWidget;
 QT_END_NAMESPACE
@@ -119,7 +121,7 @@ public:
     void setNoMargins();
     void setNormalMargins();
     void setContentsMargins(int left, int top, int right, int bottom);
-    void setColumnStretch(int cols, int rows);
+    void setColumnStretch(int column, int stretch);
     void setSpacing(int space);
     void setFieldGrowthPolicy(int policy);
     void setStretch(int index, int stretch);
@@ -157,6 +159,7 @@ public:
     using Implementation = QVBoxLayout;
     using I = Building::BuilderItem<Column>;
 
+    Column();
     Column(std::initializer_list<I> ps);
 };
 
@@ -166,6 +169,7 @@ public:
     using Implementation = QHBoxLayout;
     using I = Building::BuilderItem<Row>;
 
+    Row();
     Row(std::initializer_list<I> ps);
 };
 
@@ -192,6 +196,7 @@ public:
 class QTCREATOR_UTILS_EXPORT Flow : public Layout
 {
 public:
+    Flow();
     Flow(std::initializer_list<I> ps);
 };
 
@@ -263,6 +268,7 @@ public:
     void setContentsMargins(int left, int top, int right, int bottom);
     void setCursor(Qt::CursorShape shape);
     void setMinimumWidth(int);
+    void setMinimumHeight(int height);
 
     void activateWindow();
     void close();
@@ -283,7 +289,7 @@ public:
     void setWordWrap(bool);
     void setTextInteractionFlags(Qt::TextInteractionFlags);
     void setOpenExternalLinks(bool);
-    void onLinkHovered(const std::function<void(const QString &)> &, QObject *guard);
+    void onLinkHovered(QObject *guard, const std::function<void(const QString &)> &);
 };
 
 class QTCREATOR_UTILS_EXPORT Group : public Widget
@@ -307,7 +313,7 @@ public:
     SpinBox(std::initializer_list<I> ps);
 
     void setValue(int);
-    void onTextChanged(const std::function<void(QString)> &, QObject *guard);
+    void onTextChanged(QObject *guard, const std::function<void(QString)> &);
 };
 
 class QTCREATOR_UTILS_EXPORT PushButton : public Widget
@@ -322,7 +328,7 @@ public:
     void setIconPath(const Utils::FilePath &);
     void setIconSize(const QSize &);
     void setFlat(bool);
-    void onClicked(const std::function<void()> &, QObject *guard);
+    void onClicked(QObject *guard, const std::function<void()> &);
 };
 
 class QTCREATOR_UTILS_EXPORT TextEdit : public Widget
@@ -334,6 +340,7 @@ public:
 
     TextEdit(std::initializer_list<I> ps);
 
+    QString markdown() const;
     void setText(const QString &);
     void setMarkdown(const QString &);
     void setReadOnly(bool);
@@ -353,9 +360,8 @@ public:
     void setRightSideIconPath(const Utils::FilePath &path);
     void setPlaceHolderText(const QString &text);
     void setCompleter(QCompleter *completer);
-    void setMinimumHeight(int height);
-    void onReturnPressed(const std::function<void()> &, QObject *guard);
-    void onRightSideIconClicked(const std::function<void()> &, QObject *guard);
+    void onReturnPressed(QObject *guard, const std::function<void()> &);
+    void onRightSideIconClicked(QObject *guard, const std::function<void()> &);
 };
 
 class QTCREATOR_UTILS_EXPORT Splitter : public Widget
@@ -431,6 +437,17 @@ public:
     ToolBar(std::initializer_list<I> items);
 };
 
+class QTCREATOR_UTILS_EXPORT ToolButton : public Widget
+{
+public:
+    using Implementation = QToolButton;
+    using I = Building::BuilderItem<ToolButton>;
+
+    ToolButton(std::initializer_list<I> items);
+
+    void setDefaultAction(QAction *action);
+};
+
 class QTCREATOR_UTILS_EXPORT Spinner : public Widget
 {
 public:
@@ -452,8 +469,11 @@ public:
 
     MarkdownBrowser(std::initializer_list<I> items);
 
+    QString toMarkdown() const;
     void setMarkdown(const QString &);
     void setBasePath(const Utils::FilePath &);
+    void setEnableCodeCopyButton(bool enable);
+    void setViewportMargins(int left, int top, int right, int bottom);
 };
 
 // Special

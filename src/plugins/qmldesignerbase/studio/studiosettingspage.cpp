@@ -3,6 +3,7 @@
 
 #include "studiosettingspage.h"
 
+#include "../qmldesignerbaseplugin.h"
 #include "../utils/designerpaths.h"
 
 #include <coreplugin/coreconstants.h>
@@ -30,8 +31,6 @@ using namespace Utils;
 namespace QmlDesigner {
 
 namespace {
-
-const char experimentalFeatures[] = "QML/Designer/UseExperimentalFeatures44";
 
 bool hideBuildMenuSetting()
 {
@@ -61,7 +60,9 @@ bool hideToolsMenuSetting()
 
 bool showExperimentalFeatures()
 {
-    return Core::ICore::settings()->value(experimentalFeatures, false).toBool();
+    return Core::ICore::settings()
+        ->value(QmlDesignerBasePlugin::experimentalFeaturesSettingsKey(), false)
+        .toBool();
 }
 
 void setSettingIfDifferent(const Key &key, bool value, bool &dirty)
@@ -191,7 +192,10 @@ void StudioSettingsPage::apply()
                           m_toolsCheckBox->isChecked(),
                           dirty);
 
-    setSettingIfDifferent(experimentalFeatures, m_experimentalCheckBox->isChecked(), dirty);
+    setSettingIfDifferent(
+        QmlDesignerBasePlugin::experimentalFeaturesSettingsKey(),
+        m_experimentalCheckBox->isChecked(),
+        dirty);
 
     if (dirty) {
         Core::ICore::askForRestart(
@@ -199,14 +203,14 @@ void StudioSettingsPage::apply()
     }
 
     QtcSettings *s = Core::ICore::settings();
-    const QString value = m_pathChooserExamples->filePath().toString();
+    const QString value = m_pathChooserExamples->filePath().toUrlishString();
 
     if (s->value(Paths::exampleDownloadPath, false).toString() != value) {
         s->setValue(Paths::exampleDownloadPath, value);
         emit examplesDownloadPathChanged(value);
     }
 
-    const QString bundlesPath = m_pathChooserBundles->filePath().toString();
+    const QString bundlesPath = m_pathChooserBundles->filePath().toUrlishString();
 
     if (s->value(Paths::bundlesDownloadPath).toString() != bundlesPath) {
         s->setValue(Paths::bundlesDownloadPath, bundlesPath);

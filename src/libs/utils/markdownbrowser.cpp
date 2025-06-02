@@ -6,11 +6,14 @@
 #include "algorithm.h"
 #include "async.h"
 #include "mimeutils.h"
+#include "movie.h"
 #include "networkaccessmanager.h"
+#include "stringutils.h"
 #include "stylehelper.h"
 #include "textutils.h"
 #include "theme/theme.h"
 #include "utilsicons.h"
+#include "utilstr.h"
 
 #include <solutions/tasking/networkquery.h>
 #include <solutions/tasking/tasktree.h>
@@ -18,12 +21,16 @@
 
 #include <QBuffer>
 #include <QCache>
+#include <QClipboard>
+#include <QDesktopServices>
 #include <QGuiApplication>
-#include <QMovie>
 #include <QPainter>
+#include <QScrollBar>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
+#include <QTextDocumentWriter>
 #include <QTextObjectInterface>
 
 namespace Utils {
@@ -81,59 +88,126 @@ static QStringList defaultCodeFontFamilies()
     return {"Menlo", "Source Code Pro", "Monospace", "Courier"};
 }
 
-static void highlightCodeBlock(QTextDocument *document, QTextBlock &block, const QString &language)
+class CopyButtonHandler : public QObject, public QTextObjectInterface
 {
-    const int position = block.position();
-    // Find the end of the code block ...
-    for (block = block.next(); block.isValid(); block = block.next()) {
-        if (!block.blockFormat().hasProperty(QTextFormat::BlockCodeLanguage))
-            break;
-        if (language != block.blockFormat().stringProperty(QTextFormat::BlockCodeLanguage))
-            break;
+    Q_OBJECT
+    Q_INTERFACES(QTextObjectInterface)
+
+public:
+    explicit CopyButtonHandler(QObject *parent = nullptr)
+        : QObject(parent)
+    {}
+
+    static constexpr int objectId() { return QTextFormat::UserObject + 1; }
+    static constexpr int codePropertyId() { return QTextFormat::UserProperty + 1; }
+    static constexpr int isCopiedPropertyId() { return QTextFormat::UserProperty + 2; }
+
+    static QString text(bool isCopied)
+    {
+        return " " + (isCopied ? Tr::tr("Copied") : Tr::tr("Copy"));
     }
-    const int end = (block.isValid() ? block.position() : document->characterCount()) - 1;
-    // Get the text of the code block and erase it
-    QTextCursor eraseCursor(document);
-    eraseCursor.setPosition(position);
-    eraseCursor.setPosition(end, QTextCursor::KeepAnchor);
-
-    const QString code = eraseCursor.selectedText();
-    eraseCursor.removeSelectedText();
-
-    // Create a new Frame and insert the highlighted code ...
-    block = document->findBlock(position);
-
-    QTextCursor cursor(block);
-    QTextFrameFormat format;
-    format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-    format.setBackground(creatorColor(Theme::Token_Background_Muted));
-    format.setPadding(SpacingTokens::ExPaddingGapM);
-    format.setLeftMargin(SpacingTokens::VGapM);
-    format.setRightMargin(SpacingTokens::VGapM);
-
-    QTextFrame *frame = cursor.insertFrame(format);
-    QTextCursor frameCursor(frame);
-
-    std::unique_ptr<QTextDocument> codeDocument(highlightText(code, language));
-    bool first = true;
-
-    for (auto block = codeDocument->begin(); block != codeDocument->end(); block = block.next()) {
-        if (!first)
-            frameCursor.insertBlock();
-
-        QTextCharFormat charFormat = block.charFormat();
-        charFormat.setFontFamilies(defaultCodeFontFamilies());
-        frameCursor.setCharFormat(charFormat);
-
-        first = false;
-        auto formats = block.layout()->formats();
-        frameCursor.insertText(block.text());
-        frameCursor.block().layout()->setFormats(formats);
+    static QIcon icon(bool isCopied)
+    {
+        static QIcon clickedIcon(":/markdownbrowser/images/checkmark.png");
+        static QIcon unclickedIcon(":/markdownbrowser/images/code_copy_square.png");
+        if (isCopied)
+            return clickedIcon;
+        return unclickedIcon;
     }
 
-    // Leave the frame
-    QTextCursor next = frame->lastCursorPosition();
-    block = next.block();
+    QSizeF intrinsicSize(QTextDocument *doc, int pos, const QTextFormat &format) override
+    {
+        Q_UNUSED(pos);
+
+        if (!doc || !format.hasProperty(isCopiedPropertyId()))
+            return QSizeF(0, 0);
+
+        const QFontMetricsF metrics(getFont(doc));
+        const bool isCopied = format.property(isCopiedPropertyId()).value<bool>();
+
+        return QSizeF(metrics.horizontalAdvance(text(isCopied)) + 30, metrics.height() + 10);
+    }
+
+    void drawObject(
+        QPainter *painter,
+        const QRectF &rect,
+        QTextDocument *doc,
+        int pos,
+        const QTextFormat &format) override
+    {
+        Q_UNUSED(pos);
+
+        if (!doc || !format.hasProperty(isCopiedPropertyId()))
+            return;
+
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(Qt::transparent);
+        painter->drawRect(rect);
+
+        const bool isCopied = format.property(isCopiedPropertyId()).value<bool>();
+
+        constexpr int iconSize = 16;
+        QRectF iconRect(rect.left(), rect.top() + (rect.height() - iconSize) / 2, iconSize, iconSize);
+        icon(isCopied).paint(painter, iconRect.toRect());
+
+        painter->setPen(QColor("#888"));
+        painter->setFont(getFont(doc));
+        painter
+            ->drawText(rect.adjusted(20, 0, -5, 0), Qt::AlignLeft | Qt::AlignVCenter, text(isCopied));
+    }
+
+private:
+    QFont getFont(QTextDocument *doc) const
+    {
+        QFont font = doc->defaultFont();
+        font.setPointSize(10);
+        return font;
+    }
+};
+
+static QTextFragment copyButtonFragment(const QTextBlock &block)
+{
+    for (auto it = block.begin(); !it.atEnd(); ++it) {
+        QTextFragment fragment = it.fragment();
+        if (fragment.charFormat().objectType() == CopyButtonHandler::objectId())
+            return fragment;
+    }
+    return QTextFragment();
+}
+
+static QPointF blockBBoxTopLeftPosition(const QTextBlock &block)
+{
+    const QAbstractTextDocumentLayout *docLayout = block.document()->documentLayout();
+    const QRectF blockRect = docLayout->blockBoundingRect(block);
+    return blockRect.topLeft();
+}
+
+static QRectF calculateFragmentBounds(
+    const QTextBlock &block, const QTextFragment &fragment, const QPointF &documentOffset)
+{
+    QRectF bounds(0, 0, 0, 0);
+
+    if (!block.isValid() || !fragment.isValid())
+        return bounds;
+
+    QTextLayout *layout = block.layout();
+    if (!layout)
+        return bounds;
+
+    int fragmentStart = fragment.position() - block.position();
+    QTextLine line = layout->lineForTextPosition(fragmentStart);
+    if (!line.isValid())
+        return bounds;
+
+    qreal x = line.cursorToX(fragmentStart);
+    qreal y = line.y();
+    qreal width = line.cursorToX(fragmentStart + fragment.length()) - x;
+    qreal height = line.height();
+
+    bounds = QRectF(x, y, width, height);
+    bounds.translate(documentOffset);
+
+    return bounds;
 }
 
 class AnimatedImageHandler : public QObject, public QTextObjectInterface
@@ -145,7 +219,7 @@ public:
     class Entry
     {
     public:
-        using Pointer = std::unique_ptr<Entry>;
+        using Pointer = std::shared_ptr<Entry>;
 
         Entry(const QByteArray &data)
         {
@@ -154,10 +228,22 @@ public:
 
             buffer.setData(data);
             movie.setDevice(&buffer);
+            if (movie.isValid()) {
+                if (!movie.frameRect().isValid())
+                    movie.jumpToFrame(0);
+            }
+
+            moveToThread(nullptr);
+        }
+
+        void moveToThread(QThread *thread)
+        {
+            buffer.moveToThread(thread);
+            movie.moveToThread(thread);
         }
 
         QBuffer buffer;
-        QMovie movie;
+        QtcMovie movie;
     };
 
 public:
@@ -171,24 +257,41 @@ public:
         , m_entries(1024 * 1024 * 10) // 10 MB max image cache size
     {}
 
+    static Entry::Pointer makeEntry(const QByteArray &data, qsizetype maxSize)
+    {
+        // If the image is larger than what we allow in our cache,
+        // we still want to create an entry, but one with an empty image.
+        // So we clear it here, but still create the entry, so the painter can
+        // correctly show the "broken image" placeholder instead.
+        if (data.size() > maxSize)
+            return std::make_shared<Entry>(QByteArray());
+
+        return std::make_shared<Entry>(data);
+    }
+
     virtual QSizeF intrinsicSize(
         QTextDocument *doc, int posInDocument, const QTextFormat &format) override
     {
         Q_UNUSED(doc);
         Q_UNUSED(posInDocument);
+        QSize result = Utils::Icons::UNKNOWN_FILE.icon().actualSize(QSize(16, 16));
         QString name = format.toImageFormat().name();
 
-        Entry *entry = m_entries.object(name);
-
-        if (entry && entry->movie.isValid()) {
-            if (!entry->movie.frameRect().isValid())
-                entry->movie.jumpToFrame(0);
-            return entry->movie.frameRect().size();
-        } else if (!entry) {
+        Entry::Pointer *entryPtr = m_entries.object(name);
+        if (!entryPtr) {
             m_scheduleLoad(name);
+            return result;
         }
 
-        return Utils::Icons::UNKNOWN_FILE.icon().actualSize(QSize(16, 16));
+        Entry::Pointer entry = *entryPtr;
+
+        if (entry->movie.isValid()) {
+            if (!entry->movie.frameRect().isValid())
+                entry->movie.jumpToFrame(0);
+            result = entry->movie.frameRect().size();
+        }
+
+        return result;
     }
 
     void drawObject(
@@ -201,43 +304,48 @@ public:
         Q_UNUSED(document);
         Q_UNUSED(posInDocument);
 
-        Entry *entry = m_entries.object(format.toImageFormat().name());
+        Entry::Pointer *entryPtr = m_entries.object(format.toImageFormat().name());
 
-        if (entry) {
-            if (entry->movie.isValid())
-                painter->drawImage(rect, entry->movie.currentImage());
-            else
-                painter->drawPixmap(rect.toRect(), m_brokenImage.pixmap(rect.size().toSize()));
-            return;
-        }
-
-        painter->drawPixmap(
-            rect.toRect(), Utils::Icons::UNKNOWN_FILE.icon().pixmap(rect.size().toSize()));
+        if (!entryPtr)
+            painter->drawPixmap(
+                rect.toRect(), Utils::Icons::UNKNOWN_FILE.icon().pixmap(rect.size().toSize()));
+        else if (!(*entryPtr)->movie.isValid())
+            painter->drawPixmap(rect.toRect(), m_brokenImage.pixmap(rect.size().toSize()));
+        else
+            painter->drawImage(rect, (*entryPtr)->movie.currentImage());
     }
 
-    void set(const QString &name, QByteArray data)
+    void set(const QString &name, const QByteArray &data)
     {
-        if (data.size() > m_entries.maxCost())
-            data.clear();
-
-        set(name, std::make_unique<Entry>(data));
+        set(name, makeEntry(data, m_entries.maxCost()));
     }
 
-    void set(const QString &name, std::unique_ptr<Entry> entry)
+    void set(const QString &name, const Entry::Pointer &entry)
     {
+        entry->moveToThread(thread());
+
         if (entry->movie.frameCount() > 1) {
-            connect(&entry->movie, &QMovie::frameChanged, this, [this]() { m_redraw(); });
+            connect(&entry->movie, &QtcMovie::frameChanged, this, [this]() { m_redraw(); });
             entry->movie.start();
         }
         const qint64 size = qMax(1, entry->buffer.size());
-        if (m_entries.insert(name, entry.release(), size))
+
+        if (size > m_entries.maxCost()) {
+            return;
+        }
+
+        Entry::Pointer *entryPtr = new Entry::Pointer(entry);
+        if (m_entries.insert(name, entryPtr, size))
             m_redraw();
     }
+
+    void setMaximumCacheSize(qsizetype maxSize) { m_entries.setMaxCost(maxSize); }
+    qsizetype maximumCacheSize() const { return m_entries.maxCost(); }
 
 private:
     std::function<void()> m_redraw;
     std::function<void(const QString &)> m_scheduleLoad;
-    QCache<QString, Entry> m_entries;
+    QCache<QString, Entry::Pointer> m_entries;
 
     const Icon ErrorCloseIcon = Utils::Icon({{":/utils/images/close.png", Theme::IconsErrorColor}});
 
@@ -281,57 +389,115 @@ public:
                        || (url.isRelative() && isBaseHttp);
             };
 
-            QList<QUrl> remoteUrls = Utils::filtered(m_urlsToLoad, isRemoteUrl);
-            QList<QUrl> localUrls = Utils::filtered(m_urlsToLoad, std::not_fn(isRemoteUrl));
+            const auto isLocalUrl = [this, isRemoteUrl](const QUrl &url) {
+                if (url.scheme() == "qrc")
+                    return true;
 
-            if (m_basePath.isEmpty())
-                localUrls.clear();
+                if (!m_basePath.isEmpty() && !isRemoteUrl(url))
+                    return true;
+
+                return false;
+            };
+
+            QSet<QUrl> remoteUrls = Utils::filtered(m_urlsToLoad, isRemoteUrl);
+            QSet<QUrl> localUrls = Utils::filtered(m_urlsToLoad, isLocalUrl);
 
             if (!m_loadRemoteImages)
                 remoteUrls.clear();
 
-            const LoopList remoteIterator(remoteUrls);
-            const LoopList localIterator(localUrls);
-
-            auto onQuerySetup = [remoteIterator, base = m_basePath.toUrl()](NetworkQuery &query) {
-                QUrl url = *remoteIterator;
-                if (url.isRelative())
-                    url = base.resolved(url);
-
-                query.setRequest(QNetworkRequest(*remoteIterator));
-                query.setNetworkAccessManager(NetworkAccessManager::instance());
+            struct RemoteData
+            {
+                QUrl url;
+                QByteArray data;
             };
 
-            auto onQueryDone = [this](const NetworkQuery &query, DoneWith result) {
+            Storage<RemoteData> remoteData;
+
+            const LoopList remoteIterator(Utils::toList(remoteUrls));
+            const LoopList localIterator(Utils::toList(localUrls));
+
+            auto onQuerySetup =
+                [remoteData, this, remoteIterator, base = m_basePath.toUrl()](NetworkQuery &query) {
+                    QUrl url = *remoteIterator;
+                    if (url.isRelative())
+                        url = base.resolved(url);
+
+                    QNetworkRequest request(url);
+                    if (m_requestHook)
+                        m_requestHook(&request);
+
+                    query.setRequest(request);
+                    query.setNetworkAccessManager(m_networkAccessManager);
+                    remoteData->url = *remoteIterator;
+                };
+
+            auto onQueryDone = [this, remoteData](const NetworkQuery &query, DoneWith result) {
                 if (result == DoneWith::Cancel)
                     return;
-                m_urlsToLoad.removeOne(query.reply()->url());
+                m_urlsToLoad.remove(query.reply()->url());
 
-                if (result == DoneWith::Success)
-                    m_imageHandler.set(query.reply()->url().toString(), query.reply()->readAll());
-                else
-                    m_imageHandler.set(query.reply()->url().toString(), QByteArray{});
-
-                markContentsDirty(0, this->characterCount());
+                if (result == DoneWith::Success) {
+                    remoteData->data = query.reply()->readAll();
+                } else {
+                    m_imageHandler.set(remoteData->url.toString(), QByteArray{});
+                    markContentsDirty(0, this->characterCount());
+                }
             };
 
             using EntryPointer = AnimatedImageHandler::Entry::Pointer;
 
-            auto onLocalSetup = [localIterator, basePath = m_basePath](Async<EntryPointer> &async) {
-                const FilePath u = basePath.resolvePath(localIterator->path());
+            auto onMakeEntrySetup = [remoteData, maxSize = m_imageHandler.maximumCacheSize()](
+                                        Async<EntryPointer> &async) {
                 async.setConcurrentCallData(
-                    [](FilePath f) -> EntryPointer {
-                        auto data = f.fileContents();
-                        if (!data)
-                            return nullptr;
-
-                        return std::make_unique<AnimatedImageHandler::Entry>(*data);
+                    [](const QByteArray &data, qsizetype maxSize) {
+                        return AnimatedImageHandler::makeEntry(data, maxSize);
                     },
-                    u);
+                    remoteData->data,
+                    maxSize);
             };
 
+            auto onMakeEntryDone =
+                [this, remoteIterator, remoteData](const Async<EntryPointer> &async) {
+                    EntryPointer result = async.result();
+                    if (result) {
+                        m_imageHandler.set(remoteData->url.toString(), result);
+                        markContentsDirty(0, this->characterCount());
+                    }
+                };
+
+            auto onLocalSetup =
+                [localIterator, basePath = m_basePath, maxSize = m_imageHandler.maximumCacheSize()](
+                    Async<EntryPointer> &async) {
+                    const QUrl url = *localIterator;
+                    async.setConcurrentCallData(
+                        [](QPromise<EntryPointer> &promise,
+                           const FilePath &basePath,
+                           const QUrl &url,
+                           qsizetype maxSize) {
+                            if (url.scheme() == "qrc") {
+                                QFile f(":" + url.path());
+                                if (!f.open(QIODevice::ReadOnly))
+                                    return;
+
+                                promise.addResult(
+                                    AnimatedImageHandler::makeEntry(f.readAll(), maxSize));
+                                return;
+                            }
+
+                            const FilePath path = basePath.resolvePath(url.path());
+                            auto data = path.fileContents();
+                            if (!data || promise.isCanceled())
+                                return;
+
+                            promise.addResult(AnimatedImageHandler::makeEntry(*data, maxSize));
+                        },
+                        basePath,
+                        url,
+                        maxSize);
+                };
+
             auto onLocalDone = [localIterator, this](const Async<EntryPointer> &async) {
-                EntryPointer result = async.takeResult();
+                EntryPointer result = async.result();
                 if (result)
                     m_imageHandler.set(localIterator->toString(), std::move(result));
             };
@@ -340,7 +506,11 @@ public:
             Group group {
                 parallelLimit(2),
                 For(remoteIterator) >> Do {
-                    NetworkQueryTask{onQuerySetup, onQueryDone} || successItem,
+                    remoteData,
+                    Group {
+                        NetworkQueryTask{onQuerySetup, onQueryDone},
+                        AsyncTask<EntryPointer>(onMakeEntrySetup, onMakeEntryDone),
+                    } || successItem,
                 },
                 For(localIterator) >> Do {
                     AsyncTask<EntryPointer>(onLocalSetup, onLocalDone) || successItem,
@@ -354,26 +524,119 @@ public:
 
     void scheduleLoad(const QUrl &url)
     {
-        m_urlsToLoad.append(url);
+        m_urlsToLoad.insert(url);
         m_needsToRestartLoading = true;
     }
 
     void setBasePath(const FilePath &filePath) { m_basePath = filePath; }
     void setAllowRemoteImages(bool allow) { m_loadRemoteImages = allow; }
 
+    void setNetworkAccessManager(QNetworkAccessManager *nam) { m_networkAccessManager = nam; }
+    void setRequestHook(const MarkdownBrowser::RequestHook &hook) { m_requestHook = hook; }
+    void setMaximumCacheSize(qsizetype maxSize) { m_imageHandler.setMaximumCacheSize(maxSize); }
+
 private:
     AnimatedImageHandler m_imageHandler;
-    QList<QUrl> m_urlsToLoad;
+    QSet<QUrl> m_urlsToLoad;
     bool m_needsToRestartLoading = false;
     bool m_loadRemoteImages = false;
     Tasking::TaskTreeRunner m_imageLoaderTree;
     FilePath m_basePath;
+    std::function<void(QNetworkRequest *)> m_requestHook;
+    QNetworkAccessManager *m_networkAccessManager = NetworkAccessManager::instance();
 };
 
 MarkdownBrowser::MarkdownBrowser(QWidget *parent)
     : QTextBrowser(parent)
+    , m_enableCodeCopyButton(false)
 {
+    setOpenLinks(false);
+    connect(this, &QTextBrowser::anchorClicked, this, &MarkdownBrowser::handleAnchorClicked);
+
     setDocument(new AnimatedDocument(this));
+    document()
+        ->documentLayout()
+        ->registerHandler(CopyButtonHandler::objectId(), new CopyButtonHandler(document()));
+}
+
+void MarkdownBrowser::highlightCodeBlock(const QString &language, QTextBlock &block)
+{
+    const int startPos = block.position();
+    // Find the end of the code block ...
+    for (block = block.next(); block.isValid(); block = block.next()) {
+        if (!block.blockFormat().hasProperty(QTextFormat::BlockCodeLanguage))
+            break;
+        if (language != block.blockFormat().stringProperty(QTextFormat::BlockCodeLanguage))
+            break;
+    }
+    const int endPos = (block.isValid() ? block.position() : document()->characterCount()) - 1;
+
+    // Get the text of the code block and erase it
+    QTextCursor eraseCursor(document());
+    eraseCursor.setPosition(startPos);
+    eraseCursor.setPosition(endPos, QTextCursor::KeepAnchor);
+    const QString code = eraseCursor.selectedText();
+    eraseCursor.removeSelectedText();
+
+    // Reposition the main cursor to startPos, to insert new content
+    block = document()->findBlock(startPos);
+    QTextCursor cursor(block);
+
+    QTextFrameFormat frameFormat;
+    frameFormat.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+    frameFormat.setBackground(creatorColor(Theme::Token_Background_Muted));
+    frameFormat.setPadding(SpacingTokens::ExPaddingGapM);
+    frameFormat.setLeftMargin(SpacingTokens::VGapM);
+    frameFormat.setRightMargin(SpacingTokens::VGapM);
+
+    QTextFrame *frame = cursor.insertFrame(frameFormat);
+    QTextCursor frameCursor(frame);
+
+    if (m_enableCodeCopyButton) {
+        QTextBlockFormat rightAlignedCopyButton;
+        rightAlignedCopyButton.setAlignment(Qt::AlignRight);
+        frameCursor.insertBlock(rightAlignedCopyButton);
+
+        QString copiableCode = code;
+        copiableCode.replace(QChar::ParagraphSeparator, '\n');
+
+        QTextCharFormat buttonFormat;
+        buttonFormat.setObjectType(CopyButtonHandler::objectId());
+        buttonFormat.setProperty(CopyButtonHandler::codePropertyId(), copiableCode);
+        buttonFormat.setProperty(CopyButtonHandler::isCopiedPropertyId(), false);
+        frameCursor.insertText(QString(QChar::ObjectReplacementCharacter), buttonFormat);
+
+        QTextBlockFormat leftAlignedCode;
+        leftAlignedCode.setAlignment(Qt::AlignLeft);
+        frameCursor.insertBlock(leftAlignedCode);
+    }
+
+    std::unique_ptr<QTextDocument> codeDoc(highlightText(code, language));
+
+    // Iterate each line in codeDoc and copy it out
+    bool firstLine = true;
+    for (auto tempBlock = codeDoc->begin(); tempBlock != codeDoc->end();
+         tempBlock = tempBlock.next()) {
+        // For each subsequent line, insert another block
+        if (!firstLine) {
+            QTextBlockFormat codeBlockFmt;
+            codeBlockFmt.setAlignment(Qt::AlignLeft);
+            frameCursor.insertBlock(codeBlockFmt);
+        }
+        firstLine = false;
+
+        QTextCharFormat lineFormat = tempBlock.charFormat();
+        lineFormat.setFontFamilies(defaultCodeFontFamilies());
+        frameCursor.setCharFormat(lineFormat);
+
+        auto formats = tempBlock.layout()->formats();
+        frameCursor.insertText(tempBlock.text());
+        frameCursor.block().layout()->setFormats(formats);
+    }
+
+    // Leave the frame
+    QTextCursor next = frame->lastCursorPosition();
+    block = next.block();
 }
 
 QSize MarkdownBrowser::sizeHint() const
@@ -399,9 +662,40 @@ void MarkdownBrowser::setMargins(const QMargins &margins)
     setViewportMargins(margins);
 }
 
+void MarkdownBrowser::setEnableCodeCopyButton(bool enable)
+{
+    m_enableCodeCopyButton = enable;
+}
+
 void MarkdownBrowser::setAllowRemoteImages(bool allow)
 {
     static_cast<AnimatedDocument *>(document())->setAllowRemoteImages(allow);
+}
+
+void MarkdownBrowser::setNetworkAccessManager(QNetworkAccessManager *nam)
+{
+    static_cast<AnimatedDocument *>(document())->setNetworkAccessManager(nam);
+}
+
+void MarkdownBrowser::setRequestHook(const RequestHook &hook)
+{
+    static_cast<AnimatedDocument *>(document())->setRequestHook(hook);
+}
+
+void MarkdownBrowser::setMaximumCacheSize(qsizetype maxSize)
+{
+    static_cast<AnimatedDocument *>(document())->setMaximumCacheSize(maxSize);
+}
+
+void MarkdownBrowser::handleAnchorClicked(const QUrl &link)
+{
+    if (link.scheme() == "http" || link.scheme() == "https")
+        QDesktopServices::openUrl(link);
+
+    if (link.hasFragment() && link.path().isEmpty() && link.scheme().isEmpty()) {
+        // local anchor
+        scrollToAnchor(link.fragment(QUrl::FullyEncoded));
+    }
 }
 
 void MarkdownBrowser::setBasePath(const FilePath &filePath)
@@ -411,14 +705,25 @@ void MarkdownBrowser::setBasePath(const FilePath &filePath)
 
 void MarkdownBrowser::setMarkdown(const QString &markdown)
 {
+    QScrollBar *sb = verticalScrollBar();
+    const int scrollValue = sb->value();
+
     document()->setMarkdown(markdown);
     postProcessDocument(true);
+
+    QTimer::singleShot(0, this, [sb, scrollValue] { sb->setValue(scrollValue); });
+
     // Reset cursor to start of the document, so that "show" does not
     // scroll to the end of the document.
     setTextCursor(QTextCursor(document()));
 }
 
-void MarkdownBrowser::postProcessDocument(bool firstTime) const
+QString MarkdownBrowser::toMarkdown() const
+{
+    return document()->toMarkdown();
+}
+
+void MarkdownBrowser::postProcessDocument(bool firstTime)
 {
     const QFont contentFont = Utils::font(contentTF);
     const float fontScale = font().pointSizeF() / qGuiApp->font().pointSizeF();
@@ -438,7 +743,7 @@ void MarkdownBrowser::postProcessDocument(bool firstTime) const
             // Convert code blocks to highlighted frames
             if (blockFormat.hasProperty(QTextFormat::BlockCodeLanguage)) {
                 const QString language = blockFormat.stringProperty(QTextFormat::BlockCodeLanguage);
-                highlightCodeBlock(document(), block, language);
+                highlightCodeBlock(language, block);
                 continue;
             }
 
@@ -513,6 +818,75 @@ void MarkdownBrowser::changeEvent(QEvent *event)
     if (event->type() == QEvent::FontChange)
         postProcessDocument(false);
     QTextBrowser::changeEvent(event);
+}
+
+void MarkdownBrowser::mousePressEvent(QMouseEvent *event)
+{
+    QTextCursor cursor = cursorForPosition(event->pos());
+    if (!cursor.isNull()) {
+        QTextCharFormat format = cursor.charFormat();
+        if (format.objectType() == CopyButtonHandler::objectId()) {
+            QTextBlock block = cursor.block();
+            QTextFragment fragment = copyButtonFragment(block);
+            if (fragment.isValid()) {
+                QPointF blockPosition = blockBBoxTopLeftPosition(block);
+                QRectF fragmentRect = calculateFragmentBounds(block, fragment, blockPosition);
+
+                QPointF mousePos = event->pos();
+                QPointF viewportOffset(
+                    horizontalScrollBar()->value(), verticalScrollBar()->value());
+                mousePos += viewportOffset;
+
+                if (fragmentRect.isValid() && fragmentRect.contains(mousePos)) {
+                    cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+                    // If the user clicks the text, the cursor will be positioned after the object,
+                    // so we have to move the cursor back to the object.
+                    if (cursor.selectedText() == QChar::ParagraphSeparator)
+                        cursor
+                            .movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor,
+                                          2);
+
+                    QString code
+                        = format.property(CopyButtonHandler::codePropertyId()).value<QString>();
+                    Utils::setClipboardAndSelection(code);
+
+                    QTextCharFormat newFormat = format;
+                    newFormat.setProperty(CopyButtonHandler::isCopiedPropertyId(), true);
+                    cursor.setCharFormat(newFormat);
+
+                    document()->documentLayout()->update();
+                    event->accept();
+                    return;
+                }
+            }
+        }
+    }
+    QTextBrowser::mousePressEvent(event);
+}
+
+QMimeData *MarkdownBrowser::createMimeDataFromSelection() const
+{
+    // Basically a copy of QTextEditMimeData::setup, just replacing the object markers.
+    QMimeData *mimeData = new QMimeData;
+    QTextDocumentFragment fragment(textCursor());
+
+    static const auto removeObjectChar = [](QString &&text) {
+        return text.replace(QChar::ObjectReplacementCharacter, "");
+    };
+
+    mimeData->setData("text/html", removeObjectChar(fragment.toHtml()).toUtf8());
+    mimeData->setData("text/markdown", removeObjectChar(fragment.toMarkdown()).toUtf8());
+    {
+        QBuffer buffer;
+        QTextDocumentWriter writer(&buffer, "ODF");
+        if (writer.write(fragment)) {
+            buffer.close();
+            mimeData->setData("application/vnd.oasis.opendocument.text", buffer.data());
+        }
+    }
+    mimeData->setText(removeObjectChar(fragment.toPlainText()));
+
+    return mimeData;
 }
 
 } // namespace Utils

@@ -22,6 +22,7 @@
 #include <connectionview.h>
 #include <curveeditor/curveeditorview.h>
 #include <designeractionmanager.h>
+#include <designsystemview/designsystemview.h>
 #include <eventlist/eventlistpluginview.h>
 #include <formeditor/transitiontool.h>
 #include <formeditor/view3dtool.h>
@@ -29,14 +30,16 @@
 #ifndef QDS_USE_PROJECTSTORAGE
 #  include <metainfo.h>
 #endif
+#include <devicesharing/devicemanager.h>
 #include <pathtool/pathtool.h>
+#include <qmljseditor/qmljseditor.h>
+#include <qmljseditor/qmljseditorconstants.h>
+#include <qmljseditor/qmljseditordocument.h>
+#include <runmanager/runmanager.h>
 #include <sourcetool/sourcetool.h>
 #include <texttool/texttool.h>
 #include <timelineeditor/timelineview.h>
 #include <transitioneditor/transitioneditorview.h>
-#include <qmljseditor/qmljseditor.h>
-#include <qmljseditor/qmljseditorconstants.h>
-#include <qmljseditor/qmljseditordocument.h>
 
 #include <qmljstools/qmljstoolsconstants.h>
 
@@ -138,7 +141,7 @@ public:
 QtQuickDesignerFactory::QtQuickDesignerFactory()
     : QmlJSEditorFactory(QmlJSEditor::Constants::C_QTQUICKDESIGNEREDITOR_ID)
 {
-    setDisplayName(::Core::Tr::tr("Qt Quick Designer"));
+    setDisplayName(Tr::tr("Qt Quick Designer"));
 
     addMimeType(Utils::Constants::QMLUI_MIMETYPE);
     setDocumentCreator([this]() {
@@ -174,6 +177,8 @@ public:
     ViewManager viewManager{projectManager.asynchronousImageCache(), externalDependencies};
     DocumentManager documentManager{projectManager, externalDependencies};
     ShortCutManager shortCutManager;
+    DeviceShare::DeviceManager deviceManager;
+    RunManager runManager{deviceManager};
     SettingsPage settingsPage{externalDependencies};
     DesignModeWidget mainWidget;
     QtQuickDesignerFactory m_qtQuickDesignerFactory;
@@ -205,8 +210,9 @@ static bool checkIfEditorIsQtQuick(Core::IEditor *editor)
                     || document->language() == QmlJS::Dialect::Qml;
 
         if (Core::ModeManager::currentModeId() == Core::Constants::MODE_DESIGN) {
-            Core::AsynchronousMessageBox::warning(QmlDesignerPlugin::tr("Cannot Open Design Mode"),
-                                                  QmlDesignerPlugin::tr("The QML file is not currently opened in a QML Editor."));
+            Core::AsynchronousMessageBox::warning(
+                Tr::tr("Cannot Open Design Mode"),
+                Tr::tr("The QML file is not currently opened in a QML Editor."));
             Core::ModeManager::activateMode(Core::Constants::MODE_EDIT);
         }
     }
@@ -281,7 +287,7 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString * 
     }
 
     Sqlite::LibraryInitializer::initialize();
-    QDir{}.mkpath(Core::ICore::cacheResourcePath().toString());
+    QDir{}.mkpath(Core::ICore::cacheResourcePath().toUrlishString());
 
     QAction *action = new QAction(tr("Give Feedback..."), this);
     Core::Command *cmd = Core::ActionManager::registerAction(action, "Help.GiveFeedback");
@@ -300,7 +306,7 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString * 
     const QString fontPath
         = Core::ICore::resourcePath(
                 "qmldesigner/propertyEditorQmlSources/imports/StudioTheme/icons.ttf")
-              .toString();
+              .toUrlishString();
     if (QFontDatabase::addApplicationFont(fontPath) < 0)
         qCWarning(qmldesignerLog) << "Could not add font " << fontPath << "to font database";
 
@@ -324,7 +330,7 @@ bool QmlDesignerPlugin::initialize(const QStringList & /*arguments*/, QString * 
 
         // uses simplified Telemetry settings page in case of Qt Design Studio
         ExtensionSystem::PluginSpec *usageStatistic = Utils::findOrDefault(ExtensionSystem::PluginManager::plugins(), [](ExtensionSystem::PluginSpec *p) {
-            return p->name() == "UsageStatistic";
+            return p->id() == "usagestatistic";
         });
 
         if (usageStatistic && usageStatistic->plugin())
@@ -382,7 +388,7 @@ static QStringList allUiQmlFilesforCurrentProject(const Utils::FilePath &fileNam
         const QList<Utils::FilePath> fileNames = currentProject->files(ProjectExplorer::Project::SourceFiles);
         for (const Utils::FilePath &fileName : fileNames) {
             if (fileName.endsWith(".ui.qml"))
-                list.append(fileName.toString());
+                list.append(fileName.toUrlishString());
         }
     }
 
@@ -395,7 +401,7 @@ static QString projectPath(const Utils::FilePath &fileName)
     ProjectExplorer::Project *currentProject = ProjectExplorer::ProjectManager::projectForFile(fileName);
 
     if (currentProject)
-        path = currentProject->projectDirectory().toString();
+        path = currentProject->projectDirectory().toUrlishString();
 
     return path;
 }
@@ -665,6 +671,11 @@ void QmlDesignerPlugin::enforceDelayedInitialize()
         std::make_unique<TransitionEditorView>(d->externalDependencies));
     transitionEditorView->registerActions();
 
+    if (QmlDesignerBasePlugin::experimentalFeaturesEnabled())
+        d->viewManager.registerView(
+            std::make_unique<DesignSystemView>(d->externalDependencies,
+                                               d->projectManager.projectStorageDependencies()));
+
     d->viewManager.registerFormEditorTool(std::make_unique<SourceTool>());
     d->viewManager.registerFormEditorTool(std::make_unique<ColorTool>());
     d->viewManager.registerFormEditorTool(std::make_unique<TextTool>());
@@ -700,6 +711,11 @@ DesignDocument *QmlDesignerPlugin::currentDesignDocument() const
 Internal::DesignModeWidget *QmlDesignerPlugin::mainWidget() const
 {
     return d ? &d->mainWidget : nullptr;
+}
+
+QmlDesignerProjectManager &QmlDesignerPlugin::projectManagerForPluginInitializationOnly()
+{
+    return m_instance->d->projectManager;
 }
 
 QWidget *QmlDesignerPlugin::createProjectExplorerWidget(QWidget *parent) const
@@ -828,7 +844,7 @@ void QmlDesignerPlugin::lauchFeedbackPopupInternal(const QString &identifier)
     m_feedbackWidget = new QQuickWidget(Core::ICore::dialogParent());
     m_feedbackWidget->setObjectName(Constants::OBJECT_NAME_TOP_FEEDBACK);
 
-    const QString qmlPath = Core::ICore::resourcePath("qmldesigner/feedback/FeedbackPopup.qml").toString();
+    const QString qmlPath = Core::ICore::resourcePath("qmldesigner/feedback/FeedbackPopup.qml").toUrlishString();
 
     m_feedbackWidget->setSource(QUrl::fromLocalFile(qmlPath));
     if (!m_feedbackWidget->errors().isEmpty()) {
@@ -847,7 +863,7 @@ void QmlDesignerPlugin::lauchFeedbackPopupInternal(const QString &identifier)
     QTC_ASSERT(root, return );
 
     QObject *title = root->findChild<QObject *>("title");
-    QString name = QmlDesignerPlugin::tr("Enjoying the %1?").arg(identiferToDisplayString(identifier));
+    QString name = Tr::tr("Enjoying the %1?").arg(identiferToDisplayString(identifier));
     title->setProperty("text", name);
     root->setProperty("identifier", identifier);
 
@@ -899,6 +915,16 @@ const DocumentManager &QmlDesignerPlugin::documentManager() const
 ViewManager &QmlDesignerPlugin::viewManager()
 {
     return instance()->d->viewManager;
+}
+
+DeviceShare::DeviceManager &QmlDesignerPlugin::deviceManager()
+{
+    return instance()->d->deviceManager;
+}
+
+RunManager &QmlDesignerPlugin::runManager()
+{
+    return instance()->d->runManager;
 }
 
 DesignerActionManager &QmlDesignerPlugin::designerActionManager()

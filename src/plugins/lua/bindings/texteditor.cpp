@@ -23,6 +23,7 @@
 using namespace Utils;
 using namespace Text;
 using namespace TextEditor;
+using namespace std::string_view_literals;
 
 namespace {
 
@@ -157,6 +158,15 @@ public:
 
                 emit currentEditorChanged(m_currentTextEditor);
             });
+        connect(
+            Core::EditorManager::instance(),
+            &Core::EditorManager::editorCreated,
+            this,
+            [this](Core::IEditor *editor) {
+                auto textEditor = qobject_cast<BaseTextEditor *>(editor);
+                if (textEditor)
+                    emit editorCreated(textEditor);
+            });
     }
 
     bool connectTextEditor(BaseTextEditor *editor)
@@ -190,6 +200,7 @@ public:
 
 signals:
     void currentEditorChanged(BaseTextEditor *editor);
+    void editorCreated(BaseTextEditor *editor);
     void documentContentsChanged(
         TextDocument *document, int position, int charsRemoved, int charsAdded);
 
@@ -204,7 +215,7 @@ void setupTextEditorModule()
     TextEditorRegistry::instance();
 
     registerProvider("TextEditor", [](sol::state_view lua) -> sol::object {
-        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec");
+        const ScriptPluginSpec *pluginSpec = lua.get<ScriptPluginSpec *>("PluginSpec"sv);
         QObject *guard = pluginSpec->connectionGuard.get();
 
         sol::table result = lua.create_table();
@@ -227,18 +238,26 @@ void setupTextEditorModule()
             "Position",
             sol::no_constructor,
             "line",
-            sol::property(&Position::line, &Position::line),
+            sol::property(
+                [](const Position &pos) { return pos.line; },
+                [](Position &pos, int line) { pos.line = line; }),
             "column",
-            sol::property(&Position::column, &Position::column));
+            sol::property(
+                [](const Position &pos) { return pos.column; },
+                [](Position &pos, int column) { pos.column = column; }));
 
         // In range can't use begin/end as "end" is a reserved word for LUA scripts
         result.new_usertype<Range>(
             "Range",
             sol::no_constructor,
             "from",
-            sol::property(&Range::begin, &Range::begin),
+            sol::property(
+                [](const Range &range) { return range.begin; },
+                [](Range &range, const Position &begin) { range.begin = begin; }),
             "to",
-            sol::property(&Range::end, &Range::end));
+            sol::property(
+                [](const Range &range) { return range.end; },
+                [](Range &range, const Position &end) { range.end = end; }));
 
         auto textCursorType = result.new_usertype<QTextCursor>(
             "TextCursor",
@@ -401,6 +420,20 @@ void setupTextEditorModule()
                 QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
                 return addEmbeddedWidget(textEditor, toWidget(widget), position);
             },
+            "insertExtraToolBarWidget",
+            [](const TextEditorPtr &textEditor,
+               TextEditorWidget::Side side,
+               LayoutOrWidget widget) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                textEditor->editorWidget()->insertExtraToolBarWidget(side, toWidget(widget));
+            },
+            "insertExtraToolBarAction",
+            [](const TextEditorPtr &textEditor,
+               TextEditorWidget::Side side,
+               QAction* action) {
+                QTC_ASSERT(textEditor, throw sol::error("TextEditor is not valid"));
+                textEditor->editorWidget()->insertExtraToolBarAction(side, action);
+            },
             "setRefactorMarker",
             [pluginSpec, activeMarkers](
                 const TextEditorPtr &textEditor,
@@ -448,7 +481,26 @@ void setupTextEditorModule()
                     textEditor && textEditor->editorWidget(),
                     throw sol::error("TextEditor is not valid"));
                 return textEditor->editorWidget()->hasFocus();
+            },
+            "firstVisibleBlockNumber",
+            [](const TextEditorPtr &textEditor) -> int {
+                QTC_ASSERT(
+                    textEditor && textEditor->editorWidget(),
+                    throw sol::error("TextEditor is not valid"));
+                return textEditor->editorWidget()->firstVisibleBlockNumber();
+            },
+            "lastVisibleBlockNumber",
+            [](const TextEditorPtr &textEditor) -> int {
+                QTC_ASSERT(
+                    textEditor && textEditor->editorWidget(),
+                    throw sol::error("TextEditor is not valid"));
+                return textEditor->editorWidget()->lastVisibleBlockNumber();
             });
+
+        result["Side"] = lua.create_table_with(
+                "Left", TextEditorWidget::Left,
+                "Right", TextEditorWidget::Right
+            );
 
         result.new_usertype<TextSuggestion::Data>(
             "Suggestion",
@@ -531,6 +583,17 @@ void setupTextEditorModule()
             &TextEditorRegistry::currentEditorChanged,
             guard,
             [func](BaseTextEditor *editor) {
+                expected_str<void> res = void_safe_call(func, editor);
+                QTC_CHECK_EXPECTED(res);
+            });
+    });
+
+    registerHook("editors.text.editorCreated", [](sol::main_function func, QObject *guard) {
+        QObject::connect(
+            TextEditorRegistry::instance(),
+            &TextEditorRegistry::editorCreated,
+            guard,
+            [func](TextEditorPtr editor) {
                 expected_str<void> res = void_safe_call(func, editor);
                 QTC_CHECK_EXPECTED(res);
             });

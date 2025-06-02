@@ -10,6 +10,7 @@
 #include "navigatorwidget.h"
 #include "qmldesignerconstants.h"
 #include "qmldesignerplugin.h"
+#include <qmldesignertr.h>
 
 #include <abstractview.h>
 #include <bindingproperty.h>
@@ -80,7 +81,7 @@ bool fitsToTargetProperty(const NodeAbstractProperty &targetProperty,
 
 inline static QString msgUnknownItem(const QString &t)
 {
-    return NavigatorTreeModel::tr("Unknown component: %1").arg(t);
+    return Tr::tr("Unknown component: %1").arg(t);
 }
 
 static void removePosition(const ModelNode &node)
@@ -111,12 +112,13 @@ static bool removeModelNodeFromNodeProperty(NodeAbstractProperty &parentProperty
         if (modelNode != propertyNode && !propertyNode.isAncestorOf(modelNode)) {
             QApplication::setOverrideCursor(Qt::ArrowCursor);
 
-            QMessageBox::StandardButton selectedButton = QMessageBox::warning(Core::ICore::dialogParent(),
-                                                                              QCoreApplication::translate("NavigatorTreeModel", "Warning"),
-                                                                              QCoreApplication::translate("NavigatorTreeModel","Reparenting the component %1 here will cause the "
-                                                                                                                               "component %2 to be deleted. Do you want to proceed?")
-                                                                              .arg(modelNode.id(), propertyNode.id()),
-                                                                              QMessageBox::Ok | QMessageBox::Cancel);
+            QMessageBox::StandardButton selectedButton = QMessageBox::warning(
+                Core::ICore::dialogParent(),
+                Tr::tr("Warning"),
+                Tr::tr("Reparenting the component %1 here will cause the "
+                       "component %2 to be deleted. Do you want to proceed?")
+                    .arg(modelNode.id(), propertyNode.id()),
+                QMessageBox::Ok | QMessageBox::Cancel);
             if (selectedButton == QMessageBox::Ok) {
                 propertyNode.destroy();
                 removeNodeInPropertySucceeded = true;
@@ -177,8 +179,8 @@ static void reparentModelNodeToNodeProperty(NodeAbstractProperty &parentProperty
     }
 }
 
-NavigatorTreeModel::NavigatorTreeModel(QObject *parent) : QAbstractItemModel(parent)
-    , m_createTextures(Utils::makeUniqueObjectPtr<CreateTextures>(m_view))
+NavigatorTreeModel::NavigatorTreeModel(QObject *parent)
+    : QAbstractItemModel(parent)
 {
     m_actionManager = &QmlDesignerPlugin::instance()->viewManager().designerActionManager();
 }
@@ -324,7 +326,10 @@ QList<ModelNode> NavigatorTreeModel::filteredList(const NodeListProperty &proper
 
     if (filter) {
         list.append(::Utils::filtered(nameFilteredList, [](const ModelNode &arg) {
-            const bool value = (QmlItemNode::isValidQmlItemNode(arg) || NodeHints::fromModelNode(arg).visibleInNavigator())
+            const bool visibleInNavigator = NodeHints::fromModelNode(arg).visibleInNavigator();
+            const bool hideInNavigator = NodeHints::fromModelNode(arg).hideInNavigator();
+            const bool value = ((QmlItemNode::isValidQmlItemNode(arg) && !hideInNavigator)
+                                || visibleInNavigator)
                                && arg.id() != Constants::MATERIAL_LIB_ID;
             return value;
         }));
@@ -583,13 +588,7 @@ bool NavigatorTreeModel::dropMimeData(const QMimeData *mimeData,
                     bool moveNodesAfter = false;
 
                     m_view->executeInTransaction(__FUNCTION__, [&] {
-                        m_createTextures->execute(QStringList{texturePath},
-                                                 AddTextureMode::Image,
-                                                 Utils3D::active3DSceneId(m_view->model()));
-                        QString textureName = Utils::FilePath::fromString(texturePath).fileName();
-                        QString textureAbsolutePath = DocumentManager::currentResourcePath()
-                                                        .pathAppended("images/" + textureName).toString();
-                        ModelNodeOperations::handleItemLibraryImageDrop(textureAbsolutePath,
+                        ModelNodeOperations::handleItemLibraryImageDrop(texturePath,
                                                                         targetProperty,
                                                                         modelNodeForIndex(
                                                                             rowModelIndex),
@@ -664,7 +663,6 @@ bool NavigatorTreeModel::dropMimeData(const QMimeData *mimeData,
                         } else if (assetType == Constants::MIME_TYPE_ASSET_TEXTURE3D) {
                             currNode = ModelNodeOperations::handleItemLibraryTexture3dDrop(
                                 assetPath,
-                                targetProperty,
                                 modelNodeForIndex(rowModelIndex),
                                 moveNodesAfter);
                         } else if (assetType == Constants::MIME_TYPE_ASSET_EFFECT) {
@@ -851,34 +849,6 @@ bool QmlDesigner::NavigatorTreeModel::moveNodeToParent(const NodeAbstractPropert
         return true;
     }
     return false;
-}
-
-ModelNode NavigatorTreeModel::createTextureNode(const NodeAbstractProperty &targetProp,
-                                                const QString &imagePath)
-{
-    if (targetProp.isValid()) {
-        // create a texture item lib
-        ItemLibraryEntry itemLibraryEntry;
-        itemLibraryEntry.setName("Texture");
-        itemLibraryEntry.setType("QtQuick3D.Texture", 1, 0);
-
-        // set texture source
-        PropertyName prop = "source";
-        QString type = "QUrl";
-        QVariant val = imagePath;
-        itemLibraryEntry.addProperty(prop, type, val);
-
-        // create a texture
-        ModelNode newModelNode = QmlItemNode::createQmlObjectNode(m_view, itemLibraryEntry, {},
-                                                                  targetProp, false);
-
-        // Rename the node based on source image
-        QFileInfo fi(imagePath);
-        newModelNode.setIdWithoutRefactoring(
-            m_view->model()->generateNewId(fi.baseName(), "textureImage"));
-        return newModelNode;
-    }
-    return {};
 }
 
 namespace {

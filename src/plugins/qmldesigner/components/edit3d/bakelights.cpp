@@ -47,7 +47,7 @@ static QString propertyEditorResourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/propertyEditorQmlSources";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toString();
+    return Core::ICore::resourcePath("qmldesigner/propertyEditorQmlSources").toUrlishString();
 }
 
 static QString qmlSourcesPath()
@@ -56,7 +56,7 @@ static QString qmlSourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/edit3dQmlSource";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/edit3dQmlSource").toString();
+    return Core::ICore::resourcePath("qmldesigner/edit3dQmlSource").toUrlishString();
 }
 
 BakeLights::BakeLights(AbstractView *view)
@@ -152,7 +152,7 @@ void BakeLights::bakeLights()
         emit progress(msg);
         emit finished();
 
-        // Puppet reset is needed to update baking results to current views
+        // QML Puppet reset is needed to update baking results to current views
         m_view->resetPuppet();
     };
 
@@ -286,7 +286,7 @@ void BakeLights::exposeModelsAndLights(const QString &nodeId)
     }
 
     QmlJS::ModelManagerInterface *modelManager = QmlJS::ModelManagerInterface::instance();
-    QmlJS::Document::Ptr doc = rewriter.document()->ptr();
+    QmlJS::Document::Ptr doc = rewriter.document();
     modelManager->updateDocument(doc);
 
     m_view->model()->rewriterView()->forceAmend();

@@ -22,9 +22,7 @@ list(APPEND DEFAULT_DEFINES
   QT_CREATOR
   QT_NO_JAVA_STYLE_ITERATORS
   QT_NO_CAST_TO_ASCII QT_RESTRICTED_CAST_FROM_ASCII QT_NO_FOREACH
-  QT_DISABLE_DEPRECATED_BEFORE=0x050900
   QT_DISABLE_DEPRECATED_UP_TO=0x050900
-  QT_WARN_DEPRECATED_BEFORE=0x060400
   QT_WARN_DEPRECATED_UP_TO=0x060400
   QT_USE_QSTRINGBUILDER
 )
@@ -78,6 +76,10 @@ elseif(WIN32)
   set(_IDE_HEADER_INSTALL_PATH "include/qtcreator")
   set(_IDE_CMAKE_INSTALL_PATH "lib/cmake")
 else ()
+  # Small hack to silence a warning in the stable branch - but it means the value is incorrect
+  if (NOT CMAKE_LIBRARY_ARCHITECTURE AND NOT CMAKE_INSTALL_LIBDIR)
+    set(CMAKE_INSTALL_LIBDIR "lib")
+  endif()
   include(GNUInstallDirs)
   set(_IDE_APP_PATH "${CMAKE_INSTALL_BINDIR}")
   set(_IDE_APP_TARGET "${IDE_ID}")
@@ -195,7 +197,7 @@ endfunction()
 
 function(qtc_add_link_flags_no_undefined target)
   # needs CheckLinkerFlags
-  if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.18 AND NOT MSVC)
+  if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.18 AND NOT MSVC AND NOT APPLE)
     set(no_undefined_flag "-Wl,--no-undefined")
     check_linker_flag(CXX ${no_undefined_flag} QTC_LINKER_SUPPORTS_NO_UNDEFINED)
     if (NOT QTC_LINKER_SUPPORTS_NO_UNDEFINED)
@@ -330,30 +332,7 @@ function(add_qtc_depends target_name)
   set(depends "${_arg_PRIVATE}")
   set(public_depends "${_arg_PUBLIC}")
 
-  get_target_property(target_type ${target_name} TYPE)
-  if (NOT target_type STREQUAL "OBJECT_LIBRARY")
-    target_link_libraries(${target_name} PRIVATE ${depends} PUBLIC ${public_depends})
-  else()
-    list(APPEND object_lib_depends ${depends})
-    list(APPEND object_public_depends ${public_depends})
-  endif()
-
-  foreach(obj_lib IN LISTS object_lib_depends)
-    target_compile_options(${target_name} PRIVATE $<TARGET_PROPERTY:${obj_lib},INTERFACE_COMPILE_OPTIONS>)
-    target_compile_definitions(${target_name} PRIVATE $<TARGET_PROPERTY:${obj_lib},INTERFACE_COMPILE_DEFINITIONS>)
-    if (obj_lib MATCHES "Qt::.*|GoogleTest")
-      set(system_include "SYSTEM")
-    endif()
-    target_include_directories(${target_name} ${system_include} PRIVATE $<TARGET_PROPERTY:${obj_lib},INTERFACE_INCLUDE_DIRECTORIES>)
-  endforeach()
-  foreach(obj_lib IN LISTS object_public_depends)
-    target_compile_options(${target_name} PUBLIC $<TARGET_PROPERTY:${obj_lib},INTERFACE_COMPILE_OPTIONS>)
-    target_compile_definitions(${target_name} PUBLIC $<TARGET_PROPERTY:${obj_lib},INTERFACE_COMPILE_DEFINITIONS>)
-    if (obj_lib MATCHES "Qt::.*|GoogleTest")
-      set(system_include "SYSTEM")
-    endif()
-    target_include_directories(${target_name} ${system_include} PUBLIC $<TARGET_PROPERTY:${obj_lib},INTERFACE_INCLUDE_DIRECTORIES>)
-  endforeach()
+  target_link_libraries(${target_name} PRIVATE ${depends} PUBLIC ${public_depends})
 endfunction()
 
 function(check_library_dependencies)

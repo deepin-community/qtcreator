@@ -23,7 +23,10 @@
 #include <qmldesignerplugin.h>
 #include <qmltimeline.h>
 #include <rewritingexception.h>
+#include <sourcepathcacheinterface.h>
 #include <variantproperty.h>
+
+#include <sourcepathstorage/sourcepathcache.h>
 
 #include <theme.h>
 
@@ -58,7 +61,7 @@ TextureEditorView::TextureEditorView(AsynchronousImageCache &imageCache,
     : AbstractView{externalDependencies}
     , m_imageCache(imageCache)
     , m_stackedWidget(new QStackedWidget)
-    , m_createTexture(new CreateTexture(this))
+    , m_propertyComponentGenerator{PropertyEditorQmlBackend::propertyEditorResourcesPath(), model()}
     , m_dynamicPropertiesModel(new DynamicPropertiesModel(true, this))
 {
     m_updateShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F12), m_stackedWidget);
@@ -117,6 +120,12 @@ void TextureEditorView::changeValue(const QString &name)
 
     if (!value)
         return;
+
+    if (propertyName == "objectName") {
+        QTC_ASSERT(m_selectedTexture.isValid(), return);
+        QmlObjectNode(m_selectedTexture).setNameAndId(value->value().toString(), "texture");
+        return;
+    }
 
     if (propertyName.endsWith("__AUX")) {
         commitAuxValueToModel(propertyName, value->value());
@@ -308,6 +317,11 @@ void TextureEditorView::currentTimelineChanged(const ModelNode &)
         m_qmlBackEnd->contextObject()->setHasActiveTimeline(QmlTimeline::hasActiveTimeline(this));
 }
 
+void TextureEditorView::refreshMetaInfos(const TypeIds &deletedTypeIds)
+{
+    m_propertyComponentGenerator.refreshMetaInfos(deletedTypeIds);
+}
+
 DynamicPropertiesModel *TextureEditorView::dynamicPropertiesModel() const
 {
     return m_dynamicPropertiesModel;
@@ -372,7 +386,7 @@ QString TextureEditorView::textureEditorResourcesPath()
     if (Utils::qtcEnvironmentVariableIsSet("LOAD_QML_FROM_SOURCE"))
         return QLatin1String(SHARE_QML_PATH) + "/textureEditorQmlSource";
 #endif
-    return Core::ICore::resourcePath("qmldesigner/textureEditorQmlSource").toString();
+    return Core::ICore::resourcePath("qmldesigner/textureEditorQmlSource").toUrlishString();
 }
 
 void TextureEditorView::applyTextureToSelectedModel(const ModelNode &texture)
@@ -399,7 +413,7 @@ void TextureEditorView::handleToolBarAction(int action)
     case TextureEditorContextObject::AddNewTexture: {
         if (!model())
             break;
-        m_createTexture->execute();
+        CreateTexture(this).execute();
         break;
     }
 
@@ -419,80 +433,123 @@ void TextureEditorView::handleToolBarAction(int action)
     }
 }
 
-void TextureEditorView::setupQmlBackend()
-{
+namespace {
+
 #ifdef QDS_USE_PROJECTSTORAGE
-// This is an copy of the property editor code which is already rewritten. Please reuse that code.
-#else
-    QUrl qmlPaneUrl;
-    QUrl qmlSpecificsUrl;
-    QString specificQmlData;
+QUrl getSpecificsUrl(const NodeMetaInfos &prototypes, const SourcePathCacheInterface &pathCache)
+{
+    Utils::PathString specificsPath;
 
-    if (m_selectedTexture.isValid() && m_hasQuick3DImport
-        && (Utils3D::materialLibraryNode(this).isValid() || m_hasTextureRoot)) {
-        qmlPaneUrl = QUrl::fromLocalFile(textureEditorResourcesPath() + "/TextureEditorPane.qml");
-
-        TypeName diffClassName;
-        if (NodeMetaInfo metaInfo = m_selectedTexture.metaInfo()) {
-            diffClassName = metaInfo.typeName();
-            for (const NodeMetaInfo &metaInfo : metaInfo.selfAndPrototypes()) {
-                if (PropertyEditorQmlBackend::checkIfUrlExists(qmlSpecificsUrl))
-                    break;
-                qmlSpecificsUrl = PropertyEditorQmlBackend::getQmlFileUrl(metaInfo.typeName()
-                                                                          + "Specifics", metaInfo);
-                diffClassName = metaInfo.typeName();
-            }
-
-            if (diffClassName != m_selectedTexture.type()) {
-                specificQmlData = PropertyEditorQmlBackend::templateGeneration(metaInfo,
-                                                                               model()->metaInfo(
-                                                                                   diffClassName),
-                                                                               m_selectedTexture);
+    for (const NodeMetaInfo &prototype : prototypes) {
+        auto sourceId = prototype.propertyEditorPathId();
+        if (sourceId) {
+            auto path = pathCache.sourcePath(sourceId);
+            if (path.endsWith("Specifics.qml")) {
+                specificsPath = path;
+                break;
             }
         }
-    } else {
-        qmlPaneUrl = QUrl::fromLocalFile(textureEditorResourcesPath() + "/EmptyTextureEditorPane.qml");
     }
 
-    TextureEditorQmlBackend *currentQmlBackend = m_qmlBackendHash.value(qmlPaneUrl.toString());
+    return QUrl::fromLocalFile(specificsPath.toQString());
+}
+#endif
 
-    QmlModelState currentState = currentStateNode();
-    QString currentStateName = currentState.isBaseState() ? currentState.name() : "invalid state";
+} // namespace
+
+TextureEditorQmlBackend *TextureEditorView::getQmlBackend(const QUrl &qmlFileUrl)
+{
+    auto qmlFileName = qmlFileUrl.toString();
+    TextureEditorQmlBackend *currentQmlBackend = m_qmlBackendHash.value(qmlFileName);
 
     if (!currentQmlBackend) {
         currentQmlBackend = new TextureEditorQmlBackend(this, m_imageCache);
 
         m_stackedWidget->addWidget(currentQmlBackend->widget());
-        m_qmlBackendHash.insert(qmlPaneUrl.toString(), currentQmlBackend);
+        m_qmlBackendHash.insert(qmlFileName, currentQmlBackend);
 
-        currentQmlBackend->setup(m_selectedTexture, currentStateName, qmlSpecificsUrl, this);
-
-        currentQmlBackend->setSource(qmlPaneUrl);
+        currentQmlBackend->setSource(qmlFileUrl);
 
         QObject *rootObj = currentQmlBackend->widget()->rootObject();
         QObject::connect(rootObj, SIGNAL(toolBarAction(int)), this, SLOT(handleToolBarAction(int)));
-    } else {
-        currentQmlBackend->setup(m_selectedTexture, currentStateName, qmlSpecificsUrl, this);
     }
 
-    currentQmlBackend->widget()->installEventFilter(this);
-    currentQmlBackend->contextObject()->setHasQuick3DImport(m_hasQuick3DImport);
-    currentQmlBackend->contextObject()->setHasMaterialLibrary(
-        Utils3D::materialLibraryNode(this).isValid());
-    currentQmlBackend->contextObject()->setSpecificQmlData(specificQmlData);
-    bool hasValidSelection = QmlObjectNode(m_selectedModel).hasBindingProperty("materials");
-    currentQmlBackend->contextObject()->setHasSingleModelSelection(hasValidSelection);
-    currentQmlBackend->contextObject()->setIsQt6Project(externalDependencies().isQt6Project());
+    return currentQmlBackend;
+}
 
-    m_qmlBackEnd = currentQmlBackend;
+QUrl TextureEditorView::getPaneUrl()
+{
+    QString panePath = textureEditorResourcesPath();
+    if (m_selectedTexture.isValid() && m_hasQuick3DImport
+        && (Utils3D::materialLibraryNode(this).isValid() || m_hasTextureRoot))
+        panePath.append("/TextureEditorPane.qml");
+    else {
+        panePath.append("/EmptyTextureEditorPane.qml");
+    }
 
-    if (m_hasTextureRoot)
-        m_dynamicPropertiesModel->setSelectedNode(m_selectedTexture);
-    else
-        m_dynamicPropertiesModel->reset();
+    return QUrl::fromLocalFile(panePath);
+}
 
+void TextureEditorView::setupCurrentQmlBackend(const ModelNode &selectedNode,
+                                               const QUrl &qmlSpecificsFile,
+                                               const QString &specificQmlData)
+{
+    QmlModelState currState = currentStateNode();
+    QString currStateName = currState.isBaseState() ? QStringLiteral("invalid state")
+                                                    : currState.name();
+    QmlObjectNode qmlObjectNode{selectedNode};
+    m_qmlBackEnd->setup(qmlObjectNode, currStateName, qmlSpecificsFile, this);
+    m_qmlBackEnd->contextObject()->setSpecificQmlData(specificQmlData);
+}
+
+void TextureEditorView::setupWidget()
+{
+    m_qmlBackEnd->widget()->installEventFilter(this);
     m_stackedWidget->setCurrentWidget(m_qmlBackEnd->widget());
+    m_stackedWidget->setMinimumSize({400, 300});
+}
+
+void TextureEditorView::setupQmlBackend()
+{
+    QUrl qmlPaneUrl = getPaneUrl();
+    QUrl qmlSpecificsUrl;
+    QString specificQmlData;
+
+#ifdef QDS_USE_PROJECTSTORAGE
+    auto selfAndPrototypes = m_selectedTexture.metaInfo().selfAndPrototypes();
+    bool isEditableComponent = m_selectedTexture.isComponent()
+                               && !QmlItemNode(m_selectedTexture).isEffectItem();
+    specificQmlData = m_propertyEditorComponentGenerator.create(selfAndPrototypes, isEditableComponent);
+    qmlSpecificsUrl = getSpecificsUrl(selfAndPrototypes, model()->pathCache());
+#else
+    TypeName diffClassName;
+    if (NodeMetaInfo metaInfo = m_selectedTexture.metaInfo()) {
+        diffClassName = metaInfo.typeName();
+        for (const NodeMetaInfo &metaInfo : metaInfo.selfAndPrototypes()) {
+            if (PropertyEditorQmlBackend::checkIfUrlExists(qmlSpecificsUrl))
+                break;
+            qmlSpecificsUrl = PropertyEditorQmlBackend::getQmlFileUrl(metaInfo.typeName() + "Specifics", metaInfo);
+            diffClassName = metaInfo.typeName();
+        }
+
+        if (diffClassName != m_selectedTexture.type()) {
+            specificQmlData = PropertyEditorQmlBackend::templateGeneration(
+                metaInfo, model()->metaInfo(diffClassName), m_selectedTexture);
+        }
+    }
 #endif
+
+    m_qmlBackEnd = getQmlBackend(qmlPaneUrl);
+    setupCurrentQmlBackend(m_selectedTexture, qmlSpecificsUrl, specificQmlData);
+    setupWidget();
+
+    m_qmlBackEnd->contextObject()->setHasQuick3DImport(m_hasQuick3DImport);
+    m_qmlBackEnd->contextObject()->setHasMaterialLibrary(Utils3D::materialLibraryNode(this).isValid());
+    bool hasValidSelection = QmlObjectNode(m_selectedModel).hasBindingProperty("materials");
+    m_qmlBackEnd->contextObject()->setHasSingleModelSelection(hasValidSelection);
+    m_qmlBackEnd->contextObject()->setIsQt6Project(externalDependencies().isQt6Project());
+
+    m_dynamicPropertiesModel->setSelectedNode(m_selectedTexture);
 }
 
 void TextureEditorView::commitVariantValueToModel(PropertyNameView propertyName, const QVariant &value)
@@ -548,6 +605,9 @@ void TextureEditorView::asyncResetView()
 void TextureEditorView::modelAttached(Model *model)
 {
     AbstractView::modelAttached(model);
+
+    if constexpr (useProjectStorage())
+        m_propertyComponentGenerator.setModel(model);
 
     m_locked = true;
 
@@ -845,7 +905,7 @@ void TextureEditorView::importsChanged([[maybe_unused]] const Imports &addedImpo
 void TextureEditorView::duplicateTexture(const ModelNode &texture)
 {
     QTC_ASSERT(texture.isValid(), return);
-    m_createTexture->execute(texture);
+    CreateTexture(this).execute(texture);
 }
 
 void TextureEditorView::customNotification([[maybe_unused]] const AbstractView *view,

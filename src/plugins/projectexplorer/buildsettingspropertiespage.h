@@ -16,7 +16,6 @@ namespace ProjectExplorer {
 
 class BuildConfiguration;
 class BuildInfo;
-class NamedWidget;
 class Target;
 
 namespace Internal {
@@ -29,7 +28,7 @@ public:
     ~BuildSettingsWidget() override;
 
     void clearWidgets();
-    void addSubWidget(NamedWidget *widget);
+    void addSubWidget(QWidget *widget, const QString &displayName);
 
 private:
     void updateBuildSettings();
@@ -52,11 +51,10 @@ private:
     QPushButton *m_removeButton = nullptr;
     QPushButton *m_renameButton = nullptr;
     QPushButton *m_cloneButton = nullptr;
-    QPushButton *m_makeActiveButton = nullptr;
     QComboBox *m_buildConfigurationComboBox = nullptr;
     QMenu *m_addButtonMenu = nullptr;
 
-    QList<NamedWidget *> m_subWidgets;
+    QList<QWidget *> m_subWidgets;
     QList<QLabel *> m_labels;
 };
 
